@@ -854,8 +854,8 @@ export class DiveKickState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    // Can be interrupted by another flip
-    return nextStateName === PLAYER_STATES.FLIP;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.LAND;
   }
 }
 
@@ -1004,7 +1004,10 @@ export class SpinActiveState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    return nextStateName === PLAYER_STATES.FLIP;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.SPIN_RELEASE ||
+           nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
@@ -1075,7 +1078,10 @@ export class SpinReleaseState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    return nextStateName === PLAYER_STATES.FLIP;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.RUN ||
+           nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
@@ -1636,11 +1642,9 @@ export class GrappleTravelState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    // Can cancel with flip, attack, or another grapple
     return nextStateName === PLAYER_STATES.FLIP ||
-           nextStateName === PLAYER_STATES.ATTACK_LIGHT_1 ||
-           nextStateName === PLAYER_STATES.ATTACK_HEAVY ||
-           nextStateName === PLAYER_STATES.ATTACK_AIR;
+           nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
