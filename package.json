@@ -1,0 +1,17 @@
+{
+  "name": "project-blender",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A 2D action Metroidvania - Be the boss fight.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "vite": "^5.4.2"
+  }
+}
