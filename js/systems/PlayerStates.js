@@ -831,8 +831,8 @@ export class DiveKickState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    // Can be interrupted by another flip
-    return nextStateName === PLAYER_STATES.FLIP;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.LAND;
   }
 }
 
@@ -1055,7 +1055,10 @@ export class SpinReleaseState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    return nextStateName === PLAYER_STATES.FLIP;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.RUN ||
+           nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
