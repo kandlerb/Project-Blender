@@ -1,5 +1,8 @@
 import { BaseScene } from './BaseScene.js';
 import { Player } from '../entities/Player.js';
+import { Enemy } from '../entities/Enemy.js';
+import { CombatManager } from '../systems/CombatManager.js';
+import { TimeManager } from '../systems/TimeManager.js';
 import { ACTIONS } from '../systems/InputManager.js';
 
 /**
@@ -10,29 +13,65 @@ export class TestArenaScene extends BaseScene {
   constructor() {
     super('TestArena');
     this.player = null;
+    this.enemies = [];
     this.ground = null;
     this.platforms = null;
     this.debugText = null;
+    this.combatManager = null;
+    this.timeManager = null;
+    this.showCombatDebug = false;
+    this.killCount = 0;
   }
 
   onCreate() {
-    // Physics debug (toggle with backtick)
+    // Physics debug
     this.physics.world.drawDebug = false;
 
-    // Create the arena
+    // Create managers BEFORE entities
+    this.timeManager = new TimeManager(this);
+    this.combatManager = new CombatManager(this);
+    this.combatManager.setTimeManager(this.timeManager);
+
+    // Create arena
     this.createArena();
 
-    // Create player entity
+    // Create player
     this.player = new Player(this, 300, 400);
-
-    // Add collisions
     this.player.addCollider(this.ground);
     this.player.addCollider(this.platforms);
+
+    // Spawn initial enemies
+    this.spawnEnemies();
 
     // Create debug HUD
     this.createDebugHUD();
 
-    // Debug toggle key
+    // Input handlers
+    this.setupInputHandlers();
+
+    // Event listeners
+    this.events.on('enemy:killed', (data) => {
+      this.killCount++;
+      console.log(`Enemy killed! Total: ${this.killCount}`);
+
+      // Remove from array
+      const index = this.enemies.indexOf(data.enemy);
+      if (index > -1) {
+        this.enemies.splice(index, 1);
+      }
+    });
+
+    this.events.on('combat:hit', (hitData) => {
+      console.log(`Hit! ${hitData.damage} damage`);
+    });
+
+    console.log('TestArena ready');
+    console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
+    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies');
+  }
+
+  setupInputHandlers() {
+    // Physics debug toggle
     this.input.keyboard.on('keydown-BACKQUOTE', () => {
       this.physics.world.drawDebug = !this.physics.world.drawDebug;
       if (!this.physics.world.drawDebug) {
@@ -40,14 +79,56 @@ export class TestArenaScene extends BaseScene {
       }
     });
 
-    // Listen for player events
-    this.events.on('player:damaged', (data) => {
-      console.log(`Player took ${data.damage} damage! Health: ${data.health}`);
+    // Combat debug toggle
+    this.input.keyboard.on('keydown-C', () => {
+      this.showCombatDebug = !this.showCombatDebug;
+      this.player.setCombatDebug(this.showCombatDebug);
+      for (const enemy of this.enemies) {
+        enemy.setCombatDebug(this.showCombatDebug);
+      }
+      console.log(`Combat debug: ${this.showCombatDebug}`);
     });
 
-    console.log('TestArena ready');
-    console.log('Controls: WASD/Arrows = Move, Space = Jump');
-    console.log('Press ` to toggle physics debug');
+    // Respawn enemies
+    this.input.keyboard.on('keydown-R', () => {
+      this.spawnEnemies();
+    });
+
+    // Test damage
+    this.input.keyboard.on('keydown-T', () => {
+      this.player.takeDamage(10);
+    });
+  }
+
+  spawnEnemies() {
+    // Clear existing enemies
+    for (const enemy of this.enemies) {
+      enemy.destroy();
+    }
+    this.enemies = [];
+
+    // Spawn positions
+    const spawnPoints = [
+      { x: 600, y: 400 },
+      { x: 800, y: 400 },
+      { x: 1000, y: 400 },
+      { x: 700, y: 200 },  // On platform
+      { x: 1100, y: 100 }, // On high platform
+    ];
+
+    for (const pos of spawnPoints) {
+      const enemy = new Enemy(this, pos.x, pos.y);
+      enemy.addCollider(this.ground);
+      enemy.addCollider(this.platforms);
+
+      if (this.showCombatDebug) {
+        enemy.setCombatDebug(true);
+      }
+
+      this.enemies.push(enemy);
+    }
+
+    console.log(`Spawned ${this.enemies.length} enemies`);
   }
 
   createArena() {
@@ -58,7 +139,6 @@ export class TestArenaScene extends BaseScene {
 
     // Ground
     this.ground = this.physics.add.staticGroup();
-
     const tilesNeeded = Math.ceil(width / tileSize) + 1;
     for (let i = 0; i < tilesNeeded; i++) {
       this.ground.create(i * tileSize + 16, groundY, 'ground_placeholder');
@@ -93,38 +173,53 @@ export class TestArenaScene extends BaseScene {
   }
 
   onUpdate(time, delta) {
-    // Update player
-    this.player.update(time, delta);
+    // Update time manager first
+    this.timeManager.update(delta);
 
-    // Update debug display
-    this.updateDebugHUD();
+    // Get scaled delta for gameplay
+    const scaledDelta = this.timeManager.getScaledDelta(delta);
 
-    // Test damage with T key
-    if (Phaser.Input.Keyboard.JustDown(this.input.keyboard.addKey('T'))) {
-      this.player.takeDamage(10);
+    // Skip updates during hitstop
+    if (!this.timeManager.isFrozen()) {
+      // Update player
+      this.player.update(time, scaledDelta);
+
+      // Update enemies
+      for (const enemy of this.enemies) {
+        enemy.update(time, scaledDelta);
+      }
+
+      // Update combat manager
+      this.combatManager.update(time, scaledDelta);
     }
+
+    // Always update debug HUD
+    this.updateDebugHUD();
   }
 
   updateDebugHUD() {
-    const debug = this.player.getDebugInfo();
+    const pDebug = this.player.getDebugInfo();
+    const timeDebug = this.timeManager.getDebugInfo();
     const horizontal = this.inputManager.getHorizontalAxis();
 
     const lines = [
       'PROJECT BLENDER - Test Arena',
-      '─'.repeat(32),
-      `State: ${debug.state} (${debug.stateTime}ms)`,
-      `Position: ${debug.position}`,
-      `Velocity: ${debug.velocity}`,
-      `On Ground: ${debug.onGround}`,
-      `Facing: ${debug.facing}`,
-      `Health: ${debug.health}`,
-      `Input H-Axis: ${horizontal}`,
+      '─'.repeat(35),
+      `State: ${pDebug.state} (${pDebug.stateTime}ms)`,
+      `Position: ${pDebug.position}`,
+      `Velocity: ${pDebug.velocity}`,
+      `Health: ${pDebug.health}`,
+      `Kills: ${this.killCount}`,
+      '',
+      `Enemies: ${this.enemies.length}`,
+      `Hitstop: ${timeDebug.hitstop}ms`,
+      `TimeScale: ${timeDebug.timeScale}`,
       '',
       'Controls:',
-      '  WASD / Arrows - Move',
-      '  Space / W / Up - Jump',
-      '  T - Test damage',
-      '  ` - Toggle physics debug',
+      '  WASD - Move | Space - Jump',
+      '  J - Light Attack | K - Heavy',
+      '  R - Respawn Enemies',
+      '  C - Combat Debug | ` - Physics',
     ];
 
     this.debugText.setText(lines.join('\n'));
@@ -132,9 +227,23 @@ export class TestArenaScene extends BaseScene {
 
   shutdown() {
     super.shutdown();
+
+    // Clean up enemies
+    for (const enemy of this.enemies) {
+      enemy.destroy();
+    }
+    this.enemies = [];
+
+    // Clean up player
     if (this.player) {
       this.player.destroy();
       this.player = null;
+    }
+
+    // Clean up managers
+    if (this.combatManager) {
+      this.combatManager.destroy();
+      this.combatManager = null;
     }
   }
 }
