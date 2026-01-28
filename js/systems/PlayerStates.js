@@ -17,6 +17,19 @@ export const PLAYER_STATES = Object.freeze({
   ATTACK_LIGHT_3: 'attack_light_3',
   ATTACK_HEAVY: 'attack_heavy',
   ATTACK_AIR: 'attack_air',
+  // Movement abilities
+  FLIP: 'flip',
+  DIVE_KICK: 'dive_kick',
+  // Spin attack
+  SPIN_CHARGE: 'spin_charge',
+  SPIN_ACTIVE: 'spin_active',
+  SPIN_RELEASE: 'spin_release',
+  // Blink
+  BLINK: 'blink',
+  // Grapple
+  GRAPPLE_FIRE: 'grapple_fire',
+  GRAPPLE_TRAVEL: 'grapple_travel',
+  GRAPPLE_PULL: 'grapple_pull',
 });
 
 /**
@@ -62,6 +75,21 @@ class PlayerState extends State {
   checkJumpInput(time) {
     return this.input.justPressed(ACTIONS.JUMP) ||
            this.input.consumeBuffered(ACTIONS.JUMP, time, PHYSICS.PLAYER.JUMP_BUFFER);
+  }
+
+  /**
+   * Set player invulnerability
+   * @param {boolean} invulnerable
+   */
+  setInvulnerable(invulnerable) {
+    this.player.isInvulnerable = invulnerable;
+
+    // Visual feedback - slight transparency when invulnerable
+    if (invulnerable) {
+      this.sprite.setAlpha(0.7);
+    } else {
+      this.sprite.setAlpha(1);
+    }
   }
 
   /**
@@ -112,6 +140,26 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.ATTACK_HEAVY;
     }
 
+    // Flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    // Spin attack
+    if (this.input.justPressed(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_CHARGE;
+    }
+
+    // Blink
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
+    // Grapple
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
     return null;
   }
 }
@@ -160,6 +208,26 @@ export class RunState extends PlayerState {
       return PLAYER_STATES.ATTACK_HEAVY;
     }
 
+    // Flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    // Spin attack
+    if (this.input.justPressed(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_CHARGE;
+    }
+
+    // Blink
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
+    // Grapple
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
     return null;
   }
 }
@@ -203,6 +271,26 @@ export class JumpState extends PlayerState {
       return PLAYER_STATES.ATTACK_AIR;
     }
 
+    // Flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    // Spin attack (in air)
+    if (this.input.justPressed(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_CHARGE;
+    }
+
+    // Blink
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
+    // Grapple
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
     return null;
   }
 }
@@ -238,6 +326,26 @@ export class FallState extends PlayerState {
     if (this.input.justPressed(ACTIONS.ATTACK_LIGHT) ||
         this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
       return PLAYER_STATES.ATTACK_AIR;
+    }
+
+    // Flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    // Spin attack (in air)
+    if (this.input.justPressed(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_CHARGE;
+    }
+
+    // Blink
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
+    // Grapple
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
     }
 
     // Land when hitting ground
@@ -334,6 +442,16 @@ class AttackState extends PlayerState {
 
   update(time, delta) {
     const stateTime = this.stateMachine.getStateTime();
+
+    // Flip cancel (after startup)
+    if (stateTime > this.startupTime && this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    // Blink cancel (after startup)
+    if (stateTime > this.startupTime && this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
 
     // Activate hitbox during active frames
     if (stateTime >= this.startupTime && stateTime < this.startupTime + this.activeTime) {
@@ -511,6 +629,943 @@ export class AttackAirState extends AttackState {
 }
 
 /**
+ * Flip State - Acrobatic dodge with i-frames
+ */
+export class FlipState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.FLIP, stateMachine);
+
+    // Timing (in ms)
+    this.flipDuration = 400;
+    this.iFrameStart = 30; // i-frames start slightly after flip begins
+    this.iFrameEnd = 280; // i-frames end before flip ends (recovery)
+    this.perfectWindowStart = 170; // Perfect timing window (apex)
+    this.perfectWindowEnd = 220;
+
+    // Movement
+    this.flipSpeed = 450; // Horizontal speed during flip
+    this.flipHeight = 350; // Vertical impulse
+
+    // State tracking
+    this.flipDirection = 1;
+    this.wasPerfectTiming = false;
+    this.hasReleasedAttack = true;
+  }
+
+  enter(prevState, params) {
+    // Determine flip direction (toward input or facing direction)
+    const inputDir = this.input.getHorizontalAxis();
+    this.flipDirection = inputDir !== 0 ? inputDir : (this.sprite.flipX ? -1 : 1);
+
+    // Can flip in opposite direction of facing
+    if (inputDir !== 0) {
+      this.sprite.setFlipX(inputDir < 0);
+    }
+
+    // Apply flip velocity
+    this.body.setVelocityX(this.flipDirection * this.flipSpeed);
+    this.body.setVelocityY(-this.flipHeight);
+
+    // Track if we came from attack (for attack buffering)
+    this.hasReleasedAttack = !this.input.isDown(ACTIONS.ATTACK_LIGHT) &&
+                             !this.input.isDown(ACTIONS.ATTACK_HEAVY);
+
+    this.wasPerfectTiming = false;
+
+    // TODO: Play flip animation
+    // Temporary: rotate the sprite
+    this.sprite.setRotation(0);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // I-frame management
+    const inIFrames = stateTime >= this.iFrameStart && stateTime <= this.iFrameEnd;
+    this.setInvulnerable(inIFrames);
+
+    // Perfect timing check (for future mechanics)
+    if (stateTime >= this.perfectWindowStart && stateTime <= this.perfectWindowEnd) {
+      this.wasPerfectTiming = true;
+    }
+
+    // Visual rotation during flip
+    const progress = stateTime / this.flipDuration;
+    const rotation = this.flipDirection * progress * Math.PI * 2;
+    this.sprite.setRotation(rotation);
+
+    // Air control (reduced)
+    const horizontal = this.input.getHorizontalAxis();
+    if (horizontal !== 0) {
+      const currentVelX = this.body.velocity.x;
+      const adjustment = horizontal * 100; // Slight air adjustment
+      this.body.setVelocityX(currentVelX + adjustment * (delta / 1000));
+    }
+
+    // Track attack release for buffering
+    if (!this.input.isDown(ACTIONS.ATTACK_LIGHT) &&
+        !this.input.isDown(ACTIONS.ATTACK_HEAVY)) {
+      this.hasReleasedAttack = true;
+    }
+
+    // Dive kick - attack while descending
+    if (this.hasReleasedAttack &&
+        this.body.velocity.y > 0 &&
+        (this.input.justPressed(ACTIONS.ATTACK_LIGHT) ||
+         this.input.justPressed(ACTIONS.ATTACK_HEAVY))) {
+      return PLAYER_STATES.DIVE_KICK;
+    }
+
+    // Land early cancels flip
+    if (this.body.onFloor() && stateTime > 100) {
+      return this.finishFlip();
+    }
+
+    // Flip complete
+    if (stateTime >= this.flipDuration) {
+      return this.finishFlip();
+    }
+
+    return null;
+  }
+
+  finishFlip() {
+    // Determine next state based on situation
+    if (this.body.onFloor()) {
+      // Dust effect on land
+      if (this.player.scene.effectsManager) {
+        this.player.scene.effectsManager.dustPuff(
+          this.sprite.x,
+          this.sprite.y + 20,
+          3
+        );
+      }
+
+      const horizontal = this.input.getHorizontalAxis();
+      return horizontal !== 0 ? PLAYER_STATES.RUN : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    this.setInvulnerable(false);
+    this.sprite.setRotation(0);
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Flip can only be interrupted by damage states (which bypass i-frames check)
+    return false;
+  }
+}
+
+/**
+ * Dive Kick State - Downward attack from flip
+ */
+export class DiveKickState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.DIVE_KICK, stateMachine);
+
+    this.diveSpeed = 800; // Downward velocity
+    this.horizontalSpeed = 200; // Forward momentum
+    this.damage = 20;
+    this.hasHit = false;
+  }
+
+  enter(prevState, params) {
+    this.hasHit = false;
+
+    // Dive downward with slight forward momentum
+    const direction = this.sprite.flipX ? -1 : 1;
+    this.body.setVelocityX(direction * this.horizontalSpeed);
+    this.body.setVelocityY(this.diveSpeed);
+
+    // Activate hitbox
+    this.player.activateAttackHitbox({
+      damage: this.damage,
+      knockback: { x: 150, y: 200 }, // Spike enemies down
+      hitstun: 300,
+      hitstop: 60,
+      width: 40,
+      height: 50,
+      offsetX: 0,
+      offsetY: 15,
+    });
+
+    // TODO: Play dive kick animation
+    // Temporary: angle the sprite
+    const angle = this.sprite.flipX ? 45 : -45;
+    this.sprite.setAngle(angle);
+  }
+
+  update(time, delta) {
+    // Land cancels dive kick
+    if (this.body.onFloor()) {
+      // Impact effect
+      if (this.player.scene.effectsManager) {
+        this.player.scene.effectsManager.dustPuff(
+          this.sprite.x,
+          this.sprite.y + 20,
+          6
+        );
+        this.player.scene.effectsManager.screenShake(4, 60);
+      }
+
+      return PLAYER_STATES.LAND;
+    }
+
+    // Can cancel into flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.player.deactivateAttackHitbox();
+    this.sprite.setAngle(0);
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can be interrupted by another flip
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
+ * Spin Charge State - Wind up for spin attack
+ */
+export class SpinChargeState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.SPIN_CHARGE, stateMachine);
+
+    this.chargeTime = 300; // Time to fully charge
+    this.minChargeTime = 100; // Minimum charge before can release
+  }
+
+  enter(prevState, params) {
+    // Slow down horizontal movement
+    this.body.setVelocityX(this.body.velocity.x * 0.3);
+
+    // TODO: Play charge animation
+    // Temporary: scale up slightly
+    this.sprite.setScale(1.1);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+    const chargePercent = Math.min(1, stateTime / this.chargeTime);
+
+    // Visual feedback for charge level
+    const scale = 1 + (chargePercent * 0.2);
+    this.sprite.setScale(scale);
+
+    // Slight movement while charging
+    this.handleHorizontalMovement(0.2);
+
+    // Released button - go to active spin if charged enough
+    if (this.input.isUp(ACTIONS.SPIN)) {
+      if (stateTime >= this.minChargeTime) {
+        return PLAYER_STATES.SPIN_ACTIVE;
+      } else {
+        // Not charged enough - cancel
+        return this.body.onFloor() ? PLAYER_STATES.IDLE : PLAYER_STATES.FALL;
+      }
+    }
+
+    // Fully charged - auto transition to active
+    if (stateTime >= this.chargeTime) {
+      return PLAYER_STATES.SPIN_ACTIVE;
+    }
+
+    // Can cancel with flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.sprite.setScale(1);
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
+ * Spin Active State - Actively spinning with hitbox
+ */
+export class SpinActiveState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.SPIN_ACTIVE, stateMachine);
+
+    this.maxSpinDuration = 2000; // Max time can spin
+    this.damagePerTick = 5; // Damage per hit
+    this.tickRate = 150; // MS between damage ticks
+    this.spinSpeed = 200; // Movement speed while spinning
+
+    this.lastTickTime = 0;
+    this.totalRotation = 0;
+  }
+
+  enter(prevState, params) {
+    this.lastTickTime = 0;
+    this.totalRotation = 0;
+
+    // Activate spin hitbox (larger radius)
+    this.player.activateAttackHitbox({
+      damage: this.damagePerTick,
+      knockback: { x: 100, y: -50 }, // Small knockback during spin
+      hitstun: 100,
+      hitstop: 20, // Minimal hitstop for multi-hit
+      width: 80,
+      height: 60,
+      offsetX: 0, // Centered for spin
+      offsetY: 0,
+    });
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Rotate sprite
+    this.totalRotation += delta * 0.02; // Rotation speed
+    this.sprite.setRotation(this.totalRotation);
+
+    // Movement while spinning (reduced)
+    const horizontal = this.input.getHorizontalAxis();
+    if (horizontal !== 0) {
+      this.body.setVelocityX(horizontal * this.spinSpeed);
+      this.sprite.setFlipX(horizontal < 0);
+    } else {
+      this.body.setVelocityX(this.body.velocity.x * 0.9); // Slow down
+    }
+
+    // Reset hitbox tracking periodically for multi-hit
+    if (stateTime - this.lastTickTime >= this.tickRate) {
+      this.lastTickTime = stateTime;
+      this.player.attackHitbox.hasHit.clear();
+    }
+
+    // Release button to finish
+    if (this.input.isUp(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_RELEASE;
+    }
+
+    // Max duration reached
+    if (stateTime >= this.maxSpinDuration) {
+      return PLAYER_STATES.SPIN_RELEASE;
+    }
+
+    // Can cancel with flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.player.deactivateAttackHitbox();
+    this.sprite.setRotation(0);
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
+ * Spin Release State - Finisher with launch
+ */
+export class SpinReleaseState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.SPIN_RELEASE, stateMachine);
+
+    this.releaseDuration = 200;
+    this.damage = 25;
+  }
+
+  enter(prevState, params) {
+    // Calculate if perfect timing (released right after full charge)
+    const spinTime = prevState ? this.stateMachine.stateTime : 0;
+    const isPerfect = spinTime >= 300 && spinTime <= 500; // Sweet spot
+
+    const finalDamage = isPerfect ? this.damage * 1.5 : this.damage;
+
+    // Big launch hitbox
+    this.player.activateAttackHitbox({
+      damage: finalDamage,
+      knockback: { x: 400, y: -350 }, // Strong launch
+      hitstun: 400,
+      hitstop: isPerfect ? 100 : 60,
+      width: 100,
+      height: 80,
+      offsetX: 0,
+      offsetY: 0,
+    });
+
+    // Screen shake on release
+    if (this.player.scene.effectsManager) {
+      this.player.scene.effectsManager.screenShake(isPerfect ? 8 : 5, 100);
+    }
+
+    // Final rotation flourish
+    this.sprite.setRotation(0);
+
+    // Brief pause in movement
+    this.body.setVelocityX(0);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Quick release animation
+    const progress = stateTime / this.releaseDuration;
+    this.sprite.setScale(1 + (1 - progress) * 0.3); // Shrink back to normal
+
+    if (stateTime >= this.releaseDuration) {
+      if (this.body.onFloor()) {
+        return this.input.getHorizontalAxis() !== 0
+          ? PLAYER_STATES.RUN
+          : PLAYER_STATES.IDLE;
+      }
+      return PLAYER_STATES.FALL;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.player.deactivateAttackHitbox();
+    this.sprite.setScale(1);
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
+ * Blink State - Short teleport with i-frames
+ */
+export class BlinkState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.BLINK, stateMachine);
+
+    this.blinkDuration = 100; // Total blink time (ms)
+    this.blinkDistance = 200; // How far to teleport
+    this.afterimageDuration = 300; // How long afterimage lasts
+
+    this.startPosition = { x: 0, y: 0 };
+    this.targetPosition = { x: 0, y: 0 };
+    this.blinkDirection = { x: 1, y: 0 };
+    this.afterimageSprite = null;
+  }
+
+  enter(prevState, params) {
+    // Store start position
+    this.startPosition.x = this.sprite.x;
+    this.startPosition.y = this.sprite.y;
+
+    // Determine blink direction from input (or facing direction)
+    const inputH = this.input.getHorizontalAxis();
+    const inputV = this.input.getVerticalAxis();
+
+    if (inputH !== 0 || inputV !== 0) {
+      // Normalize diagonal movement
+      const magnitude = Math.sqrt(inputH * inputH + inputV * inputV);
+      this.blinkDirection.x = inputH / magnitude;
+      this.blinkDirection.y = inputV / magnitude;
+    } else {
+      // Blink in facing direction
+      this.blinkDirection.x = this.sprite.flipX ? -1 : 1;
+      this.blinkDirection.y = 0;
+    }
+
+    // Calculate target position
+    this.targetPosition.x = this.startPosition.x + (this.blinkDirection.x * this.blinkDistance);
+    this.targetPosition.y = this.startPosition.y + (this.blinkDirection.y * this.blinkDistance);
+
+    // Create afterimage at start position
+    this.createAfterimage();
+
+    // Make player invulnerable
+    this.setInvulnerable(true);
+
+    // Disable physics body during blink (phase through everything)
+    this.body.enable = false;
+
+    // Make sprite semi-transparent during blink
+    this.sprite.setAlpha(0.3);
+
+    // Update facing direction if blinking horizontally
+    if (this.blinkDirection.x !== 0) {
+      this.sprite.setFlipX(this.blinkDirection.x < 0);
+    }
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+    const progress = Math.min(1, stateTime / this.blinkDuration);
+
+    // Lerp position (or instant teleport at start)
+    // Using instant teleport for snappy feel
+    if (progress < 0.2) {
+      // Brief startup at original position
+    } else {
+      // Teleport to target
+      this.sprite.setPosition(this.targetPosition.x, this.targetPosition.y);
+    }
+
+    // Blink complete
+    if (stateTime >= this.blinkDuration) {
+      return this.finishBlink();
+    }
+
+    return null;
+  }
+
+  finishBlink() {
+    // Re-enable physics
+    this.body.enable = true;
+
+    // Check if target position is valid (not inside wall)
+    // If invalid, push player to nearest valid position
+    this.validatePosition();
+
+    // Sync physics body to sprite position
+    this.body.reset(this.sprite.x, this.sprite.y);
+
+    // Determine next state
+    if (this.body.onFloor()) {
+      const horizontal = this.input.getHorizontalAxis();
+      return horizontal !== 0 ? PLAYER_STATES.RUN : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  validatePosition() {
+    // Simple bounds check - keep player in world
+    const bounds = this.player.scene.physics.world.bounds;
+    const halfWidth = this.sprite.width / 2;
+    const halfHeight = this.sprite.height / 2;
+
+    let x = this.sprite.x;
+    let y = this.sprite.y;
+
+    // Clamp to world bounds
+    x = Math.max(bounds.x + halfWidth, Math.min(bounds.right - halfWidth, x));
+    y = Math.max(bounds.y + halfHeight, Math.min(bounds.bottom - halfHeight, y));
+
+    this.sprite.setPosition(x, y);
+
+    // TODO: More sophisticated collision check against tilemap
+    // For now, the simple bounds check prevents going out of world
+  }
+
+  createAfterimage() {
+    const scene = this.player.scene;
+
+    // Create a copy of the player sprite as afterimage
+    this.afterimageSprite = scene.add.sprite(
+      this.startPosition.x,
+      this.startPosition.y,
+      this.sprite.texture.key
+    );
+
+    this.afterimageSprite.setFlipX(this.sprite.flipX);
+    this.afterimageSprite.setAlpha(0.6);
+    this.afterimageSprite.setTint(0x4488ff); // Blue tint
+    this.afterimageSprite.setDepth(this.sprite.depth - 1);
+
+    // Fade out afterimage
+    scene.tweens.add({
+      targets: this.afterimageSprite,
+      alpha: 0,
+      scale: 0.8,
+      duration: this.afterimageDuration,
+      ease: 'Power2',
+      onComplete: () => {
+        if (this.afterimageSprite) {
+          this.afterimageSprite.destroy();
+          this.afterimageSprite = null;
+        }
+      },
+    });
+  }
+
+  exit(nextState) {
+    this.setInvulnerable(false);
+    this.sprite.setAlpha(1);
+    this.body.enable = true;
+
+    // Afterimage cleanup handled by tween
+  }
+
+  canBeInterrupted(nextStateName) {
+    return false; // Blink cannot be interrupted
+  }
+}
+
+/**
+ * Grapple Fire State - Firing the hook
+ */
+export class GrappleFireState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.GRAPPLE_FIRE, stateMachine);
+
+    this.grappleRange = 400;
+    this.grappleSpeed = 1500;     // Hook travel speed
+    this.fireDuration = 200;      // Max time hook is out
+
+    this.hookPosition = { x: 0, y: 0 };
+    this.hookDirection = { x: 1, y: 0 };
+    this.hookGraphics = null;
+    this.foundTarget = null;
+    this.targetType = null; // 'point' or 'enemy'
+  }
+
+  enter(prevState, params) {
+    this.foundTarget = null;
+    this.targetType = null;
+
+    // Determine hook direction from input
+    const inputH = this.input.getHorizontalAxis();
+    const inputV = this.input.getVerticalAxis();
+
+    if (inputH !== 0 || inputV !== 0) {
+      const magnitude = Math.sqrt(inputH * inputH + inputV * inputV);
+      this.hookDirection.x = inputH / magnitude;
+      this.hookDirection.y = inputV / magnitude;
+    } else {
+      this.hookDirection.x = this.sprite.flipX ? -1 : 1;
+      this.hookDirection.y = 0;
+    }
+
+    // Start hook at player position
+    this.hookPosition.x = this.sprite.x;
+    this.hookPosition.y = this.sprite.y;
+
+    // Create hook visual
+    this.hookGraphics = this.player.scene.add.graphics();
+    this.hookGraphics.setDepth(this.sprite.depth - 1);
+
+    // Update facing
+    if (this.hookDirection.x !== 0) {
+      this.sprite.setFlipX(this.hookDirection.x < 0);
+    }
+
+    // Stop player movement
+    this.body.setVelocityX(0);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Move hook outward
+    const hookSpeed = this.grappleSpeed * (delta / 1000);
+    this.hookPosition.x += this.hookDirection.x * hookSpeed;
+    this.hookPosition.y += this.hookDirection.y * hookSpeed;
+
+    // Draw hook and chain
+    this.drawGrapple();
+
+    // Check for grapple targets
+    if (!this.foundTarget) {
+      this.checkForTargets();
+    }
+
+    // Found something to grapple
+    if (this.foundTarget) {
+      if (this.targetType === 'enemy') {
+        return PLAYER_STATES.GRAPPLE_PULL;
+      } else {
+        return PLAYER_STATES.GRAPPLE_TRAVEL;
+      }
+    }
+
+    // Check if hook traveled max range
+    const dx = this.hookPosition.x - this.sprite.x;
+    const dy = this.hookPosition.y - this.sprite.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance >= this.grappleRange || stateTime >= this.fireDuration) {
+      // Hook missed - return to previous state
+      return this.cancelGrapple();
+    }
+
+    return null;
+  }
+
+  checkForTargets() {
+    const scene = this.player.scene;
+
+    // Check for enemies first
+    if (scene.enemies) {
+      for (const enemy of scene.enemies) {
+        if (!enemy.isAlive) continue;
+
+        const dx = this.hookPosition.x - enemy.sprite.x;
+        const dy = this.hookPosition.y - enemy.sprite.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < 40) { // Hook hit radius
+          this.foundTarget = enemy;
+          this.targetType = 'enemy';
+          return;
+        }
+      }
+    }
+
+    // TODO: Check for grapple points (static objects)
+    // For now, we only have enemies as targets
+  }
+
+  drawGrapple() {
+    this.hookGraphics.clear();
+
+    // Chain line
+    this.hookGraphics.lineStyle(3, 0x888888, 1);
+    this.hookGraphics.beginPath();
+    this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
+    this.hookGraphics.lineTo(this.hookPosition.x, this.hookPosition.y);
+    this.hookGraphics.strokePath();
+
+    // Hook head
+    this.hookGraphics.fillStyle(0xcccccc, 1);
+    this.hookGraphics.fillCircle(this.hookPosition.x, this.hookPosition.y, 8);
+  }
+
+  cancelGrapple() {
+    if (this.body.onFloor()) {
+      return this.input.getHorizontalAxis() !== 0
+        ? PLAYER_STATES.RUN
+        : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    // Pass hook data to next state
+    if (nextState.name === PLAYER_STATES.GRAPPLE_TRAVEL ||
+        nextState.name === PLAYER_STATES.GRAPPLE_PULL) {
+      nextState.hookGraphics = this.hookGraphics;
+      nextState.foundTarget = this.foundTarget;
+      nextState.targetType = this.targetType;
+    } else {
+      // Cleanup if not continuing grapple
+      if (this.hookGraphics) {
+        this.hookGraphics.destroy();
+        this.hookGraphics = null;
+      }
+    }
+  }
+}
+
+/**
+ * Grapple Travel State - Player zips to grapple point
+ */
+export class GrappleTravelState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.GRAPPLE_TRAVEL, stateMachine);
+
+    this.travelSpeed = 1200;
+    this.hookGraphics = null;
+    this.foundTarget = null;
+  }
+
+  enter(prevState, params) {
+    // Inherited from fire state via exit()
+
+    // Disable gravity during travel
+    this.body.setAllowGravity(false);
+  }
+
+  update(time, delta) {
+    if (!this.foundTarget) {
+      return this.finishGrapple();
+    }
+
+    // Get target position
+    const targetX = this.foundTarget.x || this.foundTarget.sprite?.x || this.sprite.x;
+    const targetY = this.foundTarget.y || this.foundTarget.sprite?.y || this.sprite.y;
+
+    // Move toward target
+    const dx = targetX - this.sprite.x;
+    const dy = targetY - this.sprite.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < 30) {
+      // Reached target
+      return this.finishGrapple();
+    }
+
+    // Normalize and apply velocity
+    const speed = this.travelSpeed;
+    this.body.setVelocity(
+      (dx / distance) * speed,
+      (dy / distance) * speed
+    );
+
+    // Update grapple visual
+    this.drawGrapple(targetX, targetY);
+
+    return null;
+  }
+
+  drawGrapple(targetX, targetY) {
+    if (!this.hookGraphics) return;
+
+    this.hookGraphics.clear();
+
+    this.hookGraphics.lineStyle(3, 0x888888, 1);
+    this.hookGraphics.beginPath();
+    this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
+    this.hookGraphics.lineTo(targetX, targetY);
+    this.hookGraphics.strokePath();
+
+    this.hookGraphics.fillStyle(0xcccccc, 1);
+    this.hookGraphics.fillCircle(targetX, targetY, 8);
+  }
+
+  finishGrapple() {
+    this.body.setAllowGravity(true);
+
+    // Small upward boost on arrival
+    this.body.setVelocityY(-200);
+
+    if (this.body.onFloor()) {
+      return PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    this.body.setAllowGravity(true);
+
+    if (this.hookGraphics) {
+      this.hookGraphics.destroy();
+      this.hookGraphics = null;
+    }
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can cancel grapple with flip
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
+ * Grapple Pull State - Pull enemy toward player
+ */
+export class GrapplePullState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.GRAPPLE_PULL, stateMachine);
+
+    this.pullSpeed = 800;
+    this.pullDuration = 400;
+    this.stunDuration = 500; // How long enemy is stunned after pull
+    this.hookGraphics = null;
+    this.foundTarget = null;
+  }
+
+  enter(prevState, params) {
+    // Inherited from fire state
+
+    // Stop player movement
+    this.body.setVelocityX(0);
+
+    // Stun the enemy
+    if (this.foundTarget && this.foundTarget.isAlive) {
+      this.foundTarget.hitstunRemaining = this.pullDuration + this.stunDuration;
+      // Visual feedback
+      this.foundTarget.sprite.setTint(0x8888ff);
+    }
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    if (!this.foundTarget || !this.foundTarget.isAlive) {
+      return this.finishPull();
+    }
+
+    // Pull enemy toward player
+    const enemySprite = this.foundTarget.sprite;
+    const dx = this.sprite.x - enemySprite.x;
+    const dy = this.sprite.y - enemySprite.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < 50 || stateTime >= this.pullDuration) {
+      // Enemy arrived - leave them stunned in front of player
+      return this.finishPull();
+    }
+
+    // Move enemy toward player
+    const speed = this.pullSpeed * (delta / 1000);
+    enemySprite.x += (dx / distance) * speed;
+    enemySprite.y += (dy / distance) * speed;
+
+    // Update grapple visual
+    this.drawGrapple(enemySprite.x, enemySprite.y);
+
+    return null;
+  }
+
+  drawGrapple(targetX, targetY) {
+    if (!this.hookGraphics) return;
+
+    this.hookGraphics.clear();
+
+    this.hookGraphics.lineStyle(3, 0x888888, 1);
+    this.hookGraphics.beginPath();
+    this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
+    this.hookGraphics.lineTo(targetX, targetY);
+    this.hookGraphics.strokePath();
+
+    this.hookGraphics.fillStyle(0x8888ff, 1); // Blue for pull
+    this.hookGraphics.fillCircle(targetX, targetY, 8);
+  }
+
+  finishPull() {
+    // Clear enemy tint
+    if (this.foundTarget && this.foundTarget.sprite) {
+      this.foundTarget.sprite.clearTint();
+    }
+
+    // Return to idle/fall
+    if (this.body.onFloor()) {
+      return this.input.getHorizontalAxis() !== 0
+        ? PLAYER_STATES.RUN
+        : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    if (this.foundTarget && this.foundTarget.sprite) {
+      this.foundTarget.sprite.clearTint();
+    }
+
+    if (this.hookGraphics) {
+      this.hookGraphics.destroy();
+      this.hookGraphics = null;
+    }
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can cancel into attack to combo off the pull
+    return nextStateName === PLAYER_STATES.ATTACK_LIGHT_1 ||
+           nextStateName === PLAYER_STATES.ATTACK_HEAVY ||
+           nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -528,5 +1583,18 @@ export function createPlayerStates(stateMachine) {
     new AttackLight3State(stateMachine),
     new AttackHeavyState(stateMachine),
     new AttackAirState(stateMachine),
+    // Movement abilities
+    new FlipState(stateMachine),
+    new DiveKickState(stateMachine),
+    // Spin attack
+    new SpinChargeState(stateMachine),
+    new SpinActiveState(stateMachine),
+    new SpinReleaseState(stateMachine),
+    // Blink
+    new BlinkState(stateMachine),
+    // Grapple
+    new GrappleFireState(stateMachine),
+    new GrappleTravelState(stateMachine),
+    new GrapplePullState(stateMachine),
   ];
 }

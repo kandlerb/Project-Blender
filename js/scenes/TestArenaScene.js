@@ -4,6 +4,7 @@ import { Enemy } from '../entities/Enemy.js';
 import { CombatManager } from '../systems/CombatManager.js';
 import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
+import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 
 /**
@@ -21,8 +22,8 @@ export class TestArenaScene extends BaseScene {
     this.combatManager = null;
     this.timeManager = null;
     this.effectsManager = null;
+    this.hud = null;
     this.showCombatDebug = false;
-    this.killCount = 0;
   }
 
   onCreate() {
@@ -34,6 +35,9 @@ export class TestArenaScene extends BaseScene {
     this.combatManager = new CombatManager(this);
     this.combatManager.setTimeManager(this.timeManager);
     this.effectsManager = new EffectsManager(this);
+
+    // Create HUD
+    this.hud = new HUD(this);
 
     // Create arena
     this.createArena();
@@ -74,7 +78,7 @@ export class TestArenaScene extends BaseScene {
     });
 
     this.events.on('enemy:killed', (data) => {
-      this.killCount++;
+      // HUD handles kill count display
 
       // Death effect
       this.effectsManager.deathEffect(data.enemy.sprite.x, data.enemy.sprite.y);
@@ -128,19 +132,20 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemies = [];
 
-    // Spawn positions
+    // Spawn positions with enemy types
     const spawnPoints = [
-      { x: 600, y: 400 },
-      { x: 800, y: 400 },
-      { x: 1000, y: 400 },
-      { x: 700, y: 200 },  // On platform
-      { x: 1100, y: 100 }, // On high platform
+      { x: 600, y: 400, type: 'SWARMER' },
+      { x: 800, y: 400, type: 'SWARMER' },
+      { x: 1000, y: 400, type: 'BRUTE' },
+      { x: 700, y: 200, type: 'SWARMER' },  // On platform
+      { x: 1100, y: 100, type: 'BRUTE' },   // On high platform
     ];
 
     for (const pos of spawnPoints) {
-      const enemy = new Enemy(this, pos.x, pos.y);
+      const enemy = new Enemy(this, pos.x, pos.y, { type: pos.type });
       enemy.addCollider(this.ground);
       enemy.addCollider(this.platforms);
+      enemy.setTarget(this.player);
 
       if (this.showCombatDebug) {
         enemy.setCombatDebug(true);
@@ -214,6 +219,9 @@ export class TestArenaScene extends BaseScene {
       this.combatManager.update(time, scaledDelta);
     }
 
+    // Update HUD
+    this.hud.update(time, delta, this.player);
+
     // Always update debug HUD
     this.updateDebugHUD();
   }
@@ -221,7 +229,7 @@ export class TestArenaScene extends BaseScene {
   updateDebugHUD() {
     const pDebug = this.player.getDebugInfo();
     const timeDebug = this.timeManager.getDebugInfo();
-    const horizontal = this.inputManager.getHorizontalAxis();
+    const hudStats = this.hud.getStats();
 
     const lines = [
       'PROJECT BLENDER - Test Arena',
@@ -229,18 +237,14 @@ export class TestArenaScene extends BaseScene {
       `State: ${pDebug.state} (${pDebug.stateTime}ms)`,
       `Position: ${pDebug.position}`,
       `Velocity: ${pDebug.velocity}`,
-      `Health: ${pDebug.health}`,
-      `Kills: ${this.killCount}`,
       '',
+      `Combo: ${hudStats.combo}`,
+      `Kills: ${hudStats.kills}`,
       `Enemies: ${this.enemies.length}`,
-      `Hitstop: ${timeDebug.hitstop}ms`,
-      `TimeScale: ${timeDebug.timeScale}`,
       '',
-      'Controls:',
-      '  WASD - Move | Space - Jump',
-      '  J - Light Attack | K - Heavy',
-      '  R - Respawn Enemies',
-      '  C - Combat Debug | ` - Physics',
+      `Hitstop: ${timeDebug.hitstop}ms`,
+      '',
+      'R - Respawn | C - Combat Debug',
     ];
 
     this.debugText.setText(lines.join('\n'));
@@ -259,6 +263,12 @@ export class TestArenaScene extends BaseScene {
     if (this.player) {
       this.player.destroy();
       this.player = null;
+    }
+
+    // Clean up HUD
+    if (this.hud) {
+      this.hud.destroy();
+      this.hud = null;
     }
 
     // Clean up managers
