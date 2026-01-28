@@ -1,5 +1,6 @@
 import { StateMachine } from '../systems/StateMachine.js';
 import { createPlayerStates, PLAYER_STATES } from '../systems/PlayerStates.js';
+import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
 
 /**
@@ -36,6 +37,41 @@ export class Player {
     this.stateMachine = new StateMachine(this, PLAYER_STATES.IDLE);
     this.stateMachine.addStates(createPlayerStates(this.stateMachine));
     this.stateMachine.start();
+
+    // Combat boxes
+    this.hurtbox = new CombatBox(scene, {
+      owner: this,
+      type: BOX_TYPE.HURTBOX,
+      team: TEAM.PLAYER,
+      width: 28,
+      height: 44,
+      offsetX: 0,
+      offsetY: 0,
+    });
+
+    // Attack hitbox (activated during attacks)
+    this.attackHitbox = new CombatBox(scene, {
+      owner: this,
+      type: BOX_TYPE.HITBOX,
+      team: TEAM.PLAYER,
+      width: 50,
+      height: 40,
+      offsetX: 35, // In front of player
+      offsetY: -5,
+      damage: 10,
+      knockback: { x: 300, y: -150 },
+      hitstun: 200,
+      hitstop: 50,
+    });
+
+    // Register with combat manager if available
+    if (scene.combatManager) {
+      scene.combatManager.register(this.hurtbox);
+      scene.combatManager.register(this.attackHitbox);
+    }
+
+    // Hurtbox always active
+    this.hurtbox.activate();
 
     // Store reference on sprite for collision callbacks
     this.sprite.setData('owner', this);
@@ -182,9 +218,60 @@ export class Player {
   }
 
   /**
+   * Activate attack hitbox with specific properties
+   * @param {object} config - Attack configuration
+   */
+  activateAttackHitbox(config = {}) {
+    this.attackHitbox.activate({
+      damage: config.damage || 10,
+      knockback: config.knockback || { x: 300, y: -150 },
+      hitstun: config.hitstun || 200,
+      hitstop: config.hitstop || 50,
+    });
+
+    // Update dimensions if provided
+    if (config.width) {
+      this.attackHitbox.width = config.width;
+      this.attackHitbox.zone.body.setSize(config.width, this.attackHitbox.height);
+    }
+    if (config.height) {
+      this.attackHitbox.height = config.height;
+      this.attackHitbox.zone.body.setSize(this.attackHitbox.width, config.height);
+    }
+    if (config.offsetX !== undefined) {
+      this.attackHitbox.offsetX = config.offsetX;
+    }
+    if (config.offsetY !== undefined) {
+      this.attackHitbox.offsetY = config.offsetY;
+    }
+  }
+
+  /**
+   * Deactivate attack hitbox
+   */
+  deactivateAttackHitbox() {
+    this.attackHitbox.deactivate();
+  }
+
+  /**
+   * Toggle combat debug display
+   * @param {boolean} show
+   */
+  setCombatDebug(show) {
+    this.hurtbox.setDebug(show);
+    this.attackHitbox.setDebug(show);
+  }
+
+  /**
    * Clean up when player is destroyed
    */
   destroy() {
+    if (this.scene.combatManager) {
+      this.scene.combatManager.unregister(this.hurtbox);
+      this.scene.combatManager.unregister(this.attackHitbox);
+    }
+    this.hurtbox.destroy();
+    this.attackHitbox.destroy();
     this.sprite.destroy();
   }
 }
