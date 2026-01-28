@@ -26,6 +26,10 @@ export const PLAYER_STATES = Object.freeze({
   SPIN_RELEASE: 'spin_release',
   // Blink
   BLINK: 'blink',
+  // Grapple
+  GRAPPLE_FIRE: 'grapple_fire',
+  GRAPPLE_TRAVEL: 'grapple_travel',
+  GRAPPLE_PULL: 'grapple_pull',
 });
 
 /**
@@ -151,6 +155,11 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.BLINK;
     }
 
+    // Grapple
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
     return null;
   }
 }
@@ -214,6 +223,11 @@ export class RunState extends PlayerState {
       return PLAYER_STATES.BLINK;
     }
 
+    // Grapple
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
     return null;
   }
 }
@@ -272,6 +286,11 @@ export class JumpState extends PlayerState {
       return PLAYER_STATES.BLINK;
     }
 
+    // Grapple
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
     return null;
   }
 }
@@ -322,6 +341,11 @@ export class FallState extends PlayerState {
     // Blink
     if (this.input.justPressed(ACTIONS.BLINK)) {
       return PLAYER_STATES.BLINK;
+    }
+
+    // Grapple
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
     }
 
     // Land when hitting ground
@@ -1188,6 +1212,360 @@ export class BlinkState extends PlayerState {
 }
 
 /**
+ * Grapple Fire State - Firing the hook
+ */
+export class GrappleFireState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.GRAPPLE_FIRE, stateMachine);
+
+    this.grappleRange = 400;
+    this.grappleSpeed = 1500;     // Hook travel speed
+    this.fireDuration = 200;      // Max time hook is out
+
+    this.hookPosition = { x: 0, y: 0 };
+    this.hookDirection = { x: 1, y: 0 };
+    this.hookGraphics = null;
+    this.foundTarget = null;
+    this.targetType = null; // 'point' or 'enemy'
+  }
+
+  enter(prevState, params) {
+    this.foundTarget = null;
+    this.targetType = null;
+
+    // Determine hook direction from input
+    const inputH = this.input.getHorizontalAxis();
+    const inputV = this.input.getVerticalAxis();
+
+    if (inputH !== 0 || inputV !== 0) {
+      const magnitude = Math.sqrt(inputH * inputH + inputV * inputV);
+      this.hookDirection.x = inputH / magnitude;
+      this.hookDirection.y = inputV / magnitude;
+    } else {
+      this.hookDirection.x = this.sprite.flipX ? -1 : 1;
+      this.hookDirection.y = 0;
+    }
+
+    // Start hook at player position
+    this.hookPosition.x = this.sprite.x;
+    this.hookPosition.y = this.sprite.y;
+
+    // Create hook visual
+    this.hookGraphics = this.player.scene.add.graphics();
+    this.hookGraphics.setDepth(this.sprite.depth - 1);
+
+    // Update facing
+    if (this.hookDirection.x !== 0) {
+      this.sprite.setFlipX(this.hookDirection.x < 0);
+    }
+
+    // Stop player movement
+    this.body.setVelocityX(0);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Move hook outward
+    const hookSpeed = this.grappleSpeed * (delta / 1000);
+    this.hookPosition.x += this.hookDirection.x * hookSpeed;
+    this.hookPosition.y += this.hookDirection.y * hookSpeed;
+
+    // Draw hook and chain
+    this.drawGrapple();
+
+    // Check for grapple targets
+    if (!this.foundTarget) {
+      this.checkForTargets();
+    }
+
+    // Found something to grapple
+    if (this.foundTarget) {
+      if (this.targetType === 'enemy') {
+        return PLAYER_STATES.GRAPPLE_PULL;
+      } else {
+        return PLAYER_STATES.GRAPPLE_TRAVEL;
+      }
+    }
+
+    // Check if hook traveled max range
+    const dx = this.hookPosition.x - this.sprite.x;
+    const dy = this.hookPosition.y - this.sprite.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance >= this.grappleRange || stateTime >= this.fireDuration) {
+      // Hook missed - return to previous state
+      return this.cancelGrapple();
+    }
+
+    return null;
+  }
+
+  checkForTargets() {
+    const scene = this.player.scene;
+
+    // Check for enemies first
+    if (scene.enemies) {
+      for (const enemy of scene.enemies) {
+        if (!enemy.isAlive) continue;
+
+        const dx = this.hookPosition.x - enemy.sprite.x;
+        const dy = this.hookPosition.y - enemy.sprite.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < 40) { // Hook hit radius
+          this.foundTarget = enemy;
+          this.targetType = 'enemy';
+          return;
+        }
+      }
+    }
+
+    // TODO: Check for grapple points (static objects)
+    // For now, we only have enemies as targets
+  }
+
+  drawGrapple() {
+    this.hookGraphics.clear();
+
+    // Chain line
+    this.hookGraphics.lineStyle(3, 0x888888, 1);
+    this.hookGraphics.beginPath();
+    this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
+    this.hookGraphics.lineTo(this.hookPosition.x, this.hookPosition.y);
+    this.hookGraphics.strokePath();
+
+    // Hook head
+    this.hookGraphics.fillStyle(0xcccccc, 1);
+    this.hookGraphics.fillCircle(this.hookPosition.x, this.hookPosition.y, 8);
+  }
+
+  cancelGrapple() {
+    if (this.body.onFloor()) {
+      return this.input.getHorizontalAxis() !== 0
+        ? PLAYER_STATES.RUN
+        : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    // Pass hook data to next state
+    if (nextState.name === PLAYER_STATES.GRAPPLE_TRAVEL ||
+        nextState.name === PLAYER_STATES.GRAPPLE_PULL) {
+      nextState.hookGraphics = this.hookGraphics;
+      nextState.foundTarget = this.foundTarget;
+      nextState.targetType = this.targetType;
+    } else {
+      // Cleanup if not continuing grapple
+      if (this.hookGraphics) {
+        this.hookGraphics.destroy();
+        this.hookGraphics = null;
+      }
+    }
+  }
+}
+
+/**
+ * Grapple Travel State - Player zips to grapple point
+ */
+export class GrappleTravelState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.GRAPPLE_TRAVEL, stateMachine);
+
+    this.travelSpeed = 1200;
+    this.hookGraphics = null;
+    this.foundTarget = null;
+  }
+
+  enter(prevState, params) {
+    // Inherited from fire state via exit()
+
+    // Disable gravity during travel
+    this.body.setAllowGravity(false);
+  }
+
+  update(time, delta) {
+    if (!this.foundTarget) {
+      return this.finishGrapple();
+    }
+
+    // Get target position
+    const targetX = this.foundTarget.x || this.foundTarget.sprite?.x || this.sprite.x;
+    const targetY = this.foundTarget.y || this.foundTarget.sprite?.y || this.sprite.y;
+
+    // Move toward target
+    const dx = targetX - this.sprite.x;
+    const dy = targetY - this.sprite.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < 30) {
+      // Reached target
+      return this.finishGrapple();
+    }
+
+    // Normalize and apply velocity
+    const speed = this.travelSpeed;
+    this.body.setVelocity(
+      (dx / distance) * speed,
+      (dy / distance) * speed
+    );
+
+    // Update grapple visual
+    this.drawGrapple(targetX, targetY);
+
+    return null;
+  }
+
+  drawGrapple(targetX, targetY) {
+    if (!this.hookGraphics) return;
+
+    this.hookGraphics.clear();
+
+    this.hookGraphics.lineStyle(3, 0x888888, 1);
+    this.hookGraphics.beginPath();
+    this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
+    this.hookGraphics.lineTo(targetX, targetY);
+    this.hookGraphics.strokePath();
+
+    this.hookGraphics.fillStyle(0xcccccc, 1);
+    this.hookGraphics.fillCircle(targetX, targetY, 8);
+  }
+
+  finishGrapple() {
+    this.body.setAllowGravity(true);
+
+    // Small upward boost on arrival
+    this.body.setVelocityY(-200);
+
+    if (this.body.onFloor()) {
+      return PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    this.body.setAllowGravity(true);
+
+    if (this.hookGraphics) {
+      this.hookGraphics.destroy();
+      this.hookGraphics = null;
+    }
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can cancel grapple with flip
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
+ * Grapple Pull State - Pull enemy toward player
+ */
+export class GrapplePullState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.GRAPPLE_PULL, stateMachine);
+
+    this.pullSpeed = 800;
+    this.pullDuration = 400;
+    this.stunDuration = 500; // How long enemy is stunned after pull
+    this.hookGraphics = null;
+    this.foundTarget = null;
+  }
+
+  enter(prevState, params) {
+    // Inherited from fire state
+
+    // Stop player movement
+    this.body.setVelocityX(0);
+
+    // Stun the enemy
+    if (this.foundTarget && this.foundTarget.isAlive) {
+      this.foundTarget.hitstunRemaining = this.pullDuration + this.stunDuration;
+      // Visual feedback
+      this.foundTarget.sprite.setTint(0x8888ff);
+    }
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    if (!this.foundTarget || !this.foundTarget.isAlive) {
+      return this.finishPull();
+    }
+
+    // Pull enemy toward player
+    const enemySprite = this.foundTarget.sprite;
+    const dx = this.sprite.x - enemySprite.x;
+    const dy = this.sprite.y - enemySprite.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < 50 || stateTime >= this.pullDuration) {
+      // Enemy arrived - leave them stunned in front of player
+      return this.finishPull();
+    }
+
+    // Move enemy toward player
+    const speed = this.pullSpeed * (delta / 1000);
+    enemySprite.x += (dx / distance) * speed;
+    enemySprite.y += (dy / distance) * speed;
+
+    // Update grapple visual
+    this.drawGrapple(enemySprite.x, enemySprite.y);
+
+    return null;
+  }
+
+  drawGrapple(targetX, targetY) {
+    if (!this.hookGraphics) return;
+
+    this.hookGraphics.clear();
+
+    this.hookGraphics.lineStyle(3, 0x888888, 1);
+    this.hookGraphics.beginPath();
+    this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
+    this.hookGraphics.lineTo(targetX, targetY);
+    this.hookGraphics.strokePath();
+
+    this.hookGraphics.fillStyle(0x8888ff, 1); // Blue for pull
+    this.hookGraphics.fillCircle(targetX, targetY, 8);
+  }
+
+  finishPull() {
+    // Clear enemy tint
+    if (this.foundTarget && this.foundTarget.sprite) {
+      this.foundTarget.sprite.clearTint();
+    }
+
+    // Return to idle/fall
+    if (this.body.onFloor()) {
+      return this.input.getHorizontalAxis() !== 0
+        ? PLAYER_STATES.RUN
+        : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    if (this.foundTarget && this.foundTarget.sprite) {
+      this.foundTarget.sprite.clearTint();
+    }
+
+    if (this.hookGraphics) {
+      this.hookGraphics.destroy();
+      this.hookGraphics = null;
+    }
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can cancel into attack to combo off the pull
+    return nextStateName === PLAYER_STATES.ATTACK_LIGHT_1 ||
+           nextStateName === PLAYER_STATES.ATTACK_HEAVY ||
+           nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -1214,5 +1592,9 @@ export function createPlayerStates(stateMachine) {
     new SpinReleaseState(stateMachine),
     // Blink
     new BlinkState(stateMachine),
+    // Grapple
+    new GrappleFireState(stateMachine),
+    new GrappleTravelState(stateMachine),
+    new GrapplePullState(stateMachine),
   ];
 }
