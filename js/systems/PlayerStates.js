@@ -30,6 +30,8 @@ export const PLAYER_STATES = Object.freeze({
   GRAPPLE_FIRE: 'grapple_fire',
   GRAPPLE_TRAVEL: 'grapple_travel',
   GRAPPLE_PULL: 'grapple_pull',
+  // Wall mechanics
+  WALL_SLIDE: 'wall_slide',
 });
 
 /**
@@ -257,6 +259,15 @@ export class JumpState extends PlayerState {
 
     // Transition to fall when velocity becomes positive (falling)
     if (this.body.velocity.y >= 0) {
+      // Check for wall slide opportunity
+      const touchingLeftWall = this.body.blocked.left;
+      const touchingRightWall = this.body.blocked.right;
+      const inputH = this.input.getHorizontalAxis();
+
+      if ((touchingLeftWall && inputH < 0) || (touchingRightWall && inputH > 0)) {
+        return PLAYER_STATES.WALL_SLIDE;
+      }
+
       return PLAYER_STATES.FALL;
     }
 
@@ -310,6 +321,18 @@ export class FallState extends PlayerState {
   update(time, delta) {
     // Air movement
     this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+
+    // Wall slide - check if pressing into a wall while falling
+    const touchingLeftWall = this.body.blocked.left;
+    const touchingRightWall = this.body.blocked.right;
+    const inputH = this.input.getHorizontalAxis();
+
+    // Must be falling (not rising) and pressing toward wall
+    if (this.body.velocity.y > 0) {
+      if ((touchingLeftWall && inputH < 0) || (touchingRightWall && inputH > 0)) {
+        return PLAYER_STATES.WALL_SLIDE;
+      }
+    }
 
     // Coyote time jump (only if we didn't already jump)
     if (this.canCoyoteJump(time) && this.checkJumpInput(time)) {
@@ -1236,19 +1259,21 @@ export class GrappleFireState extends PlayerState {
     super(PLAYER_STATES.GRAPPLE_FIRE, stateMachine);
 
     this.grappleRange = 400;
-    this.grappleSpeed = 1500;     // Hook travel speed
-    this.fireDuration = 200;      // Max time hook is out
+    this.grappleSpeed = 2000;     // Hook travel speed (faster for snappy feel)
+    this.maxFireTime = 300;       // Max time before hook retracts
 
     this.hookPosition = { x: 0, y: 0 };
     this.hookDirection = { x: 1, y: 0 };
     this.hookGraphics = null;
     this.foundTarget = null;
-    this.targetType = null; // 'point' or 'enemy'
+    this.targetType = null;       // 'surface', 'enemy', or 'object'
+    this.targetPoint = { x: 0, y: 0 }; // Exact hit point for surfaces
   }
 
   enter(prevState, params) {
     this.foundTarget = null;
     this.targetType = null;
+    this.targetPoint = { x: 0, y: 0 };
 
     // Determine hook direction from input
     const inputH = this.input.getHorizontalAxis();
@@ -1276,8 +1301,8 @@ export class GrappleFireState extends PlayerState {
       this.sprite.setFlipX(this.hookDirection.x < 0);
     }
 
-    // Stop player movement
-    this.body.setVelocityX(0);
+    // Slow player movement during fire
+    this.body.setVelocityX(this.body.velocity.x * 0.5);
   }
 
   update(time, delta) {
@@ -1285,23 +1310,34 @@ export class GrappleFireState extends PlayerState {
 
     // Move hook outward
     const hookSpeed = this.grappleSpeed * (delta / 1000);
+    const prevX = this.hookPosition.x;
+    const prevY = this.hookPosition.y;
+
     this.hookPosition.x += this.hookDirection.x * hookSpeed;
     this.hookPosition.y += this.hookDirection.y * hookSpeed;
 
     // Draw hook and chain
     this.drawGrapple();
 
-    // Check for grapple targets
+    // Check for targets (surface first, then entities)
     if (!this.foundTarget) {
-      this.checkForTargets();
-    }
-
-    // Found something to grapple
-    if (this.foundTarget) {
-      if (this.targetType === 'enemy') {
-        return PLAYER_STATES.GRAPPLE_PULL;
-      } else {
+      // Check surface collision first
+      const surfaceHit = this.checkSurfaceCollision(prevX, prevY);
+      if (surfaceHit) {
+        this.foundTarget = 'surface';
+        this.targetType = 'surface';
+        this.targetPoint.x = surfaceHit.x;
+        this.targetPoint.y = surfaceHit.y;
         return PLAYER_STATES.GRAPPLE_TRAVEL;
+      }
+
+      // Check entity collision
+      this.checkEntityCollision();
+
+      if (this.foundTarget) {
+        if (this.targetType === 'enemy' || this.targetType === 'object') {
+          return PLAYER_STATES.GRAPPLE_PULL;
+        }
       }
     }
 
@@ -1310,18 +1346,108 @@ export class GrappleFireState extends PlayerState {
     const dy = this.hookPosition.y - this.sprite.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    if (distance >= this.grappleRange || stateTime >= this.fireDuration) {
-      // Hook missed - return to previous state
+    if (distance >= this.grappleRange || stateTime >= this.maxFireTime) {
       return this.cancelGrapple();
     }
 
     return null;
   }
 
-  checkForTargets() {
+  /**
+   * Check if hook hit a surface (tilemap or platform)
+   * Returns hit point or null
+   */
+  checkSurfaceCollision(prevX, prevY) {
     const scene = this.player.scene;
 
-    // Check for enemies first
+    // Method 1: Check against tilemap if it exists
+    if (scene.groundLayer) {
+      const tile = scene.groundLayer.getTileAtWorldXY(
+        this.hookPosition.x,
+        this.hookPosition.y
+      );
+      if (tile && tile.collides) {
+        return { x: this.hookPosition.x, y: this.hookPosition.y };
+      }
+    }
+
+    // Method 2: Check against platform/ground rectangles
+    const platforms = [];
+
+    // Collect ground and platforms
+    if (scene.ground) platforms.push(scene.ground);
+    if (scene.platforms) {
+      scene.platforms.getChildren().forEach(p => platforms.push(p));
+    }
+
+    // Simple line-rectangle intersection check
+    for (const platform of platforms) {
+      if (!platform.body) continue;
+
+      const bounds = platform.getBounds();
+
+      // Check if hook point is inside platform bounds
+      if (this.hookPosition.x >= bounds.left &&
+          this.hookPosition.x <= bounds.right &&
+          this.hookPosition.y >= bounds.top &&
+          this.hookPosition.y <= bounds.bottom) {
+
+        // Find the edge point (where hook should attach)
+        const hitPoint = this.findEdgePoint(prevX, prevY, bounds);
+        return hitPoint;
+      }
+    }
+
+    // Method 3: Check world bounds
+    const worldBounds = scene.physics.world.bounds;
+    if (this.hookPosition.x <= worldBounds.left ||
+        this.hookPosition.x >= worldBounds.right ||
+        this.hookPosition.y <= worldBounds.top ||
+        this.hookPosition.y >= worldBounds.bottom) {
+      // Clamp to world edge
+      return {
+        x: Math.max(worldBounds.left, Math.min(worldBounds.right, this.hookPosition.x)),
+        y: Math.max(worldBounds.top, Math.min(worldBounds.bottom, this.hookPosition.y)),
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Find the edge point where hook enters a rectangle
+   */
+  findEdgePoint(fromX, fromY, bounds) {
+    // Return the closest point on the rectangle edge to the previous hook position
+    const clampedX = Math.max(bounds.left, Math.min(bounds.right, fromX));
+    const clampedY = Math.max(bounds.top, Math.min(bounds.bottom, fromY));
+
+    // If we were outside, the clamped point is on the edge
+    if (fromX !== clampedX || fromY !== clampedY) {
+      return { x: clampedX, y: clampedY };
+    }
+
+    // Otherwise find nearest edge
+    const distLeft = Math.abs(fromX - bounds.left);
+    const distRight = Math.abs(fromX - bounds.right);
+    const distTop = Math.abs(fromY - bounds.top);
+    const distBottom = Math.abs(fromY - bounds.bottom);
+
+    const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+
+    if (minDist === distLeft) return { x: bounds.left, y: fromY };
+    if (minDist === distRight) return { x: bounds.right, y: fromY };
+    if (minDist === distTop) return { x: fromX, y: bounds.top };
+    return { x: fromX, y: bounds.bottom };
+  }
+
+  /**
+   * Check if hook hit an enemy or pullable object
+   */
+  checkEntityCollision() {
+    const scene = this.player.scene;
+
+    // Check enemies
     if (scene.enemies) {
       for (const enemy of scene.enemies) {
         if (!enemy.isAlive) continue;
@@ -1330,7 +1456,7 @@ export class GrappleFireState extends PlayerState {
         const dy = this.hookPosition.y - enemy.sprite.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
 
-        if (distance < 40) { // Hook hit radius
+        if (distance < 40) {
           this.foundTarget = enemy;
           this.targetType = 'enemy';
           return;
@@ -1338,8 +1464,8 @@ export class GrappleFireState extends PlayerState {
       }
     }
 
-    // TODO: Check for grapple points (static objects)
-    // For now, we only have enemies as targets
+    // TODO: Check pullable objects
+    // if (scene.pullableObjects) { ... }
   }
 
   drawGrapple() {
@@ -1354,7 +1480,7 @@ export class GrappleFireState extends PlayerState {
 
     // Hook head
     this.hookGraphics.fillStyle(0xcccccc, 1);
-    this.hookGraphics.fillCircle(this.hookPosition.x, this.hookPosition.y, 8);
+    this.hookGraphics.fillCircle(this.hookPosition.x, this.hookPosition.y, 6);
   }
 
   cancelGrapple() {
@@ -1367,14 +1493,14 @@ export class GrappleFireState extends PlayerState {
   }
 
   exit(nextState) {
-    // Pass hook data to next state
+    // Pass data to next grapple state
     if (nextState.name === PLAYER_STATES.GRAPPLE_TRAVEL ||
         nextState.name === PLAYER_STATES.GRAPPLE_PULL) {
       nextState.hookGraphics = this.hookGraphics;
       nextState.foundTarget = this.foundTarget;
       nextState.targetType = this.targetType;
+      nextState.targetPoint = { ...this.targetPoint };
     } else {
-      // Cleanup if not continuing grapple
       if (this.hookGraphics) {
         this.hookGraphics.destroy();
         this.hookGraphics = null;
@@ -1384,44 +1510,63 @@ export class GrappleFireState extends PlayerState {
 }
 
 /**
- * Grapple Travel State - Player zips to grapple point
+ * Grapple Travel State - Player zips to grapple point/surface
  */
 export class GrappleTravelState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.GRAPPLE_TRAVEL, stateMachine);
 
-    this.travelSpeed = 1200;
+    this.travelSpeed = 1400;
+    this.arrivalDistance = 25;    // How close before "arrived"
+    this.maxTravelTime = 600;     // Safety timeout
+
     this.hookGraphics = null;
     this.foundTarget = null;
+    this.targetType = null;
+    this.targetPoint = { x: 0, y: 0 };
   }
 
   enter(prevState, params) {
-    // Inherited from fire state via exit()
-
     // Disable gravity during travel
     this.body.setAllowGravity(false);
+
+    // Cancel any existing velocity
+    this.body.setVelocity(0, 0);
   }
 
   update(time, delta) {
-    if (!this.foundTarget) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Get target position
+    let targetX, targetY;
+
+    if (this.targetType === 'surface') {
+      targetX = this.targetPoint.x;
+      targetY = this.targetPoint.y;
+    } else if (this.foundTarget) {
+      // Moving target (shouldn't happen for travel, but handle it)
+      targetX = this.foundTarget.x ?? this.foundTarget.sprite?.x ?? this.targetPoint.x;
+      targetY = this.foundTarget.y ?? this.foundTarget.sprite?.y ?? this.targetPoint.y;
+    } else {
       return this.finishGrapple();
     }
 
-    // Get target position
-    const targetX = this.foundTarget.x || this.foundTarget.sprite?.x || this.sprite.x;
-    const targetY = this.foundTarget.y || this.foundTarget.sprite?.y || this.sprite.y;
-
-    // Move toward target
+    // Calculate distance
     const dx = targetX - this.sprite.x;
     const dy = targetY - this.sprite.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    if (distance < 30) {
-      // Reached target
+    // Arrived at target
+    if (distance < this.arrivalDistance) {
       return this.finishGrapple();
     }
 
-    // Normalize and apply velocity
+    // Safety timeout
+    if (stateTime >= this.maxTravelTime) {
+      return this.finishGrapple();
+    }
+
+    // Move toward target
     const speed = this.travelSpeed;
     this.body.setVelocity(
       (dx / distance) * speed,
@@ -1431,6 +1576,11 @@ export class GrappleTravelState extends PlayerState {
     // Update grapple visual
     this.drawGrapple(targetX, targetY);
 
+    // Can cancel with flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
     return null;
   }
 
@@ -1439,24 +1589,45 @@ export class GrappleTravelState extends PlayerState {
 
     this.hookGraphics.clear();
 
+    // Chain line
     this.hookGraphics.lineStyle(3, 0x888888, 1);
     this.hookGraphics.beginPath();
     this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
     this.hookGraphics.lineTo(targetX, targetY);
     this.hookGraphics.strokePath();
 
-    this.hookGraphics.fillStyle(0xcccccc, 1);
-    this.hookGraphics.fillCircle(targetX, targetY, 8);
+    // Hook embedded in surface
+    this.hookGraphics.fillStyle(0xffaa00, 1);
+    this.hookGraphics.fillCircle(targetX, targetY, 6);
   }
 
   finishGrapple() {
     this.body.setAllowGravity(true);
 
-    // Small upward boost on arrival
-    this.body.setVelocityY(-200);
+    // Preserve some momentum based on input
+    const inputH = this.input.getHorizontalAxis();
+    let exitVelX = inputH * 200;
+    let exitVelY = -150; // Small upward boost
 
+    // If grappling upward, give more upward boost
+    if (this.targetPoint.y < this.sprite.y - 50) {
+      exitVelY = -250;
+    }
+
+    this.body.setVelocity(exitVelX, exitVelY);
+
+    // Dust effect
+    if (this.player.scene.effectsManager) {
+      this.player.scene.effectsManager.dustPuff(
+        this.sprite.x,
+        this.sprite.y,
+        3
+      );
+    }
+
+    // Return appropriate state
     if (this.body.onFloor()) {
-      return PLAYER_STATES.IDLE;
+      return inputH !== 0 ? PLAYER_STATES.RUN : PLAYER_STATES.IDLE;
     }
     return PLAYER_STATES.FALL;
   }
@@ -1587,6 +1758,140 @@ export class GrapplePullState extends PlayerState {
 }
 
 /**
+ * Wall Slide State - Slow descent while against wall
+ */
+export class WallSlideState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.WALL_SLIDE, stateMachine);
+
+    this.slideSpeed = 80;           // Max fall speed while sliding
+    this.wallJumpForceX = 400;      // Horizontal force when jumping off
+    this.wallJumpForceY = 450;      // Vertical force when jumping off
+    this.wallDirection = 0;         // -1 = wall on left, 1 = wall on right
+    this.dustTimer = 0;
+    this.dustInterval = 150;        // Dust particle interval
+  }
+
+  enter(prevState, params) {
+    // Determine which side the wall is on
+    if (this.body.blocked.left) {
+      this.wallDirection = -1;
+      this.sprite.setFlipX(false); // Face away from wall
+    } else if (this.body.blocked.right) {
+      this.wallDirection = 1;
+      this.sprite.setFlipX(true);
+    }
+
+    // Cap fall speed immediately
+    if (this.body.velocity.y > this.slideSpeed) {
+      this.body.setVelocityY(this.slideSpeed);
+    }
+
+    this.dustTimer = 0;
+
+    // TODO: Play wall slide animation
+  }
+
+  update(time, delta) {
+    // Check if still against wall
+    const touchingWall = (this.wallDirection === -1 && this.body.blocked.left) ||
+                         (this.wallDirection === 1 && this.body.blocked.right);
+
+    // Left the wall
+    if (!touchingWall) {
+      return PLAYER_STATES.FALL;
+    }
+
+    // Landed on ground
+    if (this.body.onFloor()) {
+      // Dust puff on landing
+      if (this.player.scene.effectsManager) {
+        this.player.scene.effectsManager.dustPuff(
+          this.sprite.x,
+          this.sprite.y + 20,
+          3
+        );
+      }
+      return PLAYER_STATES.IDLE;
+    }
+
+    // Cap descent speed
+    if (this.body.velocity.y > this.slideSpeed) {
+      this.body.setVelocityY(this.slideSpeed);
+    }
+
+    // Wall jump
+    if (this.input.justPressed(ACTIONS.JUMP)) {
+      return this.performWallJump();
+    }
+
+    // Can flip off wall
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      // Flip away from wall
+      return PLAYER_STATES.FLIP;
+    }
+
+    // Can blink off wall
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
+    // Can grapple from wall
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
+    // Push away from wall - let go
+    const inputH = this.input.getHorizontalAxis();
+    if ((this.wallDirection === -1 && inputH > 0) ||
+        (this.wallDirection === 1 && inputH < 0)) {
+      return PLAYER_STATES.FALL;
+    }
+
+    // Spawn dust particles while sliding
+    this.dustTimer += delta;
+    if (this.dustTimer >= this.dustInterval) {
+      this.dustTimer = 0;
+      if (this.player.scene.effectsManager) {
+        const dustX = this.sprite.x + (this.wallDirection * 15);
+        this.player.scene.effectsManager.dustPuff(dustX, this.sprite.y, 1);
+      }
+    }
+
+    return null;
+  }
+
+  performWallJump() {
+    // Jump away from wall
+    const jumpDirX = -this.wallDirection; // Opposite of wall direction
+
+    this.body.setVelocity(
+      jumpDirX * this.wallJumpForceX,
+      -this.wallJumpForceY
+    );
+
+    // Face jump direction
+    this.sprite.setFlipX(jumpDirX < 0);
+
+    // Dust burst on wall
+    if (this.player.scene.effectsManager) {
+      const dustX = this.sprite.x + (this.wallDirection * 15);
+      this.player.scene.effectsManager.dustPuff(dustX, this.sprite.y, 4);
+    }
+
+    return PLAYER_STATES.JUMP;
+  }
+
+  exit(nextState) {
+    // Nothing special to clean up
+  }
+
+  canBeInterrupted(nextStateName) {
+    return true; // Wall slide can be interrupted by most things
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -1617,5 +1922,7 @@ export function createPlayerStates(stateMachine) {
     new GrappleFireState(stateMachine),
     new GrappleTravelState(stateMachine),
     new GrapplePullState(stateMachine),
+    // Wall slide
+    new WallSlideState(stateMachine),
   ];
 }
