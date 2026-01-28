@@ -753,8 +753,12 @@ export class FlipState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    // Flip can only be interrupted by damage states (which bypass i-frames check)
-    return false;
+    // Flip can be interrupted by its natural exit states (idle, run, fall, land)
+    // or by damage states (which bypass i-frames check)
+    return nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.RUN ||
+           nextStateName === PLAYER_STATES.FALL ||
+           nextStateName === PLAYER_STATES.LAND;
   }
 }
 
