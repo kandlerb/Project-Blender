@@ -11,6 +11,12 @@ export const PLAYER_STATES = Object.freeze({
   JUMP: 'jump',
   FALL: 'fall',
   LAND: 'land',
+  // Combat states
+  ATTACK_LIGHT_1: 'attack_light_1',
+  ATTACK_LIGHT_2: 'attack_light_2',
+  ATTACK_LIGHT_3: 'attack_light_3',
+  ATTACK_HEAVY: 'attack_heavy',
+  ATTACK_AIR: 'attack_air',
 });
 
 /**
@@ -96,6 +102,16 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.JUMP;
     }
 
+    // Light attack
+    if (this.input.justPressed(ACTIONS.ATTACK_LIGHT)) {
+      return PLAYER_STATES.ATTACK_LIGHT_1;
+    }
+
+    // Heavy attack
+    if (this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
+      return PLAYER_STATES.ATTACK_HEAVY;
+    }
+
     return null;
   }
 }
@@ -132,6 +148,16 @@ export class RunState extends PlayerState {
     if (this.checkJumpInput(time)) {
       this.doJump();
       return PLAYER_STATES.JUMP;
+    }
+
+    // Light attack
+    if (this.input.justPressed(ACTIONS.ATTACK_LIGHT)) {
+      return PLAYER_STATES.ATTACK_LIGHT_1;
+    }
+
+    // Heavy attack
+    if (this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
+      return PLAYER_STATES.ATTACK_HEAVY;
     }
 
     return null;
@@ -171,6 +197,12 @@ export class JumpState extends PlayerState {
       this.input.bufferAction(ACTIONS.JUMP, time);
     }
 
+    // Air attack
+    if (this.input.justPressed(ACTIONS.ATTACK_LIGHT) ||
+        this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
+      return PLAYER_STATES.ATTACK_AIR;
+    }
+
     return null;
   }
 }
@@ -200,6 +232,12 @@ export class FallState extends PlayerState {
     // Buffer jump input for landing
     if (this.input.justPressed(ACTIONS.JUMP)) {
       this.input.bufferAction(ACTIONS.JUMP, time);
+    }
+
+    // Air attack
+    if (this.input.justPressed(ACTIONS.ATTACK_LIGHT) ||
+        this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
+      return PLAYER_STATES.ATTACK_AIR;
     }
 
     // Land when hitting ground
@@ -252,6 +290,191 @@ export class LandState extends PlayerState {
 }
 
 /**
+ * Base class for attack states
+ */
+class AttackState extends PlayerState {
+  constructor(name, stateMachine, config) {
+    super(name, stateMachine);
+
+    // Attack timing (in ms)
+    this.startupTime = config.startup || 50;
+    this.activeTime = config.active || 100;
+    this.recoveryTime = config.recovery || 150;
+    this.totalDuration = this.startupTime + this.activeTime + this.recoveryTime;
+
+    // Combo data
+    this.nextComboState = config.nextCombo || null;
+    this.comboWindowStart = this.startupTime + this.activeTime;
+    this.comboWindowEnd = this.totalDuration - 30; // 30ms before end
+
+    // Attack properties
+    this.damage = config.damage || 10;
+    this.canMoveWhileAttacking = config.canMove || false;
+    this.movementMultiplier = config.moveMultiplier || 0.3;
+
+    // State tracking
+    this.hasHit = false;
+    this.comboQueued = false;
+  }
+
+  enter(prevState, params) {
+    this.hasHit = false;
+    this.comboQueued = false;
+
+    // Brief forward momentum on attack
+    const facing = this.sprite.flipX ? -1 : 1;
+    this.body.setVelocityX(facing * 100);
+
+    // TODO: Play attack animation
+    // TODO: Spawn hitbox during active frames
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Limited movement during attack (if allowed)
+    if (this.canMoveWhileAttacking) {
+      this.handleHorizontalMovement(this.movementMultiplier);
+    } else {
+      // Slow down horizontal movement during attack
+      this.body.setVelocityX(this.body.velocity.x * 0.9);
+    }
+
+    // Check for combo input during combo window
+    if (this.nextComboState &&
+        stateTime >= this.comboWindowStart &&
+        stateTime <= this.comboWindowEnd) {
+      if (this.input.justPressed(ACTIONS.ATTACK_LIGHT)) {
+        this.comboQueued = true;
+      }
+    }
+
+    // Attack finished
+    if (stateTime >= this.totalDuration) {
+      // Execute queued combo
+      if (this.comboQueued && this.nextComboState) {
+        return this.nextComboState;
+      }
+
+      // Return to appropriate state
+      if (!this.body.onFloor()) {
+        return PLAYER_STATES.FALL;
+      }
+      return this.input.getHorizontalAxis() !== 0
+        ? PLAYER_STATES.RUN
+        : PLAYER_STATES.IDLE;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    // TODO: Clean up hitbox
+  }
+
+  /**
+   * Attack states can be interrupted by dodge/flip
+   */
+  canBeInterrupted(nextStateName) {
+    // Can always cancel into dodge (flip)
+    if (nextStateName === PLAYER_STATES.FLIP) {
+      return true;
+    }
+    // Can't be interrupted by most states during startup/active
+    const stateTime = this.stateMachine.getStateTime();
+    if (stateTime < this.comboWindowStart) {
+      return false;
+    }
+    return true;
+  }
+}
+
+/**
+ * Light Attack 1 - First hit of combo
+ */
+export class AttackLight1State extends AttackState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.ATTACK_LIGHT_1, stateMachine, {
+      startup: 40,
+      active: 80,
+      recovery: 120,
+      damage: 10,
+      nextCombo: PLAYER_STATES.ATTACK_LIGHT_2,
+    });
+  }
+}
+
+/**
+ * Light Attack 2 - Second hit of combo
+ */
+export class AttackLight2State extends AttackState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.ATTACK_LIGHT_2, stateMachine, {
+      startup: 30,
+      active: 80,
+      recovery: 120,
+      damage: 12,
+      nextCombo: PLAYER_STATES.ATTACK_LIGHT_3,
+    });
+  }
+}
+
+/**
+ * Light Attack 3 - Finisher
+ */
+export class AttackLight3State extends AttackState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.ATTACK_LIGHT_3, stateMachine, {
+      startup: 50,
+      active: 100,
+      recovery: 200,
+      damage: 18,
+      nextCombo: null, // Combo ends here
+    });
+  }
+}
+
+/**
+ * Heavy Attack - Slower, more damage
+ */
+export class AttackHeavyState extends AttackState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.ATTACK_HEAVY, stateMachine, {
+      startup: 150,
+      active: 120,
+      recovery: 250,
+      damage: 35,
+      nextCombo: null,
+    });
+  }
+}
+
+/**
+ * Air Attack - Attack while airborne
+ */
+export class AttackAirState extends AttackState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.ATTACK_AIR, stateMachine, {
+      startup: 50,
+      active: 150,
+      recovery: 100,
+      damage: 15,
+      canMove: true,
+      moveMultiplier: 0.5,
+    });
+  }
+
+  update(time, delta) {
+    // Land cancels air attack
+    if (this.body.onFloor()) {
+      return PLAYER_STATES.LAND;
+    }
+
+    return super.update(time, delta);
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -263,5 +486,11 @@ export function createPlayerStates(stateMachine) {
     new JumpState(stateMachine),
     new FallState(stateMachine),
     new LandState(stateMachine),
+    // Combat
+    new AttackLight1State(stateMachine),
+    new AttackLight2State(stateMachine),
+    new AttackLight3State(stateMachine),
+    new AttackHeavyState(stateMachine),
+    new AttackAirState(stateMachine),
   ];
 }
