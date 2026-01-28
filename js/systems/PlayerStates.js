@@ -981,7 +981,10 @@ export class SpinActiveState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    return nextStateName === PLAYER_STATES.FLIP;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.SPIN_RELEASE ||
+           nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
