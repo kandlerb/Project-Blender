@@ -24,6 +24,8 @@ export const PLAYER_STATES = Object.freeze({
   SPIN_CHARGE: 'spin_charge',
   SPIN_ACTIVE: 'spin_active',
   SPIN_RELEASE: 'spin_release',
+  // Blink
+  BLINK: 'blink',
 });
 
 /**
@@ -144,6 +146,11 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.SPIN_CHARGE;
     }
 
+    // Blink
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
     return null;
   }
 }
@@ -202,6 +209,11 @@ export class RunState extends PlayerState {
       return PLAYER_STATES.SPIN_CHARGE;
     }
 
+    // Blink
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
     return null;
   }
 }
@@ -255,6 +267,11 @@ export class JumpState extends PlayerState {
       return PLAYER_STATES.SPIN_CHARGE;
     }
 
+    // Blink
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
     return null;
   }
 }
@@ -300,6 +317,11 @@ export class FallState extends PlayerState {
     // Spin attack (in air)
     if (this.input.justPressed(ACTIONS.SPIN)) {
       return PLAYER_STATES.SPIN_CHARGE;
+    }
+
+    // Blink
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
     }
 
     // Land when hitting ground
@@ -400,6 +422,11 @@ class AttackState extends PlayerState {
     // Flip cancel (after startup)
     if (stateTime > this.startupTime && this.input.justPressed(ACTIONS.FLIP)) {
       return PLAYER_STATES.FLIP;
+    }
+
+    // Blink cancel (after startup)
+    if (stateTime > this.startupTime && this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
     }
 
     // Activate hitbox during active frames
@@ -999,6 +1026,168 @@ export class SpinReleaseState extends PlayerState {
 }
 
 /**
+ * Blink State - Short teleport with i-frames
+ */
+export class BlinkState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.BLINK, stateMachine);
+
+    this.blinkDuration = 100; // Total blink time (ms)
+    this.blinkDistance = 200; // How far to teleport
+    this.afterimageDuration = 300; // How long afterimage lasts
+
+    this.startPosition = { x: 0, y: 0 };
+    this.targetPosition = { x: 0, y: 0 };
+    this.blinkDirection = { x: 1, y: 0 };
+    this.afterimageSprite = null;
+  }
+
+  enter(prevState, params) {
+    // Store start position
+    this.startPosition.x = this.sprite.x;
+    this.startPosition.y = this.sprite.y;
+
+    // Determine blink direction from input (or facing direction)
+    const inputH = this.input.getHorizontalAxis();
+    const inputV = this.input.getVerticalAxis();
+
+    if (inputH !== 0 || inputV !== 0) {
+      // Normalize diagonal movement
+      const magnitude = Math.sqrt(inputH * inputH + inputV * inputV);
+      this.blinkDirection.x = inputH / magnitude;
+      this.blinkDirection.y = inputV / magnitude;
+    } else {
+      // Blink in facing direction
+      this.blinkDirection.x = this.sprite.flipX ? -1 : 1;
+      this.blinkDirection.y = 0;
+    }
+
+    // Calculate target position
+    this.targetPosition.x = this.startPosition.x + (this.blinkDirection.x * this.blinkDistance);
+    this.targetPosition.y = this.startPosition.y + (this.blinkDirection.y * this.blinkDistance);
+
+    // Create afterimage at start position
+    this.createAfterimage();
+
+    // Make player invulnerable
+    this.setInvulnerable(true);
+
+    // Disable physics body during blink (phase through everything)
+    this.body.enable = false;
+
+    // Make sprite semi-transparent during blink
+    this.sprite.setAlpha(0.3);
+
+    // Update facing direction if blinking horizontally
+    if (this.blinkDirection.x !== 0) {
+      this.sprite.setFlipX(this.blinkDirection.x < 0);
+    }
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+    const progress = Math.min(1, stateTime / this.blinkDuration);
+
+    // Lerp position (or instant teleport at start)
+    // Using instant teleport for snappy feel
+    if (progress < 0.2) {
+      // Brief startup at original position
+    } else {
+      // Teleport to target
+      this.sprite.setPosition(this.targetPosition.x, this.targetPosition.y);
+    }
+
+    // Blink complete
+    if (stateTime >= this.blinkDuration) {
+      return this.finishBlink();
+    }
+
+    return null;
+  }
+
+  finishBlink() {
+    // Re-enable physics
+    this.body.enable = true;
+
+    // Check if target position is valid (not inside wall)
+    // If invalid, push player to nearest valid position
+    this.validatePosition();
+
+    // Sync physics body to sprite position
+    this.body.reset(this.sprite.x, this.sprite.y);
+
+    // Determine next state
+    if (this.body.onFloor()) {
+      const horizontal = this.input.getHorizontalAxis();
+      return horizontal !== 0 ? PLAYER_STATES.RUN : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  validatePosition() {
+    // Simple bounds check - keep player in world
+    const bounds = this.player.scene.physics.world.bounds;
+    const halfWidth = this.sprite.width / 2;
+    const halfHeight = this.sprite.height / 2;
+
+    let x = this.sprite.x;
+    let y = this.sprite.y;
+
+    // Clamp to world bounds
+    x = Math.max(bounds.x + halfWidth, Math.min(bounds.right - halfWidth, x));
+    y = Math.max(bounds.y + halfHeight, Math.min(bounds.bottom - halfHeight, y));
+
+    this.sprite.setPosition(x, y);
+
+    // TODO: More sophisticated collision check against tilemap
+    // For now, the simple bounds check prevents going out of world
+  }
+
+  createAfterimage() {
+    const scene = this.player.scene;
+
+    // Create a copy of the player sprite as afterimage
+    this.afterimageSprite = scene.add.sprite(
+      this.startPosition.x,
+      this.startPosition.y,
+      this.sprite.texture.key
+    );
+
+    this.afterimageSprite.setFlipX(this.sprite.flipX);
+    this.afterimageSprite.setAlpha(0.6);
+    this.afterimageSprite.setTint(0x4488ff); // Blue tint
+    this.afterimageSprite.setDepth(this.sprite.depth - 1);
+
+    // Fade out afterimage
+    scene.tweens.add({
+      targets: this.afterimageSprite,
+      alpha: 0,
+      scale: 0.8,
+      duration: this.afterimageDuration,
+      ease: 'Power2',
+      onComplete: () => {
+        if (this.afterimageSprite) {
+          this.afterimageSprite.destroy();
+          this.afterimageSprite = null;
+        }
+      },
+    });
+  }
+
+  exit(nextState) {
+    this.setInvulnerable(false);
+    this.sprite.setAlpha(1);
+    this.body.enable = true;
+
+    // Afterimage cleanup handled by tween
+  }
+
+  canBeInterrupted(nextStateName) {
+    return false; // Blink cannot be interrupted
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -1023,5 +1212,7 @@ export function createPlayerStates(stateMachine) {
     new SpinChargeState(stateMachine),
     new SpinActiveState(stateMachine),
     new SpinReleaseState(stateMachine),
+    // Blink
+    new BlinkState(stateMachine),
   ];
 }
