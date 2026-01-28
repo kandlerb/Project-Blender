@@ -890,6 +890,11 @@ export class SpinChargeState extends PlayerState {
     // Slight movement while charging
     this.handleHorizontalMovement(0.2);
 
+    // Maintain floor contact to prevent ground clipping
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
+
     // Released button - go to active spin if charged enough
     if (this.input.isUp(ACTIONS.SPIN)) {
       if (stateTime >= this.minChargeTime) {
@@ -974,6 +979,11 @@ export class SpinActiveState extends PlayerState {
       this.body.setVelocityX(this.body.velocity.x * 0.9); // Slow down
     }
 
+    // Maintain floor contact to prevent ground clipping
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
+
     // Reset hitbox tracking periodically for multi-hit
     if (stateTime - this.lastTickTime >= this.tickRate) {
       this.lastTickTime = stateTime;
@@ -1049,8 +1059,14 @@ export class SpinReleaseState extends PlayerState {
     // Final rotation flourish
     this.sprite.setRotation(0);
 
-    // Brief pause in movement
+    // Brief pause in movement - freeze both axes to prevent ground clipping
     this.body.setVelocityX(0);
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
+
+    // Set initial scale for release animation
+    this.sprite.setScale(1.3);
   }
 
   update(time, delta) {
@@ -1059,6 +1075,11 @@ export class SpinReleaseState extends PlayerState {
     // Quick release animation
     const progress = stateTime / this.releaseDuration;
     this.sprite.setScale(1 + (1 - progress) * 0.3); // Shrink back to normal
+
+    // Maintain floor contact to prevent clipping through ground
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
 
     if (stateTime >= this.releaseDuration) {
       if (this.body.onFloor()) {
