@@ -895,7 +895,10 @@ export class SpinChargeState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    return nextStateName === PLAYER_STATES.FLIP;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.SPIN_ACTIVE ||
+           nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
@@ -1484,9 +1487,6 @@ export class GrapplePullState extends PlayerState {
   enter(prevState, params) {
     // Inherited from fire state
 
-    // Stop player movement
-    this.body.setVelocityX(0);
-
     // Stun the enemy
     if (this.foundTarget && this.foundTarget.isAlive) {
       this.foundTarget.hitstunRemaining = this.pullDuration + this.stunDuration;
@@ -1497,6 +1497,9 @@ export class GrapplePullState extends PlayerState {
 
   update(time, delta) {
     const stateTime = this.stateMachine.getStateTime();
+
+    // Allow movement while pulling
+    this.handleHorizontalMovement(0.6);
 
     if (!this.foundTarget || !this.foundTarget.isAlive) {
       return this.finishPull();
@@ -1566,10 +1569,13 @@ export class GrapplePullState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    // Can cancel into attack to combo off the pull
+    // Can cancel into attack to combo off the pull, or exit normally
     return nextStateName === PLAYER_STATES.ATTACK_LIGHT_1 ||
            nextStateName === PLAYER_STATES.ATTACK_HEAVY ||
-           nextStateName === PLAYER_STATES.FLIP;
+           nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.RUN ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
