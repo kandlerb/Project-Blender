@@ -30,6 +30,8 @@ export const PLAYER_STATES = Object.freeze({
   GRAPPLE_FIRE: 'grapple_fire',
   GRAPPLE_TRAVEL: 'grapple_travel',
   GRAPPLE_PULL: 'grapple_pull',
+  // Wall mechanics
+  WALL_SLIDE: 'wall_slide',
 });
 
 /**
@@ -257,6 +259,15 @@ export class JumpState extends PlayerState {
 
     // Transition to fall when velocity becomes positive (falling)
     if (this.body.velocity.y >= 0) {
+      // Check for wall slide opportunity
+      const touchingLeftWall = this.body.blocked.left;
+      const touchingRightWall = this.body.blocked.right;
+      const inputH = this.input.getHorizontalAxis();
+
+      if ((touchingLeftWall && inputH < 0) || (touchingRightWall && inputH > 0)) {
+        return PLAYER_STATES.WALL_SLIDE;
+      }
+
       return PLAYER_STATES.FALL;
     }
 
@@ -310,6 +321,18 @@ export class FallState extends PlayerState {
   update(time, delta) {
     // Air movement
     this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+
+    // Wall slide - check if pressing into a wall while falling
+    const touchingLeftWall = this.body.blocked.left;
+    const touchingRightWall = this.body.blocked.right;
+    const inputH = this.input.getHorizontalAxis();
+
+    // Must be falling (not rising) and pressing toward wall
+    if (this.body.velocity.y > 0) {
+      if ((touchingLeftWall && inputH < 0) || (touchingRightWall && inputH > 0)) {
+        return PLAYER_STATES.WALL_SLIDE;
+      }
+    }
 
     // Coyote time jump (only if we didn't already jump)
     if (this.canCoyoteJump(time) && this.checkJumpInput(time)) {
@@ -1580,6 +1603,140 @@ export class GrapplePullState extends PlayerState {
 }
 
 /**
+ * Wall Slide State - Slow descent while against wall
+ */
+export class WallSlideState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.WALL_SLIDE, stateMachine);
+
+    this.slideSpeed = 80;           // Max fall speed while sliding
+    this.wallJumpForceX = 400;      // Horizontal force when jumping off
+    this.wallJumpForceY = 450;      // Vertical force when jumping off
+    this.wallDirection = 0;         // -1 = wall on left, 1 = wall on right
+    this.dustTimer = 0;
+    this.dustInterval = 150;        // Dust particle interval
+  }
+
+  enter(prevState, params) {
+    // Determine which side the wall is on
+    if (this.body.blocked.left) {
+      this.wallDirection = -1;
+      this.sprite.setFlipX(false); // Face away from wall
+    } else if (this.body.blocked.right) {
+      this.wallDirection = 1;
+      this.sprite.setFlipX(true);
+    }
+
+    // Cap fall speed immediately
+    if (this.body.velocity.y > this.slideSpeed) {
+      this.body.setVelocityY(this.slideSpeed);
+    }
+
+    this.dustTimer = 0;
+
+    // TODO: Play wall slide animation
+  }
+
+  update(time, delta) {
+    // Check if still against wall
+    const touchingWall = (this.wallDirection === -1 && this.body.blocked.left) ||
+                         (this.wallDirection === 1 && this.body.blocked.right);
+
+    // Left the wall
+    if (!touchingWall) {
+      return PLAYER_STATES.FALL;
+    }
+
+    // Landed on ground
+    if (this.body.onFloor()) {
+      // Dust puff on landing
+      if (this.player.scene.effectsManager) {
+        this.player.scene.effectsManager.dustPuff(
+          this.sprite.x,
+          this.sprite.y + 20,
+          3
+        );
+      }
+      return PLAYER_STATES.IDLE;
+    }
+
+    // Cap descent speed
+    if (this.body.velocity.y > this.slideSpeed) {
+      this.body.setVelocityY(this.slideSpeed);
+    }
+
+    // Wall jump
+    if (this.input.justPressed(ACTIONS.JUMP)) {
+      return this.performWallJump();
+    }
+
+    // Can flip off wall
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      // Flip away from wall
+      return PLAYER_STATES.FLIP;
+    }
+
+    // Can blink off wall
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      return PLAYER_STATES.BLINK;
+    }
+
+    // Can grapple from wall
+    if (this.input.justPressed(ACTIONS.GRAPPLE)) {
+      return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
+    // Push away from wall - let go
+    const inputH = this.input.getHorizontalAxis();
+    if ((this.wallDirection === -1 && inputH > 0) ||
+        (this.wallDirection === 1 && inputH < 0)) {
+      return PLAYER_STATES.FALL;
+    }
+
+    // Spawn dust particles while sliding
+    this.dustTimer += delta;
+    if (this.dustTimer >= this.dustInterval) {
+      this.dustTimer = 0;
+      if (this.player.scene.effectsManager) {
+        const dustX = this.sprite.x + (this.wallDirection * 15);
+        this.player.scene.effectsManager.dustPuff(dustX, this.sprite.y, 1);
+      }
+    }
+
+    return null;
+  }
+
+  performWallJump() {
+    // Jump away from wall
+    const jumpDirX = -this.wallDirection; // Opposite of wall direction
+
+    this.body.setVelocity(
+      jumpDirX * this.wallJumpForceX,
+      -this.wallJumpForceY
+    );
+
+    // Face jump direction
+    this.sprite.setFlipX(jumpDirX < 0);
+
+    // Dust burst on wall
+    if (this.player.scene.effectsManager) {
+      const dustX = this.sprite.x + (this.wallDirection * 15);
+      this.player.scene.effectsManager.dustPuff(dustX, this.sprite.y, 4);
+    }
+
+    return PLAYER_STATES.JUMP;
+  }
+
+  exit(nextState) {
+    // Nothing special to clean up
+  }
+
+  canBeInterrupted(nextStateName) {
+    return true; // Wall slide can be interrupted by most things
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -1610,5 +1767,7 @@ export function createPlayerStates(stateMachine) {
     new GrappleFireState(stateMachine),
     new GrappleTravelState(stateMachine),
     new GrapplePullState(stateMachine),
+    // Wall slide
+    new WallSlideState(stateMachine),
   ];
 }
