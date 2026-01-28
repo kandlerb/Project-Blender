@@ -132,19 +132,20 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemies = [];
 
-    // Spawn positions
+    // Spawn positions with enemy types
     const spawnPoints = [
-      { x: 600, y: 400 },
-      { x: 800, y: 400 },
-      { x: 1000, y: 400 },
-      { x: 700, y: 200 },  // On platform
-      { x: 1100, y: 100 }, // On high platform
+      { x: 600, y: 400, type: 'SWARMER' },
+      { x: 800, y: 400, type: 'SWARMER' },
+      { x: 1000, y: 400, type: 'BRUTE' },
+      { x: 700, y: 200, type: 'SWARMER' },  // On platform
+      { x: 1100, y: 100, type: 'BRUTE' },   // On high platform
     ];
 
     for (const pos of spawnPoints) {
-      const enemy = new Enemy(this, pos.x, pos.y);
+      const enemy = new Enemy(this, pos.x, pos.y, { type: pos.type });
       enemy.addCollider(this.ground);
       enemy.addCollider(this.platforms);
+      enemy.setTarget(this.player);
 
       if (this.showCombatDebug) {
         enemy.setCombatDebug(true);
