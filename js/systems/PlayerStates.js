@@ -1468,8 +1468,9 @@ export class GrappleTravelState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    // Can cancel grapple with flip
-    return nextStateName === PLAYER_STATES.FLIP;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
