@@ -1211,7 +1211,11 @@ export class BlinkState extends PlayerState {
   }
 
   canBeInterrupted(nextStateName) {
-    return false; // Blink cannot be interrupted
+    // Allow transitions to valid exit states (from finishBlink)
+    // Block external interruptions during the blink
+    return nextStateName === PLAYER_STATES.IDLE ||
+           nextStateName === PLAYER_STATES.RUN ||
+           nextStateName === PLAYER_STATES.FALL;
   }
 }
 
