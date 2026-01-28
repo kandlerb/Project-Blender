@@ -3,6 +3,7 @@ export { StateMachine, State } from './StateMachine.js';
 export { TimeManager } from './TimeManager.js';
 export { CombatBox, BOX_TYPE, TEAM } from './CombatBox.js';
 export { CombatManager } from './CombatManager.js';
+export { EffectsManager } from './EffectsManager.js';
 export {
   PLAYER_STATES,
   createPlayerStates,

@@ -3,6 +3,7 @@ import { Player } from '../entities/Player.js';
 import { Enemy } from '../entities/Enemy.js';
 import { CombatManager } from '../systems/CombatManager.js';
 import { TimeManager } from '../systems/TimeManager.js';
+import { EffectsManager } from '../systems/EffectsManager.js';
 import { ACTIONS } from '../systems/InputManager.js';
 
 /**
@@ -19,6 +20,7 @@ export class TestArenaScene extends BaseScene {
     this.debugText = null;
     this.combatManager = null;
     this.timeManager = null;
+    this.effectsManager = null;
     this.showCombatDebug = false;
     this.killCount = 0;
   }
@@ -31,6 +33,7 @@ export class TestArenaScene extends BaseScene {
     this.timeManager = new TimeManager(this);
     this.combatManager = new CombatManager(this);
     this.combatManager.setTimeManager(this.timeManager);
+    this.effectsManager = new EffectsManager(this);
 
     // Create arena
     this.createArena();
@@ -50,19 +53,37 @@ export class TestArenaScene extends BaseScene {
     this.setupInputHandlers();
 
     // Event listeners
+    this.events.on('combat:hit', (hitData) => {
+      // Determine hit intensity based on damage
+      let intensity = 'light';
+      if (hitData.damage >= 30) intensity = 'heavy';
+      else if (hitData.damage >= 15) intensity = 'medium';
+
+      // Get hit position (defender's position)
+      const defenderSprite = hitData.defender.sprite || hitData.defender;
+      const x = defenderSprite.x;
+      const y = defenderSprite.y;
+
+      // Determine direction based on attacker facing
+      const attackerSprite = hitData.attacker.sprite || hitData.attacker;
+      const direction = attackerSprite.flipX ? -1 : 1;
+
+      // Spawn effects
+      this.effectsManager.hitEffect(x, y, intensity, direction);
+      this.effectsManager.damageNumber(x, y - 20, hitData.damage);
+    });
+
     this.events.on('enemy:killed', (data) => {
       this.killCount++;
-      console.log(`Enemy killed! Total: ${this.killCount}`);
+
+      // Death effect
+      this.effectsManager.deathEffect(data.enemy.sprite.x, data.enemy.sprite.y);
 
       // Remove from array
       const index = this.enemies.indexOf(data.enemy);
       if (index > -1) {
         this.enemies.splice(index, 1);
       }
-    });
-
-    this.events.on('combat:hit', (hitData) => {
-      console.log(`Hit! ${hitData.damage} damage`);
     });
 
     console.log('TestArena ready');
@@ -244,6 +265,10 @@ export class TestArenaScene extends BaseScene {
     if (this.combatManager) {
       this.combatManager.destroy();
       this.combatManager = null;
+    }
+    if (this.effectsManager) {
+      this.effectsManager.destroy();
+      this.effectsManager = null;
     }
   }
 }
