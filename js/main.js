@@ -1,5 +1,6 @@
-// Import scenes (will add more as we build them)
-import { PlaceholderScene } from './scenes/PlaceholderScene.js';
+import { BootScene } from './scenes/BootScene.js';
+import { PreloadScene } from './scenes/PreloadScene.js';
+import { TestArenaScene } from './scenes/TestArenaScene.js';
 
 // Phaser game configuration
 const config = {
@@ -18,20 +19,20 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
 
-  // Physics (will configure properly later)
+  // Physics
   physics: {
     default: 'arcade',
     arcade: {
-      gravity: { y: 0 },
+      gravity: { y: 0 }, // We handle gravity per-body
       debug: false,
     },
   },
 
-  // Scenes
-  scene: [PlaceholderScene],
+  // Scene sequence
+  scene: [BootScene, PreloadScene, TestArenaScene],
 };
 
 // Create game instance
 const game = new Phaser.Game(config);
 
-console.log('Project Blender initialized');
+console.log('Project Blender starting...');
