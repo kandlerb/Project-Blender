@@ -17,6 +17,9 @@ export const PLAYER_STATES = Object.freeze({
   ATTACK_LIGHT_3: 'attack_light_3',
   ATTACK_HEAVY: 'attack_heavy',
   ATTACK_AIR: 'attack_air',
+  // Movement abilities
+  FLIP: 'flip',
+  DIVE_KICK: 'dive_kick',
 });
 
 /**
@@ -62,6 +65,21 @@ class PlayerState extends State {
   checkJumpInput(time) {
     return this.input.justPressed(ACTIONS.JUMP) ||
            this.input.consumeBuffered(ACTIONS.JUMP, time, PHYSICS.PLAYER.JUMP_BUFFER);
+  }
+
+  /**
+   * Set player invulnerability
+   * @param {boolean} invulnerable
+   */
+  setInvulnerable(invulnerable) {
+    this.player.isInvulnerable = invulnerable;
+
+    // Visual feedback - slight transparency when invulnerable
+    if (invulnerable) {
+      this.sprite.setAlpha(0.7);
+    } else {
+      this.sprite.setAlpha(1);
+    }
   }
 
   /**
@@ -112,6 +130,11 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.ATTACK_HEAVY;
     }
 
+    // Flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
     return null;
   }
 }
@@ -160,6 +183,11 @@ export class RunState extends PlayerState {
       return PLAYER_STATES.ATTACK_HEAVY;
     }
 
+    // Flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
     return null;
   }
 }
@@ -203,6 +231,11 @@ export class JumpState extends PlayerState {
       return PLAYER_STATES.ATTACK_AIR;
     }
 
+    // Flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
     return null;
   }
 }
@@ -238,6 +271,11 @@ export class FallState extends PlayerState {
     if (this.input.justPressed(ACTIONS.ATTACK_LIGHT) ||
         this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
       return PLAYER_STATES.ATTACK_AIR;
+    }
+
+    // Flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
     }
 
     // Land when hitting ground
@@ -334,6 +372,11 @@ class AttackState extends PlayerState {
 
   update(time, delta) {
     const stateTime = this.stateMachine.getStateTime();
+
+    // Flip cancel (after startup)
+    if (stateTime > this.startupTime && this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
 
     // Activate hitbox during active frames
     if (stateTime >= this.startupTime && stateTime < this.startupTime + this.activeTime) {
@@ -511,6 +554,210 @@ export class AttackAirState extends AttackState {
 }
 
 /**
+ * Flip State - Acrobatic dodge with i-frames
+ */
+export class FlipState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.FLIP, stateMachine);
+
+    // Timing (in ms)
+    this.flipDuration = 400;
+    this.iFrameStart = 30; // i-frames start slightly after flip begins
+    this.iFrameEnd = 280; // i-frames end before flip ends (recovery)
+    this.perfectWindowStart = 170; // Perfect timing window (apex)
+    this.perfectWindowEnd = 220;
+
+    // Movement
+    this.flipSpeed = 450; // Horizontal speed during flip
+    this.flipHeight = 350; // Vertical impulse
+
+    // State tracking
+    this.flipDirection = 1;
+    this.wasPerfectTiming = false;
+    this.hasReleasedAttack = true;
+  }
+
+  enter(prevState, params) {
+    // Determine flip direction (toward input or facing direction)
+    const inputDir = this.input.getHorizontalAxis();
+    this.flipDirection = inputDir !== 0 ? inputDir : (this.sprite.flipX ? -1 : 1);
+
+    // Can flip in opposite direction of facing
+    if (inputDir !== 0) {
+      this.sprite.setFlipX(inputDir < 0);
+    }
+
+    // Apply flip velocity
+    this.body.setVelocityX(this.flipDirection * this.flipSpeed);
+    this.body.setVelocityY(-this.flipHeight);
+
+    // Track if we came from attack (for attack buffering)
+    this.hasReleasedAttack = !this.input.isDown(ACTIONS.ATTACK_LIGHT) &&
+                             !this.input.isDown(ACTIONS.ATTACK_HEAVY);
+
+    this.wasPerfectTiming = false;
+
+    // TODO: Play flip animation
+    // Temporary: rotate the sprite
+    this.sprite.setRotation(0);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // I-frame management
+    const inIFrames = stateTime >= this.iFrameStart && stateTime <= this.iFrameEnd;
+    this.setInvulnerable(inIFrames);
+
+    // Perfect timing check (for future mechanics)
+    if (stateTime >= this.perfectWindowStart && stateTime <= this.perfectWindowEnd) {
+      this.wasPerfectTiming = true;
+    }
+
+    // Visual rotation during flip
+    const progress = stateTime / this.flipDuration;
+    const rotation = this.flipDirection * progress * Math.PI * 2;
+    this.sprite.setRotation(rotation);
+
+    // Air control (reduced)
+    const horizontal = this.input.getHorizontalAxis();
+    if (horizontal !== 0) {
+      const currentVelX = this.body.velocity.x;
+      const adjustment = horizontal * 100; // Slight air adjustment
+      this.body.setVelocityX(currentVelX + adjustment * (delta / 1000));
+    }
+
+    // Track attack release for buffering
+    if (!this.input.isDown(ACTIONS.ATTACK_LIGHT) &&
+        !this.input.isDown(ACTIONS.ATTACK_HEAVY)) {
+      this.hasReleasedAttack = true;
+    }
+
+    // Dive kick - attack while descending
+    if (this.hasReleasedAttack &&
+        this.body.velocity.y > 0 &&
+        (this.input.justPressed(ACTIONS.ATTACK_LIGHT) ||
+         this.input.justPressed(ACTIONS.ATTACK_HEAVY))) {
+      return PLAYER_STATES.DIVE_KICK;
+    }
+
+    // Land early cancels flip
+    if (this.body.onFloor() && stateTime > 100) {
+      return this.finishFlip();
+    }
+
+    // Flip complete
+    if (stateTime >= this.flipDuration) {
+      return this.finishFlip();
+    }
+
+    return null;
+  }
+
+  finishFlip() {
+    // Determine next state based on situation
+    if (this.body.onFloor()) {
+      // Dust effect on land
+      if (this.player.scene.effectsManager) {
+        this.player.scene.effectsManager.dustPuff(
+          this.sprite.x,
+          this.sprite.y + 20,
+          3
+        );
+      }
+
+      const horizontal = this.input.getHorizontalAxis();
+      return horizontal !== 0 ? PLAYER_STATES.RUN : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    this.setInvulnerable(false);
+    this.sprite.setRotation(0);
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Flip can only be interrupted by damage states (which bypass i-frames check)
+    return false;
+  }
+}
+
+/**
+ * Dive Kick State - Downward attack from flip
+ */
+export class DiveKickState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.DIVE_KICK, stateMachine);
+
+    this.diveSpeed = 800; // Downward velocity
+    this.horizontalSpeed = 200; // Forward momentum
+    this.damage = 20;
+    this.hasHit = false;
+  }
+
+  enter(prevState, params) {
+    this.hasHit = false;
+
+    // Dive downward with slight forward momentum
+    const direction = this.sprite.flipX ? -1 : 1;
+    this.body.setVelocityX(direction * this.horizontalSpeed);
+    this.body.setVelocityY(this.diveSpeed);
+
+    // Activate hitbox
+    this.player.activateAttackHitbox({
+      damage: this.damage,
+      knockback: { x: 150, y: 200 }, // Spike enemies down
+      hitstun: 300,
+      hitstop: 60,
+      width: 40,
+      height: 50,
+      offsetX: 0,
+      offsetY: 15,
+    });
+
+    // TODO: Play dive kick animation
+    // Temporary: angle the sprite
+    const angle = this.sprite.flipX ? 45 : -45;
+    this.sprite.setAngle(angle);
+  }
+
+  update(time, delta) {
+    // Land cancels dive kick
+    if (this.body.onFloor()) {
+      // Impact effect
+      if (this.player.scene.effectsManager) {
+        this.player.scene.effectsManager.dustPuff(
+          this.sprite.x,
+          this.sprite.y + 20,
+          6
+        );
+        this.player.scene.effectsManager.screenShake(4, 60);
+      }
+
+      return PLAYER_STATES.LAND;
+    }
+
+    // Can cancel into flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.player.deactivateAttackHitbox();
+    this.sprite.setAngle(0);
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can be interrupted by another flip
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -528,5 +775,8 @@ export function createPlayerStates(stateMachine) {
     new AttackLight3State(stateMachine),
     new AttackHeavyState(stateMachine),
     new AttackAirState(stateMachine),
+    // Movement abilities
+    new FlipState(stateMachine),
+    new DiveKickState(stateMachine),
   ];
 }
