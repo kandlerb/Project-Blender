@@ -309,6 +309,9 @@ class AttackState extends PlayerState {
 
     // Attack properties
     this.damage = config.damage || 10;
+    this.knockback = config.knockback || { x: 300, y: -150 };
+    this.hitstun = config.hitstun || 200;
+    this.hitstop = config.hitstop || 50;
     this.canMoveWhileAttacking = config.canMove || false;
     this.movementMultiplier = config.moveMultiplier || 0.3;
 
@@ -331,6 +334,23 @@ class AttackState extends PlayerState {
 
   update(time, delta) {
     const stateTime = this.stateMachine.getStateTime();
+
+    // Activate hitbox during active frames
+    if (stateTime >= this.startupTime && stateTime < this.startupTime + this.activeTime) {
+      if (!this.player.attackHitbox.active) {
+        this.player.activateAttackHitbox({
+          damage: this.damage,
+          knockback: this.knockback,
+          hitstun: this.hitstun,
+          hitstop: this.hitstop,
+        });
+      }
+    } else {
+      // Deactivate outside active frames
+      if (this.player.attackHitbox.active) {
+        this.player.deactivateAttackHitbox();
+      }
+    }
 
     // Limited movement during attack (if allowed)
     if (this.canMoveWhileAttacking) {
@@ -369,7 +389,8 @@ class AttackState extends PlayerState {
   }
 
   exit(nextState) {
-    // TODO: Clean up hitbox
+    // Always deactivate hitbox when leaving attack state
+    this.player.deactivateAttackHitbox();
   }
 
   /**
@@ -400,6 +421,9 @@ export class AttackLight1State extends AttackState {
       recovery: 120,
       damage: 10,
       nextCombo: PLAYER_STATES.ATTACK_LIGHT_2,
+      knockback: { x: 200, y: -50 },
+      hitstun: 150,
+      hitstop: 40,
     });
   }
 }
@@ -415,6 +439,9 @@ export class AttackLight2State extends AttackState {
       recovery: 120,
       damage: 12,
       nextCombo: PLAYER_STATES.ATTACK_LIGHT_3,
+      knockback: { x: 250, y: -80 },
+      hitstun: 180,
+      hitstop: 50,
     });
   }
 }
@@ -430,6 +457,9 @@ export class AttackLight3State extends AttackState {
       recovery: 200,
       damage: 18,
       nextCombo: null, // Combo ends here
+      knockback: { x: 400, y: -200 },
+      hitstun: 300,
+      hitstop: 80,
     });
   }
 }
@@ -445,6 +475,9 @@ export class AttackHeavyState extends AttackState {
       recovery: 250,
       damage: 35,
       nextCombo: null,
+      knockback: { x: 500, y: -250 },
+      hitstun: 400,
+      hitstop: 100,
     });
   }
 }
@@ -461,6 +494,9 @@ export class AttackAirState extends AttackState {
       damage: 15,
       canMove: true,
       moveMultiplier: 0.5,
+      knockback: { x: 250, y: -100 },
+      hitstun: 200,
+      hitstop: 50,
     });
   }
 
