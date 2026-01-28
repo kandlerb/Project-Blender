@@ -20,6 +20,10 @@ export const PLAYER_STATES = Object.freeze({
   // Movement abilities
   FLIP: 'flip',
   DIVE_KICK: 'dive_kick',
+  // Spin attack
+  SPIN_CHARGE: 'spin_charge',
+  SPIN_ACTIVE: 'spin_active',
+  SPIN_RELEASE: 'spin_release',
 });
 
 /**
@@ -135,6 +139,11 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.FLIP;
     }
 
+    // Spin attack
+    if (this.input.justPressed(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_CHARGE;
+    }
+
     return null;
   }
 }
@@ -188,6 +197,11 @@ export class RunState extends PlayerState {
       return PLAYER_STATES.FLIP;
     }
 
+    // Spin attack
+    if (this.input.justPressed(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_CHARGE;
+    }
+
     return null;
   }
 }
@@ -236,6 +250,11 @@ export class JumpState extends PlayerState {
       return PLAYER_STATES.FLIP;
     }
 
+    // Spin attack (in air)
+    if (this.input.justPressed(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_CHARGE;
+    }
+
     return null;
   }
 }
@@ -276,6 +295,11 @@ export class FallState extends PlayerState {
     // Flip
     if (this.input.justPressed(ACTIONS.FLIP)) {
       return PLAYER_STATES.FLIP;
+    }
+
+    // Spin attack (in air)
+    if (this.input.justPressed(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_CHARGE;
     }
 
     // Land when hitting ground
@@ -758,6 +782,223 @@ export class DiveKickState extends PlayerState {
 }
 
 /**
+ * Spin Charge State - Wind up for spin attack
+ */
+export class SpinChargeState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.SPIN_CHARGE, stateMachine);
+
+    this.chargeTime = 300; // Time to fully charge
+    this.minChargeTime = 100; // Minimum charge before can release
+  }
+
+  enter(prevState, params) {
+    // Slow down horizontal movement
+    this.body.setVelocityX(this.body.velocity.x * 0.3);
+
+    // TODO: Play charge animation
+    // Temporary: scale up slightly
+    this.sprite.setScale(1.1);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+    const chargePercent = Math.min(1, stateTime / this.chargeTime);
+
+    // Visual feedback for charge level
+    const scale = 1 + (chargePercent * 0.2);
+    this.sprite.setScale(scale);
+
+    // Slight movement while charging
+    this.handleHorizontalMovement(0.2);
+
+    // Released button - go to active spin if charged enough
+    if (this.input.isUp(ACTIONS.SPIN)) {
+      if (stateTime >= this.minChargeTime) {
+        return PLAYER_STATES.SPIN_ACTIVE;
+      } else {
+        // Not charged enough - cancel
+        return this.body.onFloor() ? PLAYER_STATES.IDLE : PLAYER_STATES.FALL;
+      }
+    }
+
+    // Fully charged - auto transition to active
+    if (stateTime >= this.chargeTime) {
+      return PLAYER_STATES.SPIN_ACTIVE;
+    }
+
+    // Can cancel with flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.sprite.setScale(1);
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
+ * Spin Active State - Actively spinning with hitbox
+ */
+export class SpinActiveState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.SPIN_ACTIVE, stateMachine);
+
+    this.maxSpinDuration = 2000; // Max time can spin
+    this.damagePerTick = 5; // Damage per hit
+    this.tickRate = 150; // MS between damage ticks
+    this.spinSpeed = 200; // Movement speed while spinning
+
+    this.lastTickTime = 0;
+    this.totalRotation = 0;
+  }
+
+  enter(prevState, params) {
+    this.lastTickTime = 0;
+    this.totalRotation = 0;
+
+    // Activate spin hitbox (larger radius)
+    this.player.activateAttackHitbox({
+      damage: this.damagePerTick,
+      knockback: { x: 100, y: -50 }, // Small knockback during spin
+      hitstun: 100,
+      hitstop: 20, // Minimal hitstop for multi-hit
+      width: 80,
+      height: 60,
+      offsetX: 0, // Centered for spin
+      offsetY: 0,
+    });
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Rotate sprite
+    this.totalRotation += delta * 0.02; // Rotation speed
+    this.sprite.setRotation(this.totalRotation);
+
+    // Movement while spinning (reduced)
+    const horizontal = this.input.getHorizontalAxis();
+    if (horizontal !== 0) {
+      this.body.setVelocityX(horizontal * this.spinSpeed);
+      this.sprite.setFlipX(horizontal < 0);
+    } else {
+      this.body.setVelocityX(this.body.velocity.x * 0.9); // Slow down
+    }
+
+    // Reset hitbox tracking periodically for multi-hit
+    if (stateTime - this.lastTickTime >= this.tickRate) {
+      this.lastTickTime = stateTime;
+      this.player.attackHitbox.hasHit.clear();
+    }
+
+    // Release button to finish
+    if (this.input.isUp(ACTIONS.SPIN)) {
+      return PLAYER_STATES.SPIN_RELEASE;
+    }
+
+    // Max duration reached
+    if (stateTime >= this.maxSpinDuration) {
+      return PLAYER_STATES.SPIN_RELEASE;
+    }
+
+    // Can cancel with flip
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.player.deactivateAttackHitbox();
+    this.sprite.setRotation(0);
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
+ * Spin Release State - Finisher with launch
+ */
+export class SpinReleaseState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.SPIN_RELEASE, stateMachine);
+
+    this.releaseDuration = 200;
+    this.damage = 25;
+  }
+
+  enter(prevState, params) {
+    // Calculate if perfect timing (released right after full charge)
+    const spinTime = prevState ? this.stateMachine.stateTime : 0;
+    const isPerfect = spinTime >= 300 && spinTime <= 500; // Sweet spot
+
+    const finalDamage = isPerfect ? this.damage * 1.5 : this.damage;
+
+    // Big launch hitbox
+    this.player.activateAttackHitbox({
+      damage: finalDamage,
+      knockback: { x: 400, y: -350 }, // Strong launch
+      hitstun: 400,
+      hitstop: isPerfect ? 100 : 60,
+      width: 100,
+      height: 80,
+      offsetX: 0,
+      offsetY: 0,
+    });
+
+    // Screen shake on release
+    if (this.player.scene.effectsManager) {
+      this.player.scene.effectsManager.screenShake(isPerfect ? 8 : 5, 100);
+    }
+
+    // Final rotation flourish
+    this.sprite.setRotation(0);
+
+    // Brief pause in movement
+    this.body.setVelocityX(0);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Quick release animation
+    const progress = stateTime / this.releaseDuration;
+    this.sprite.setScale(1 + (1 - progress) * 0.3); // Shrink back to normal
+
+    if (stateTime >= this.releaseDuration) {
+      if (this.body.onFloor()) {
+        return this.input.getHorizontalAxis() !== 0
+          ? PLAYER_STATES.RUN
+          : PLAYER_STATES.IDLE;
+      }
+      return PLAYER_STATES.FALL;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.player.deactivateAttackHitbox();
+    this.sprite.setScale(1);
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === PLAYER_STATES.FLIP;
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -778,5 +1019,9 @@ export function createPlayerStates(stateMachine) {
     // Movement abilities
     new FlipState(stateMachine),
     new DiveKickState(stateMachine),
+    // Spin attack
+    new SpinChargeState(stateMachine),
+    new SpinActiveState(stateMachine),
+    new SpinReleaseState(stateMachine),
   ];
 }
