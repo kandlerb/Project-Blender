@@ -6,7 +6,7 @@ A 2D action Metroidvania built with Phaser 3.
 
 ## Play
 
-**[Play on GitHub Pages](https://kandlerb.github.io/project-blender/)**
+**[Play on GitHub Pages](https://kandlerb.github.io/Project-Blender/)**
 
 ## Local Development
 
