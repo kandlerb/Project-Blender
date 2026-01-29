@@ -1843,7 +1843,7 @@ export class GrappleTravelState extends PlayerState {
 
     // Dust effect
     if (this.player.scene.effectsManager) {
-      this.player.scene.effectsManager.dustPuff(
+      this.player.scene.effectsManager.dustCloud(
         this.sprite.x,
         this.sprite.y,
         3
