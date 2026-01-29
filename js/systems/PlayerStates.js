@@ -554,18 +554,32 @@ class AttackState extends PlayerState {
 
     // Phase: Active - hitbox on
     if (stateTime < this.startupTime + this.activeTime) {
-      if (!this.hitboxActivated && this.attackData) {
+      if (!this.hitboxActivated) {
         this.hitboxActivated = true;
-        this.player.activateAttackHitbox({
-          damage: this.attackData.damage,
-          knockback: this.attackData.knockback,
-          hitstun: this.attackData.hitstun,
-          hitstop: this.attackData.hitstop,
-          width: this.attackData.hitbox.width,
-          height: this.attackData.hitbox.height,
-          offsetX: this.attackData.hitbox.offsetX,
-          offsetY: this.attackData.hitbox.offsetY,
-        });
+        if (this.attackData) {
+          this.player.activateAttackHitbox({
+            damage: this.attackData.damage,
+            knockback: this.attackData.knockback,
+            hitstun: this.attackData.hitstun,
+            hitstop: this.attackData.hitstop,
+            width: this.attackData.hitbox.width,
+            height: this.attackData.hitbox.height,
+            offsetX: this.attackData.hitbox.offsetX,
+            offsetY: this.attackData.hitbox.offsetY,
+          });
+        } else {
+          // Fallback hitbox when no weapon data available
+          this.player.activateAttackHitbox({
+            damage: 10,
+            knockback: { x: 200, y: -100 },
+            hitstun: 150,
+            hitstop: 40,
+            width: 50,
+            height: 40,
+            offsetX: 35,
+            offsetY: 0,
+          });
+        }
       }
       return null;
     }
@@ -2488,6 +2502,9 @@ export class UltimateState extends PlayerState {
     this.attackInterval = 200;
     this.lastAttackTime = 0;
     this.targetsHit = new Set();
+
+    // Track real elapsed time (unaffected by slowmo)
+    this.realElapsedTime = 0;
   }
 
   enter(prevState, params) {
@@ -2500,6 +2517,7 @@ export class UltimateState extends PlayerState {
     this.attacksPerformed = 0;
     this.lastAttackTime = 0;
     this.targetsHit.clear();
+    this.realElapsedTime = 0;
 
     // Become invulnerable
     this.setInvulnerable(true);
@@ -2529,22 +2547,29 @@ export class UltimateState extends PlayerState {
   }
 
   update(time, delta) {
+    // Track real elapsed time (unscaled) for duration check
+    // The delta we receive is scaled by slowmo, so we need to reverse it
+    const timeManager = this.player.scene.timeManager;
+    const timeScale = timeManager?.getTimeScale() || 1;
+    const realDelta = timeScale > 0 ? delta / timeScale : delta;
+    this.realElapsedTime += realDelta;
+
     const stateTime = this.stateMachine.getStateTime();
 
-    // Perform attacks at intervals
-    if (stateTime - this.lastAttackTime >= this.attackInterval &&
+    // Perform attacks at intervals (use real time for consistent attack rate)
+    if (this.realElapsedTime - this.lastAttackTime >= this.attackInterval &&
         this.attacksPerformed < this.maxAttacks) {
       this.performUltimateStrike();
-      this.lastAttackTime = stateTime;
+      this.lastAttackTime = this.realElapsedTime;
       this.attacksPerformed++;
     }
 
     // Pulse effect
-    const pulse = Math.sin(stateTime * 0.02) * 0.2 + 1;
+    const pulse = Math.sin(this.realElapsedTime * 0.02) * 0.2 + 1;
     this.sprite.setScale(pulse);
 
-    // Ultimate complete
-    if (stateTime >= this.duration) {
+    // Ultimate complete (use real elapsed time, not scaled stateTime)
+    if (this.realElapsedTime >= this.duration) {
       return this.finishUltimate();
     }
 
