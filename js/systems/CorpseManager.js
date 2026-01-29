@@ -1,4 +1,5 @@
 import { Corpse } from '../entities/Corpse.js';
+import { PHYSICS } from '../utils/physics.js';
 
 /**
  * Cleanup mode options for when corpse limit is reached
@@ -107,7 +108,9 @@ export class CorpseManager {
     this.corpseGroup.add(corpse.sprite);
 
     // Re-apply physics settings that group membership may have overwritten
+    // World gravity is 0, so we must set per-body gravity
     corpse.sprite.body.setAllowGravity(true);
+    corpse.sprite.body.setGravityY(PHYSICS.GRAVITY);
     corpse.sprite.body.setBounce(0.1);
     corpse.sprite.body.setDrag(1000, 0);
     corpse.sprite.body.setMaxVelocity(200, 800);

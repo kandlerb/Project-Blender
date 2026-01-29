@@ -1,3 +1,5 @@
+import { PHYSICS } from '../utils/physics.js';
+
 /**
  * Default corpse configuration values
  */
@@ -75,8 +77,9 @@ export class Corpse {
     body.setImmovable(false);
     body.setMass(10);  // Heavy so they don't get pushed easily
 
-    // Allow gravity so corpses fall
+    // Allow gravity so corpses fall (world gravity is 0, so we set per-body)
     body.setAllowGravity(true);
+    body.setGravityY(PHYSICS.GRAVITY);
 
     // High drag so they settle quickly
     body.setDrag(1000, 0);
