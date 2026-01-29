@@ -473,7 +473,7 @@ export class Boss {
     }
 
     if (this.scene.timeManager) {
-      this.scene.timeManager.setSlowMotion(0.5, 500);
+      this.scene.timeManager.applySlowmo(500, 0.5);
     }
 
     // Emit event
@@ -510,7 +510,7 @@ export class Boss {
     }
 
     if (this.scene.timeManager) {
-      this.scene.timeManager.setSlowMotion(0.1, 1000);
+      this.scene.timeManager.applySlowmo(1000, 0.1);
     }
 
     // Hide health bar
