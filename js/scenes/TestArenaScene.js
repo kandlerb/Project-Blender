@@ -245,13 +245,8 @@ export class TestArenaScene extends BaseScene {
   }
 
   spawnEnemies() {
-    // Clear existing enemies
-    for (const enemy of this.enemies) {
-      enemy.destroy();
-    }
-    this.enemies = [];
-
-    // Clear existing projectiles
+    // NOTE: No longer clearing existing enemies - R key spawns additional enemies
+    // Clear existing projectiles to avoid stale references
     if (this.enemyProjectiles) {
       for (const proj of this.enemyProjectiles) {
         if (proj.sprite && proj.sprite.active) {
@@ -285,7 +280,7 @@ export class TestArenaScene extends BaseScene {
       this.enemies.push(enemy);
     }
 
-    console.log(`Spawned ${this.enemies.length} enemies (Swarmer x3, Lunger, Shield Bearer, Lobber, Detonator)`);
+    console.log(`Spawned 7 enemies (total: ${this.enemies.length}) - Swarmer x3, Lunger, Shield Bearer, Lobber, Detonator`);
   }
 
   createArena() {

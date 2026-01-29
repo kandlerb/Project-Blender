@@ -200,7 +200,7 @@ this.events.on('combat:hit', (hitData) => {
 
 | Type | Behavior | Key Properties |
 |------|----------|----------------|
-| SWARMER | Fast rushdown | 20 HP, speed 250 |
+| SWARMER | Fast rushdown | 10 HP, speed 250 |
 | BRUTE | Slow tank | 60 HP, high damage |
 | LUNGER | Telegraphed charge | 600ms windup, 450 charge speed |
 | SHIELD_BEARER | Frontal block | Blocks < 30 damage from front |

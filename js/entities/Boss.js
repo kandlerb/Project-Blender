@@ -1,4 +1,6 @@
 import { COMBAT } from '../utils/combat.js';
+import { PHYSICS } from '../utils/physics.js';
+import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 
 /**
  * Boss entity base class
@@ -59,12 +61,35 @@ export class Boss {
     this.body = this.sprite.body;
     this.body.setCollideWorldBounds(true);
 
+    // Apply gravity so boss doesn't float
+    this.body.setGravityY(PHYSICS.GRAVITY);
+    this.body.setMaxVelocityY(PHYSICS.TERMINAL_VELOCITY);
+
     // Health bar (special boss health bar)
     this.createHealthBar();
 
-    // Hitbox/hurtbox
-    this.hurtbox = null;
+    // Hitbox for attacks (set by subclass)
     this.hitbox = null;
+
+    // Create hurtbox so boss can be damaged
+    this.hurtbox = new CombatBox(scene, {
+      owner: this,
+      type: BOX_TYPE.HURTBOX,
+      team: TEAM.ENEMY,
+      width: config.width || 64,
+      height: config.height || 80,
+      offsetX: 0,
+      offsetY: 0,
+    });
+
+    // Register hurtbox with combat manager
+    if (scene.combatManager) {
+      scene.combatManager.register(this.hurtbox);
+    }
+    this.hurtbox.activate();
+
+    // Store reference on sprite for combat system
+    this.sprite.setData('owner', this);
 
     // Register with scene
     if (scene.currentBoss === undefined) {
@@ -217,6 +242,11 @@ export class Boss {
       this.sprite.setFlipX(this.facingDirection < 0);
     }
 
+    // Update hurtbox position
+    if (this.hurtbox) {
+      this.hurtbox.updatePosition();
+    }
+
     // Update health bar
     this.updateHealthBar();
   }
@@ -233,9 +263,24 @@ export class Boss {
   }
 
   /**
-   * Idle state - choose next attack
+   * Idle state - choose next attack and chase player
    */
   updateIdle(time, delta) {
+    // Chase player to maintain fighting distance
+    const distance = this.getDistanceToPlayer();
+    const idealRange = this.config.idealRange || 150;
+
+    if (distance > idealRange + 50) {
+      // Too far - move toward player
+      this.moveTowardPlayer(this.config.chaseSpeed || 200);
+    } else if (distance < idealRange - 30) {
+      // Too close - back away slightly
+      this.body.setVelocityX(-this.facingDirection * 100);
+    } else {
+      // In range - stop moving
+      this.stopMovement();
+    }
+
     if (this.globalCooldown > 0) return;
 
     // Get available attacks for current phase
@@ -568,10 +613,17 @@ export class Boss {
     if (this.healthBarContainer) {
       this.healthBarContainer.destroy();
     }
+    // Unregister hurtbox from combat manager before destroying
     if (this.hurtbox) {
+      if (this.scene.combatManager) {
+        this.scene.combatManager.unregister(this.hurtbox);
+      }
       this.hurtbox.destroy();
     }
     if (this.hitbox) {
+      if (this.scene.combatManager) {
+        this.scene.combatManager.unregister(this.hitbox);
+      }
       this.hitbox.destroy();
     }
     if (this.sprite) {
