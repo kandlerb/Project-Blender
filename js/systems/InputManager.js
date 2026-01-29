@@ -21,6 +21,8 @@ export const ACTIONS = Object.freeze({
 
   // Weapons
   WEAPON_SWAP: 'weapon_swap',
+  WEAPON_NEXT: 'weapon_next',
+  WEAPON_PREV: 'weapon_prev',
   WEAPON_1: 'weapon_1',
   WEAPON_2: 'weapon_2',
   WEAPON_3: 'weapon_3',
@@ -49,13 +51,15 @@ const DEFAULT_BINDINGS = {
   [ACTIONS.BLINK]: ['I'],
   [ACTIONS.GRAPPLE]: ['U'],
   [ACTIONS.WEAPON_SWAP]: ['TAB'],
+  [ACTIONS.WEAPON_NEXT]: ['E'],
+  [ACTIONS.WEAPON_PREV]: ['Q'],
   [ACTIONS.WEAPON_1]: ['ONE'],
   [ACTIONS.WEAPON_2]: ['TWO'],
   [ACTIONS.WEAPON_3]: ['THREE'],
   [ACTIONS.WEAPON_4]: ['FOUR'],
   [ACTIONS.PAUSE]: ['ESC', 'P'],
   [ACTIONS.MAP]: ['M'],
-  [ACTIONS.INTERACT]: ['E'],
+  [ACTIONS.INTERACT]: ['F'],
 };
 
 /**

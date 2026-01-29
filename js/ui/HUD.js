@@ -24,6 +24,11 @@ export class HUD {
     this.createComboCounter();
     this.createKillCounter();
     this.createUltimateMeter();
+    this.createWeaponDisplay();
+
+    // Weapon swap state
+    this.swapProgress = 0;
+    this.isSwapping = false;
 
     // Listen for events
     this.setupEventListeners();
@@ -177,6 +182,143 @@ export class HUD {
       this.ultimateLabel,
       this.ultimateReady,
     ]);
+  }
+
+  /**
+   * Create weapon display (bottom center)
+   */
+  createWeaponDisplay() {
+    const x = this.scene.cameras.main.width / 2;
+    const y = this.scene.cameras.main.height - 60;
+
+    // Weapon icon background
+    this.weaponIconBg = this.scene.add.rectangle(x, y, 60, 60, 0x222222);
+    this.weaponIconBg.setStrokeStyle(3, 0x444444);
+
+    // Weapon icon (colored square representing weapon)
+    this.weaponIcon = this.scene.add.rectangle(x, y, 40, 40, 0xffffff);
+
+    // Weapon name
+    this.weaponName = this.scene.add.text(x, y - 50, 'FISTS', {
+      fontFamily: 'monospace',
+      fontSize: '16px',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 2,
+    });
+    this.weaponName.setOrigin(0.5);
+
+    // Swap hint text
+    this.swapHint = this.scene.add.text(x, y + 45, 'Q / E', {
+      fontFamily: 'monospace',
+      fontSize: '10px',
+      color: '#666666',
+    });
+    this.swapHint.setOrigin(0.5);
+
+    // Swap progress bar (hidden by default)
+    this.swapProgressBg = this.scene.add.rectangle(x, y + 35, 60, 6, 0x222222);
+    this.swapProgressBg.setAlpha(0);
+
+    this.swapProgressFill = this.scene.add.rectangle(x - 30, y + 35, 0, 6, 0x44ff44);
+    this.swapProgressFill.setOrigin(0, 0.5);
+    this.swapProgressFill.setAlpha(0);
+
+    // Previous/Next weapon indicators
+    this.prevWeaponText = this.scene.add.text(x - 50, y, '<', {
+      fontFamily: 'monospace',
+      fontSize: '20px',
+      color: '#666666',
+    });
+    this.prevWeaponText.setOrigin(0.5);
+
+    this.nextWeaponText = this.scene.add.text(x + 50, y, '>', {
+      fontFamily: 'monospace',
+      fontSize: '20px',
+      color: '#666666',
+    });
+    this.nextWeaponText.setOrigin(0.5);
+
+    this.container.add([
+      this.weaponIconBg,
+      this.weaponIcon,
+      this.weaponName,
+      this.swapHint,
+      this.swapProgressBg,
+      this.swapProgressFill,
+      this.prevWeaponText,
+      this.nextWeaponText,
+    ]);
+  }
+
+  /**
+   * Update weapon display from WeaponManager
+   * @param {WeaponManager} weaponManager
+   */
+  updateWeaponDisplay(weaponManager) {
+    if (!weaponManager) return;
+
+    const weapon = weaponManager.getEquippedWeapon();
+    if (!weapon) return;
+
+    // Update weapon name
+    this.weaponName.setText(weapon.name.toUpperCase());
+
+    // Update icon color based on weapon
+    const trailColor = weapon.trailColor || 0xffffff;
+    this.weaponIcon.setFillStyle(trailColor);
+
+    // Update swap progress if swapping
+    if (weaponManager.isSwapping) {
+      const progress = weaponManager.swapProgress / weaponManager.swapTime;
+      this.swapProgressBg.setAlpha(1);
+      this.swapProgressFill.setAlpha(1);
+      this.swapProgressFill.setSize(60 * progress, 6);
+
+      // Flash the icon during swap
+      this.weaponIcon.setAlpha(0.5 + Math.sin(Date.now() * 0.02) * 0.3);
+    } else {
+      this.swapProgressBg.setAlpha(0);
+      this.swapProgressFill.setAlpha(0);
+      this.weaponIcon.setAlpha(1);
+    }
+
+    // Highlight arrows based on available weapons
+    const unlockedCount = weaponManager.unlockedWeapons.length;
+    const canSwap = unlockedCount > 1;
+    this.prevWeaponText.setColor(canSwap ? '#888888' : '#333333');
+    this.nextWeaponText.setColor(canSwap ? '#888888' : '#333333');
+    this.swapHint.setAlpha(canSwap ? 1 : 0.3);
+  }
+
+  /**
+   * Play swap animation
+   * @param {string} direction - 'next' or 'prev'
+   */
+  playSwapAnimation(direction) {
+    const arrow = direction === 'next' ? this.nextWeaponText : this.prevWeaponText;
+
+    // Flash the arrow
+    arrow.setColor('#ffffff');
+    this.scene.time.delayedCall(150, () => {
+      arrow.setColor('#888888');
+    });
+
+    // Scale pop
+    this.scene.tweens.add({
+      targets: this.weaponIconBg,
+      scaleX: 1.2,
+      scaleY: 1.2,
+      duration: 100,
+      yoyo: true,
+      ease: 'Power2',
+    });
+
+    // Name flash
+    this.weaponName.setColor('#44ff44');
+    this.scene.time.delayedCall(200, () => {
+      this.weaponName.setColor('#ffffff');
+    });
   }
 
   /**
@@ -427,6 +569,11 @@ export class HUD {
     // Update ultimate meter from player
     if (player) {
       this.updateUltimate(player.ultimateMeter, COMBAT.ULTIMATE.MAX_METER);
+
+      // Update weapon display
+      if (player.weaponManager) {
+        this.updateWeaponDisplay(player.weaponManager);
+      }
     }
   }
 

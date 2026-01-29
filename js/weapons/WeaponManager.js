@@ -208,14 +208,31 @@ export class WeaponManager {
   /**
    * Cycle to next unlocked weapon
    * @param {number} direction - 1 for next, -1 for previous
+   * @returns {boolean} - True if swap started
    */
   cycleWeapon(direction = 1) {
     const weapons = this.getUnlockedWeapons();
-    if (weapons.length <= 1) return;
+    if (weapons.length <= 1) return false;
 
     const currentIndex = weapons.indexOf(this.equippedWeapon?.id);
     let nextIndex = (currentIndex + direction + weapons.length) % weapons.length;
 
-    this.startSwap(weapons[nextIndex]);
+    return this.startSwap(weapons[nextIndex]);
+  }
+
+  /**
+   * Get current equipped weapon
+   * @returns {Weapon|null}
+   */
+  getEquippedWeapon() {
+    return this.equippedWeapon;
+  }
+
+  /**
+   * Get swap progress (0-1)
+   * @returns {number}
+   */
+  get swapProgress() {
+    return this.swapTimer;
   }
 }

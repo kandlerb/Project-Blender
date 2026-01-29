@@ -35,6 +35,7 @@ export const PLAYER_STATES = Object.freeze({
   // Weapon-specific states
   PARRY: 'parry',
   COUNTER_ATTACK: 'counter_attack',
+  WEAPON_SWAP: 'weapon_swap',
 });
 
 /**
@@ -168,6 +169,18 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.GRAPPLE_FIRE;
     }
 
+    // Weapon swap
+    if (this.input.justPressed(ACTIONS.WEAPON_NEXT)) {
+      if (this.player.weaponManager?.cycleWeapon(1)) {
+        return PLAYER_STATES.WEAPON_SWAP;
+      }
+    }
+    if (this.input.justPressed(ACTIONS.WEAPON_PREV)) {
+      if (this.player.weaponManager?.cycleWeapon(-1)) {
+        return PLAYER_STATES.WEAPON_SWAP;
+      }
+    }
+
     // Parry (weapon-specific - only if weapon has parry mechanic)
     const weapon = this.player.getCurrentWeapon();
     if (weapon?.mechanics?.parry && this.input.justPressed(ACTIONS.SPECIAL)) {
@@ -243,6 +256,18 @@ export class RunState extends PlayerState {
     // Grapple
     if (this.input.justPressed(ACTIONS.GRAPPLE)) {
       return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
+    // Weapon swap
+    if (this.input.justPressed(ACTIONS.WEAPON_NEXT)) {
+      if (this.player.weaponManager?.cycleWeapon(1)) {
+        return PLAYER_STATES.WEAPON_SWAP;
+      }
+    }
+    if (this.input.justPressed(ACTIONS.WEAPON_PREV)) {
+      if (this.player.weaponManager?.cycleWeapon(-1)) {
+        return PLAYER_STATES.WEAPON_SWAP;
+      }
     }
 
     // Parry (weapon-specific - only if weapon has parry mechanic)
@@ -2346,6 +2371,94 @@ export class CounterAttackState extends PlayerState {
 }
 
 /**
+ * Weapon Swap State - Brief pause while changing weapons
+ */
+export class WeaponSwapState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.WEAPON_SWAP, stateMachine);
+  }
+
+  enter(prevState, params) {
+    // Slow down movement during swap
+    this.body.setVelocityX(this.body.velocity.x * 0.3);
+
+    // Visual feedback - slight scale pulse
+    this.player.scene.tweens.add({
+      targets: this.sprite,
+      scaleX: this.sprite.scaleX * 1.1,
+      scaleY: this.sprite.scaleY * 1.1,
+      duration: 80,
+      yoyo: true,
+      ease: 'Power2',
+    });
+
+    // Emit event for HUD animation
+    const wm = this.player.weaponManager;
+    const direction = wm?.pendingWeapon ? 'next' : 'prev';
+    this.player.scene.events.emit('weapon:swapVisual', { direction });
+  }
+
+  update(time, delta) {
+    const wm = this.player.weaponManager;
+
+    // Fall if not on ground
+    if (!this.body.onFloor()) {
+      // Cancel swap if we fall
+      wm?.cancelSwap();
+      return PLAYER_STATES.FALL;
+    }
+
+    // Maintain floor contact
+    this.body.setVelocityY(0);
+
+    // Allow some drift movement
+    const horizontal = this.input.getHorizontalAxis();
+    if (horizontal !== 0) {
+      this.body.setVelocityX(horizontal * 50); // Slow movement
+      this.sprite.setFlipX(horizontal < 0);
+    } else {
+      this.body.setVelocityX(0);
+    }
+
+    // Check if swap is complete
+    if (wm && !wm.isSwapping) {
+      // Swap finished, return to appropriate state
+      if (this.input.getHorizontalAxis() !== 0) {
+        return PLAYER_STATES.RUN;
+      }
+      return PLAYER_STATES.IDLE;
+    }
+
+    // Allow cancel with flip or blink
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      wm?.cancelSwap();
+      return PLAYER_STATES.FLIP;
+    }
+    if (this.input.justPressed(ACTIONS.BLINK)) {
+      wm?.cancelSwap();
+      return PLAYER_STATES.BLINK;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    // Ensure swap is either completed or cancelled
+    const wm = this.player.weaponManager;
+    if (wm?.isSwapping && nextState !== PLAYER_STATES.WEAPON_SWAP) {
+      // If exiting early (e.g., flip/blink), cancel the swap
+      wm.cancelSwap();
+    }
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can be cancelled by evasive moves
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.BLINK;
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -2381,5 +2494,6 @@ export function createPlayerStates(stateMachine) {
     // Weapon-specific states
     new ParryState(stateMachine),
     new CounterAttackState(stateMachine),
+    new WeaponSwapState(stateMachine),
   ];
 }
