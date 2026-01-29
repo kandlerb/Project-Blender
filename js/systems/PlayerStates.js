@@ -879,7 +879,7 @@ export class FlipState extends PlayerState {
     if (this.body.onFloor()) {
       // Dust effect on land
       if (this.player.scene.effectsManager) {
-        this.player.scene.effectsManager.dustPuff(
+        this.player.scene.effectsManager.dustCloud(
           this.sprite.x,
           this.sprite.y + 20,
           3
@@ -951,7 +951,7 @@ export class DiveKickState extends PlayerState {
     if (this.body.onFloor()) {
       // Impact effect
       if (this.player.scene.effectsManager) {
-        this.player.scene.effectsManager.dustPuff(
+        this.player.scene.effectsManager.dustCloud(
           this.sprite.x,
           this.sprite.y + 20,
           6
@@ -2099,7 +2099,7 @@ export class WallSlideState extends PlayerState {
     if (this.body.onFloor()) {
       // Dust puff on landing
       if (this.player.scene.effectsManager) {
-        this.player.scene.effectsManager.dustPuff(
+        this.player.scene.effectsManager.dustCloud(
           this.sprite.x,
           this.sprite.y + 20,
           3
@@ -2147,7 +2147,7 @@ export class WallSlideState extends PlayerState {
       this.dustTimer = 0;
       if (this.player.scene.effectsManager) {
         const dustX = this.sprite.x + (this.wallDirection * 15);
-        this.player.scene.effectsManager.dustPuff(dustX, this.sprite.y, 1);
+        this.player.scene.effectsManager.dustCloud(dustX, this.sprite.y, 1);
       }
     }
 
@@ -2176,7 +2176,7 @@ export class WallSlideState extends PlayerState {
     // Dust burst on wall
     if (this.player.scene.effectsManager) {
       const dustX = this.sprite.x + (this.wallDirection * 15);
-      this.player.scene.effectsManager.dustPuff(dustX, this.sprite.y, 4);
+      this.player.scene.effectsManager.dustCloud(dustX, this.sprite.y, 4);
     }
 
     return PLAYER_STATES.JUMP;
