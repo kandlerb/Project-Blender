@@ -482,8 +482,15 @@ export class TestArenaScene extends BaseScene {
     // Brutes destroy corpses on contact
     if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
       this.destroyCorpseWithForce(enemy, corpse);
+    } else if (enemy.corpseInteraction === CORPSE_INTERACTION.CLIMB) {
+      // Check if blocked horizontally and can step up
+      const blocked = enemySprite.body.blocked.left || enemySprite.body.blocked.right;
+      const touching = enemySprite.body.touching.left || enemySprite.body.touching.right;
+
+      if ((blocked || touching) && enemy.canStepUp(corpseSprite)) {
+        enemy.performStepUp();
+      }
     }
-    // CLIMB handling will be added in future prompt
   }
 
   /**

@@ -203,6 +203,7 @@ export class Enemy {
     this.currentState = 'IDLE';
     this.isBlocking = false;
     this.isExploding = false;
+    this.isSteppingUp = false;
     this.chargeDirection = 1;
     this.windupTimer = 0;
     this.chargeTimer = 0;
@@ -365,6 +366,41 @@ export class Enemy {
    */
   stop() {
     this.sprite.setVelocityX(0);
+  }
+
+  /**
+   * Check if enemy can step up onto an obstacle
+   * @param {Phaser.Physics.Arcade.Sprite} obstacleSprite
+   * @returns {boolean} Whether step-up is possible
+   */
+  canStepUp(obstacleSprite) {
+    if (this.corpseInteraction !== CORPSE_INTERACTION.CLIMB) return false;
+    if (this.stepUpHeight <= 0) return false;
+
+    // Calculate height difference
+    const enemyBottom = this.sprite.body.bottom;
+    const obstacleTop = obstacleSprite.body.top;
+    const heightDiff = enemyBottom - obstacleTop;
+
+    // Can step up if obstacle top is within step-up range
+    return heightDiff > 0 && heightDiff <= this.stepUpHeight;
+  }
+
+  /**
+   * Perform step-up onto obstacle
+   */
+  performStepUp() {
+    if (this.isSteppingUp) return;
+
+    this.isSteppingUp = true;
+
+    // Brief upward boost
+    this.sprite.body.setVelocityY(-250); // Small hop
+
+    // Clear stepping flag after brief delay
+    this.scene.time.delayedCall(200, () => {
+      this.isSteppingUp = false;
+    });
   }
 
   update(time, delta) {
