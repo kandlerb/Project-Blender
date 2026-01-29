@@ -32,6 +32,14 @@ export class TimeManager {
   }
 
   /**
+   * Clear slow motion effect immediately
+   */
+  clearSlowmo() {
+    this.slowmoRemaining = 0;
+    this.slowmoScale = 1;
+  }
+
+  /**
    * Check if game should be frozen (hitstop active)
    * @returns {boolean}
    */
