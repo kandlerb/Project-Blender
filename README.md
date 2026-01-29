@@ -1,199 +1,270 @@
 # Project Blender
 
-> *"Be the boss fight."*
-
-A fast-paced 2D action Metroidvania where fluid movement and aggressive combat combine to create stick-figure-animation-style fights.
-
-**[Play the Latest Build](https://kandlerb.github.io/Project-Blender/)**
-
----
-
-## About
-
-Project Blender is a passion project blending:
-- **Hollow Knight's** tight, weighty combat
-- **Stick figure animations'** fluid, dramatic movement
-- **Devil May Cry's** combo depth and player expression
-
-You play as a legendary warrior—a nameless one-man army—fighting through an enemy nation that spent years preparing for you.
+A fast-paced 2D action Metroidvania blending Hollow Knight's weighty combat with fluid stick-figure animation aesthetics.
 
 ---
 
 ## Current Status
 
-🚧 **In Development** — Core systems functional, placeholder art
+🚧 **In Development** — Core systems complete, placeholder art
 
-### Implemented Features
+### Implemented Systems
 
-| System | Status | Description |
-|--------|--------|-------------|
-| Core Loop | ✅ | Phaser 3 game loop with scene management |
-| Player Movement | ✅ | Run, jump, fall, land with physics |
-| Combat System | ✅ | Hitbox/hurtbox collision, damage, hitstun |
-| Attack Combos | ✅ | 3-hit light combo, heavy attack, air attack |
-| Flip/Dodge | ✅ | I-frame dodge with dive kick option |
-| Spin Attack | ✅ | Hold to charge, continuous damage, launch finisher |
-| Blink | ✅ | Short teleport with afterimage |
-| Grappling Hook | ✅ | Pull enemies to player |
-| Wall Slide | ✅ | Slow descent on walls |
-| Wall Jump | ✅ | Kick off walls while sliding |
-| Enemy AI | ✅ | Patrol, chase, attack behaviors |
-| Hit Effects | ✅ | Particles, screen shake, damage numbers |
-| HUD | ✅ | Health, combo counter, kill tracker, ultimate meter |
-| Time System | ✅ | Hitstop on hits, slow-motion support |
+| Category | Features |
+|----------|----------|
+| **Core** | Phaser 3 game loop, scene management, state machines |
+| **Movement** | Run, jump, wall slide, wall jump, coyote time |
+| **Combat** | Hitbox/hurtbox system, combos, hitstun, hitstop |
+| **Attacks** | 3-hit light combo, heavy launcher, air attack, dive kick |
+| **Abilities** | Flip/dodge (i-frames), spin attack, blink teleport, grappling hook |
+| **Weapons** | Data-driven weapon system, weapon swapping |
+| **Enemies** | 6 enemy types with distinct AI behaviors |
+| **Bosses** | Phase-based boss system with attack patterns |
+| **Audio** | SFX pools, music with crossfade, volume controls |
+| **Effects** | Hit sparks, screen shake, damage numbers, trails |
+| **UI** | Health bar, combo counter, kill tracker, ultimate meter, boss health bar |
 
-### Coming Soon
+---
 
-- [ ] Grapple to surfaces (pull player to walls/ceilings)
-- [ ] Weapon system (8 weapons from bosses)
-- [ ] Ultimate attack
-- [ ] Boss encounters
-- [ ] Actual sprite art
-- [ ] Sound effects
-- [ ] Level design
+## Weapons
+
+| Weapon | Style | Special |
+|--------|-------|---------|
+| **Fists** | Fast rushdown | Rapid combos, constant pressure |
+| **Tonfas** | Defensive | Parry → Counter attack |
+| **Chain Whip** | Zone control | Extended range, multi-pull grapple |
+
+*More weapons unlock from defeating bosses.*
+
+---
+
+## Enemies
+
+| Type | Behavior | Counter Strategy |
+|------|----------|------------------|
+| **Swarmer** | Fast rushdown, low HP | Crowd control, spin attack |
+| **Brute** | Slow tank, heavy hits | Bait attacks, punish recovery |
+| **Lunger** | Telegraphed charge | Dodge the charge, punish |
+| **Shield Bearer** | Frontal block | Flank or guard break with heavy |
+| **Lobber** | Ranged, keeps distance | Close gap quickly, pressure |
+| **Detonator** | Suicide bomber, chains | Keep distance, use against groups |
+
+---
+
+## Bosses
+
+### The Tonfa Warden
+*"Built to punish your aggression"*
+
+- **Phases:** 3 (100%, 66%, 33% HP)
+- **Mechanic:** Defensive stance parries your attacks and counters
+- **Strategy:** Bait the counter, punish recovery windows
+- **Drops:** Tonfas weapon
 
 ---
 
 ## Controls
 
-### Keyboard
-
+### Movement
 | Action | Key |
 |--------|-----|
-| Move | WASD or Arrow Keys |
+| Move | WASD / Arrow Keys |
 | Jump | Space |
+| Wall Jump | Space (while wall sliding) |
+
+### Combat
+| Action | Key |
+|--------|-----|
 | Light Attack | J |
 | Heavy Attack | K |
-| Spin Attack | L (hold to charge, release to finish) |
+| Spin Attack | L (hold to charge) |
 | Flip/Dodge | Shift |
 | Blink | I |
 | Grapple | U |
+| Weapon Special | O |
+| Ultimate | F (when meter full) |
 
-### Combat Actions
+### Weapons
+| Action | Key |
+|--------|-----|
+| Previous Weapon | Q |
+| Next Weapon | E |
 
-| Move | Input | Notes |
-|------|-------|-------|
-| 3-Hit Combo | J, J, J | Chain light attacks |
-| Launcher | K | Heavy attack launches enemies |
-| Air Attack | J (in air) | Attack while airborne |
-| Dive Kick | J during flip descent | Spike enemies downward |
-| Spin Attack | Hold L, release | Continuous damage, launch on release |
-| Dodge | Shift | I-frames during flip |
-| Teleport | I | Short blink with afterimage |
-| Pull Enemy | U on enemy | Grapple pulls enemy to you |
-| Wall Jump | Space while wall sliding | Kick off walls |
-
-### Debug Controls
-
+### Debug
 | Action | Key |
 |--------|-----|
 | Respawn Enemies | R |
-| Toggle Combat Debug | C |
-| Toggle Physics Debug | ` (backtick) |
+| Spawn Boss | B |
+| Combat Debug | C |
+| Physics Debug | ` |
+
+---
+
+## Combat Mechanics
+
+### Combo System
+- Chain light attacks: J → J → J
+- Cancel into heavy: J → K
+- Air combo: Jump → J
+- Dive kick: Flip (descending) → J
+
+### Movement Abilities
+- **Flip/Dodge:** I-frames during animation, can dive kick
+- **Blink:** Short teleport with afterimage
+- **Wall Slide:** Hold toward wall while falling
+- **Grapple:** Pull enemies to you, or zip to surfaces
+
+### Weapon Swapping
+- Swap weapons mid-combat with Q/E
+- Brief vulnerability during swap
+- Cancel swap with Shift (flip)
+
+### Ultimate Attack
+- Meter fills from dealing damage and kills
+- Press F when full for devastating area attack
+- Invulnerable during ultimate
 
 ---
 
 ## Running Locally
 
 ### Prerequisites
-- A static file server (Python, Node, or any HTTP server)
+- Static file server (Python, Node, or any HTTP server)
 - Modern browser with ES6 module support
 
 ### Quick Start
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/project-blender.git
+git clone https://github.com/kandlerb/project-blender.git
 cd project-blender
 
-# Start a local server (Python 3)
+# Start a local server
 python -m http.server 8000
-
-# Or with Node.js
+# or
 npx serve .
 
-# Open in browser
+# Open browser
 open http://localhost:8000
 ```
 
-### Project Structure
-````
+---
+
+## Project Structure
+```
 project-blender/
-├── index.html              # Entry point
+├── index.html
 ├── css/
-│   └── style.css           # Game styling
+│   └── style.css
 ├── js/
-│   ├── main.js             # Phaser configuration
+│   ├── main.js
 │   ├── entities/
-│   │   ├── Player.js       # Player entity
-│   │   └── Enemy.js        # Enemy entity with AI
+│   │   ├── Player.js
+│   │   ├── Enemy.js
+│   │   ├── Boss.js
+│   │   └── bosses/
+│   │       └── TonfaWarden.js
 │   ├── scenes/
-│   │   ├── BaseScene.js    # Scene template
-│   │   ├── BootScene.js    # Asset loading setup
-│   │   ├── PreloadScene.js # Asset loading
-│   │   └── TestArenaScene.js # Main test level
+│   │   ├── BaseScene.js
+│   │   ├── BootScene.js
+│   │   ├── PreloadScene.js
+│   │   └── TestArenaScene.js
 │   ├── systems/
-│   │   ├── InputManager.js # Input handling & buffering
-│   │   ├── StateMachine.js # Generic state machine
-│   │   ├── PlayerStates.js # All player states
-│   │   ├── CombatBox.js    # Hitbox/hurtbox system
-│   │   ├── CombatManager.js # Combat resolution
-│   │   ├── EffectsManager.js # Particles & screen effects
-│   │   └── TimeManager.js  # Hitstop & slow-motion
+│   │   ├── InputManager.js
+│   │   ├── StateMachine.js
+│   │   ├── PlayerStates.js
+│   │   ├── CombatBox.js
+│   │   ├── CombatManager.js
+│   │   ├── EffectsManager.js
+│   │   ├── TimeManager.js
+│   │   └── AudioManager.js
+│   ├── weapons/
+│   │   ├── Weapon.js
+│   │   ├── WeaponManager.js
+│   │   ├── WeaponRegistry.js
+│   │   ├── FistsWeapon.js
+│   │   ├── TonfasWeapon.js
+│   │   └── ChainWhipWeapon.js
 │   ├── ui/
-│   │   └── HUD.js          # Health, combo, kills display
+│   │   └── HUD.js
 │   └── utils/
-│       ├── constants.js    # Game constants
-│       ├── physics.js      # Physics values
-│       ├── combat.js       # Combat values
-│       └── timing.js       # Timing values
+│       ├── constants.js
+│       ├── physics.js
+│       ├── combat.js
+│       ├── timing.js
+│       └── audio.js
 └── assets/
-    └── (placeholder assets)
-````
+    └── audio/
+        ├── sfx/
+        └── music/
+```
 
 ---
 
 ## Architecture
 
-### Zero-Build Setup
-No bundler required. Uses ES6 modules loaded directly in browser. Phaser 3 loaded from CDN.
-
 ### State Machine Pattern
-Player and enemies use a generic state machine (`StateMachine.js`) with discrete states for each behavior (idle, run, attack, hitstun, etc.).
+Player and enemies use a generic state machine with discrete states for each behavior. States handle enter/exit transitions and can be interrupted by higher-priority states.
 
 ### Combat System
-- **Hitboxes** deal damage, attached to attackers
-- **Hurtboxes** receive damage, attached to defenders
-- **CombatManager** checks overlaps each frame
-- Damage resolution includes knockback, hitstun, hitstop
+- **Hitboxes** attach to attackers, deal damage on overlap
+- **Hurtboxes** attach to defenders, receive damage
+- **CombatManager** resolves collisions each frame
+- Damage includes knockback, hitstun, and hitstop
 
-### Event-Driven Communication
-Systems communicate via Phaser's event emitter:
-- `combat:hit` — When damage is dealt
-- `enemy:killed` — When enemy dies
-- `combo:milestone` — At combo thresholds (10, 25, 50, 100)
+### Weapon System
+- Weapons define attack data (timing, damage, hitboxes)
+- Attack states read from equipped weapon
+- Swapping weapons changes all attack properties
+
+### Boss System
+- Phases triggered by health thresholds
+- Attack patterns with cooldowns
+- Invulnerability during phase transitions
+- Weapon drops on defeat
+
+### Audio System
+- Sound pools for frequent effects
+- Music with crossfade between tracks
+- Category-based volume controls
 
 ---
 
-## Development
+## Tech Stack
 
-### Tech Stack
 - **Engine:** Phaser 3.70+
 - **Language:** Vanilla JavaScript (ES6 modules)
+- **Build:** None required (runs directly in browser)
 - **Deployment:** GitHub Pages
 
-### Design Documents
-See the `/docs` folder (if present) or project files for:
-- Game Design Document
-- Technical Design Document
+---
 
-### Contributing
-This is a solo passion project, but feedback is welcome! Open an issue for bugs or suggestions.
+## Roadmap
+
+### Completed
+- [x] Core movement and physics
+- [x] Combat system with combos
+- [x] Movement abilities (flip, blink, grapple, wall mechanics)
+- [x] Weapon system with 3 weapons
+- [x] 6 enemy types
+- [x] Boss system with first boss
+- [x] Audio system
+- [x] Visual effects and juice
+
+### Planned
+- [ ] Additional bosses (7 more)
+- [ ] Additional weapons (5 more)
+- [ ] Level design and interconnected world
+- [ ] Save/load system
+- [ ] Menu screens
+- [ ] Actual sprite art
+- [ ] Sound effects and music tracks
+- [ ] Controller support
 
 ---
 
 ## Credits
 
-**Design & Development:** [Your Name]
+**Design & Development:** Kandler
 
 **Inspired by:**
 - Hollow Knight (Team Cherry)
@@ -204,9 +275,8 @@ This is a solo passion project, but feedback is welcome! Open an issue for bugs 
 
 ## License
 
-[Choose your license - MIT, GPL, or proprietary]
+MIT License - See LICENSE file for details.
 
 ---
 
 *Project Blender — Be the boss fight.*
-````
