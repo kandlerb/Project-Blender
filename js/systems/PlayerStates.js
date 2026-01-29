@@ -506,10 +506,14 @@ class AttackState extends PlayerState {
     this.totalDuration = 350;
 
     this.hitboxActivated = false;
+
+    // Track real elapsed time (unaffected by slowmo)
+    this.realElapsedTime = 0;
   }
 
   enter(prevState, params) {
     this.hitboxActivated = false;
+    this.realElapsedTime = 0;
 
     // Get attack data from current weapon
     this.attackData = this.player.getAttackData(this.attackType);
@@ -530,7 +534,11 @@ class AttackState extends PlayerState {
   }
 
   update(time, delta) {
-    const stateTime = this.stateMachine.getStateTime();
+    // Calculate real elapsed time (unaffected by slowmo)
+    const timeManager = this.player.scene.timeManager;
+    const timeScale = timeManager?.getTimeScale() || 1;
+    const realDelta = timeScale > 0 ? delta / timeScale : delta;
+    this.realElapsedTime += realDelta;
 
     // Maintain floor contact to prevent ground clipping during attacks
     if (this.body.onFloor()) {
@@ -538,7 +546,7 @@ class AttackState extends PlayerState {
     }
 
     // Movement ability cancels (after startup)
-    if (stateTime > this.startupTime) {
+    if (this.realElapsedTime > this.startupTime) {
       if (this.input.justPressed(ACTIONS.FLIP)) {
         return PLAYER_STATES.FLIP;
       }
@@ -548,12 +556,12 @@ class AttackState extends PlayerState {
     }
 
     // Phase: Startup
-    if (stateTime < this.startupTime) {
+    if (this.realElapsedTime < this.startupTime) {
       return null;
     }
 
     // Phase: Active - hitbox on
-    if (stateTime < this.startupTime + this.activeTime) {
+    if (this.realElapsedTime < this.startupTime + this.activeTime) {
       if (!this.hitboxActivated) {
         this.hitboxActivated = true;
         if (this.attackData) {
@@ -591,7 +599,7 @@ class AttackState extends PlayerState {
     }
 
     // Check for combo input during cancel window
-    const recoveryProgress = (stateTime - this.startupTime - this.activeTime) / this.recoveryTime;
+    const recoveryProgress = (this.realElapsedTime - this.startupTime - this.activeTime) / this.recoveryTime;
     const cancelThreshold = this.attackData?.cancelWindow || 0.6;
 
     if (recoveryProgress < cancelThreshold) {
@@ -599,8 +607,8 @@ class AttackState extends PlayerState {
       if (nextState) return nextState;
     }
 
-    // Attack complete
-    if (stateTime >= this.totalDuration) {
+    // Attack complete (use real elapsed time, not scaled stateTime)
+    if (this.realElapsedTime >= this.totalDuration) {
       return this.getExitState();
     }
 
