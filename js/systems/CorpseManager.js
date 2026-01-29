@@ -277,6 +277,101 @@ export class CorpseManager {
         this.corpses.splice(i, 1);
       }
     }
+
+    // Fix any corpses that have clipped into terrain
+    this.fixTerrainClipping();
+  }
+
+  /**
+   * Check for and fix corpses that have clipped into terrain
+   * Pushes embedded corpses up along with any corpses stacked above them
+   */
+  fixTerrainClipping() {
+    if (this.terrainGroups.length === 0) return;
+
+    // Sort corpses by Y position (bottom to top) so we fix lower ones first
+    const sortedCorpses = [...this.corpses].sort((a, b) => {
+      if (!a.sprite?.body || !b.sprite?.body) return 0;
+      return b.sprite.body.bottom - a.sprite.body.bottom;
+    });
+
+    for (const corpse of sortedCorpses) {
+      if (!corpse.sprite?.body || !corpse.sprite.active) continue;
+
+      const body = corpse.sprite.body;
+      let maxOverlap = 0;
+
+      // Check against all terrain groups
+      for (const terrainGroup of this.terrainGroups) {
+        if (!terrainGroup) continue;
+
+        const children = terrainGroup.getChildren();
+        for (const terrain of children) {
+          if (!terrain.body) continue;
+
+          const terrainBody = terrain.body;
+
+          // Check if there's horizontal overlap
+          const horizontalOverlap =
+            body.right > terrainBody.left && body.left < terrainBody.right;
+
+          if (!horizontalOverlap) continue;
+
+          // Check if corpse bottom is below terrain top (embedded)
+          if (body.bottom > terrainBody.top && body.top < terrainBody.bottom) {
+            // Calculate how much the corpse is embedded
+            const overlap = body.bottom - terrainBody.top;
+            if (overlap > maxOverlap) {
+              maxOverlap = overlap;
+            }
+          }
+        }
+      }
+
+      // If embedded, push corpse up and any corpses stacked above it
+      if (maxOverlap > 0) {
+        this.pushCorpseUp(corpse, maxOverlap + 1); // +1 to ensure clearance
+      }
+    }
+  }
+
+  /**
+   * Push a corpse up by a given amount, along with any corpses stacked on top
+   * @param {Corpse} corpse - The corpse to push up
+   * @param {number} amount - Pixels to move up
+   */
+  pushCorpseUp(corpse, amount) {
+    if (!corpse.sprite?.body) return;
+
+    const body = corpse.sprite.body;
+    const oldBottom = body.bottom;
+
+    // Move the corpse up
+    corpse.sprite.y -= amount;
+    body.reset(corpse.sprite.x, corpse.sprite.y);
+
+    // Stop downward velocity to prevent re-embedding
+    if (body.velocity.y > 0) {
+      body.setVelocityY(0);
+    }
+
+    // Find and push up any corpses that were resting on this one
+    for (const otherCorpse of this.corpses) {
+      if (otherCorpse === corpse) continue;
+      if (!otherCorpse.sprite?.body || !otherCorpse.sprite.active) continue;
+
+      const otherBody = otherCorpse.sprite.body;
+
+      // Check if other corpse was resting on this one (within tolerance)
+      const wasOnTop =
+        Math.abs(otherBody.bottom - oldBottom + body.height) < 5 &&
+        otherBody.right > body.left &&
+        otherBody.left < body.right;
+
+      if (wasOnTop) {
+        this.pushCorpseUp(otherCorpse, amount);
+      }
+    }
   }
 
   /**
