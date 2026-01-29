@@ -198,7 +198,7 @@ export class TestArenaScene extends BaseScene {
 
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
-    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies, B to spawn boss');
+    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies, B to spawn boss, P to spawn corpse');
   }
 
   setupInputHandlers() {
@@ -241,6 +241,16 @@ export class TestArenaScene extends BaseScene {
         const muted = this.audioManager.toggleMute('master');
         console.log(`Audio ${muted ? 'muted' : 'unmuted'}`);
       }
+    });
+
+    // Spawn test corpse at player position
+    this.input.keyboard.on('keydown-P', () => {
+      const pos = this.player.getPosition();
+      this.corpseManager.spawn(pos.x, pos.y + 50, 'TEST', {
+        width: 24,
+        height: 16,
+      });
+      console.log(`Corpses: ${this.corpseManager.getCount()}/${this.corpseManager.config.maxCorpses}`);
     });
   }
 
@@ -459,7 +469,7 @@ export class TestArenaScene extends BaseScene {
       `Combo: ${hudStats.combo}`,
       `Kills: ${hudStats.kills}`,
       `Enemies: ${this.enemies.length}`,
-      `Corpses: ${this.corpseManager.getCount()}`,
+      `Corpses: ${this.corpseManager.getCount()}/${this.corpseManager.config.maxCorpses}`,
     ];
 
     // Add boss info if present
@@ -474,7 +484,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | M - Mute');
+    lines.push('R - Respawn | B - Boss | P - Corpse | M - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
