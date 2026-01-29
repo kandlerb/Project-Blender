@@ -387,7 +387,7 @@ export class TonfaWarden extends Boss {
     }
 
     if (this.scene.timeManager) {
-      this.scene.timeManager.setSlowMotion(0.2, 200);
+      this.scene.timeManager.applySlowmo(200, 0.2);
     }
 
     // Counter attack
