@@ -1,6 +1,6 @@
 import { BaseScene } from './BaseScene.js';
 import { Player } from '../entities/Player.js';
-import { Enemy } from '../entities/Enemy.js';
+import { Enemy, CORPSE_INTERACTION } from '../entities/Enemy.js';
 import { TonfaWarden } from '../entities/bosses/TonfaWarden.js';
 import { CombatManager } from '../systems/CombatManager.js';
 import { TimeManager } from '../systems/TimeManager.js';
@@ -90,7 +90,13 @@ export class TestArenaScene extends BaseScene {
     this.spawnEnemies();
 
     // Set up enemy-corpse collision (after enemies are spawned)
-    this.physics.add.collider(this.enemyGroup, this.corpseManager.corpseGroup);
+    this.physics.add.collider(
+      this.enemyGroup,
+      this.corpseManager.corpseGroup,
+      this.handleEnemyCorpseCollision,
+      null,
+      this
+    );
 
     // Create debug HUD
     this.createDebugHUD();
@@ -460,6 +466,55 @@ export class TestArenaScene extends BaseScene {
         this.enemyProjectiles.splice(i, 1);
       }
     }
+  }
+
+  /**
+   * Handle collision between enemy and corpse
+   * @param {Phaser.Physics.Arcade.Sprite} enemySprite
+   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
+   */
+  handleEnemyCorpseCollision(enemySprite, corpseSprite) {
+    const enemy = enemySprite.getData('owner');
+    const corpse = corpseSprite.getData('owner');
+
+    if (!enemy || !corpse) return;
+
+    // Brutes destroy corpses on contact
+    if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
+      this.destroyCorpseWithForce(enemy, corpse);
+    }
+    // CLIMB handling will be added in future prompt
+  }
+
+  /**
+   * Destroy a corpse with knockback force (used by Brutes)
+   * @param {Enemy} enemy - The enemy destroying the corpse
+   * @param {Object} corpse - The corpse being destroyed
+   */
+  destroyCorpseWithForce(enemy, corpse) {
+    // Determine knockback direction (away from enemy)
+    const direction = corpse.sprite.x > enemy.sprite.x ? 1 : -1;
+    const force = enemy.corpseDestroyForce || 300;
+
+    // Apply force to corpse (brief moment of movement before destroy)
+    corpse.sprite.body.setImmovable(false);
+    corpse.sprite.body.setVelocity(direction * force, -150);
+
+    // Visual feedback
+    corpse.sprite.setTint(0xff4444);
+
+    // Destroy after brief delay (shows the knockback)
+    this.time.delayedCall(150, () => {
+      // Emit particles at corpse position if EffectsManager exists
+      if (this.effectsManager) {
+        this.effectsManager.createImpact(
+          corpse.sprite.x,
+          corpse.sprite.y,
+          { color: 0x666666, count: 5 }
+        );
+      }
+      this.corpseManager.remove(corpse);
+    });
   }
 
   updateDebugHUD() {
