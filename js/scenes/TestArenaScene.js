@@ -1,12 +1,15 @@
 import { BaseScene } from './BaseScene.js';
 import { Player } from '../entities/Player.js';
 import { Enemy } from '../entities/Enemy.js';
+import { TonfaWarden } from '../entities/bosses/TonfaWarden.js';
 import { CombatManager } from '../systems/CombatManager.js';
 import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
+import { AudioManager } from '../systems/AudioManager.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
+import { SOUNDS, MUSIC } from '../utils/audio.js';
 
 // Import weapons module to register all weapons
 import '../weapons/index.js';
@@ -20,12 +23,15 @@ export class TestArenaScene extends BaseScene {
     super('TestArena');
     this.player = null;
     this.enemies = [];
+    this.enemyProjectiles = [];
+    this.currentBoss = null;
     this.ground = null;
     this.platforms = null;
     this.debugText = null;
     this.combatManager = null;
     this.timeManager = null;
     this.effectsManager = null;
+    this.audioManager = null;
     this.hud = null;
     this.showCombatDebug = false;
   }
@@ -39,6 +45,7 @@ export class TestArenaScene extends BaseScene {
     this.combatManager = new CombatManager(this);
     this.combatManager.setTimeManager(this.timeManager);
     this.effectsManager = new EffectsManager(this);
+    this.audioManager = new AudioManager(this);
 
     // Create HUD
     this.hud = new HUD(this);
@@ -83,6 +90,11 @@ export class TestArenaScene extends BaseScene {
       // Spawn effects
       this.effectsManager.hitEffect(x, y, intensity, direction);
       this.effectsManager.damageNumber(x, y - 20, hitData.damage);
+
+      // Play hit sound
+      if (this.audioManager) {
+        this.audioManager.playHit(hitData.damage, hitData.isCritical);
+      }
     });
 
     this.events.on('enemy:killed', (data) => {
@@ -96,6 +108,11 @@ export class TestArenaScene extends BaseScene {
       // Death effect
       this.effectsManager.deathEffect(data.enemy.sprite.x, data.enemy.sprite.y);
 
+      // Play death sound
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.ENEMY_DEATH);
+      }
+
       // Remove from array
       const index = this.enemies.indexOf(data.enemy);
       if (index > -1) {
@@ -103,9 +120,50 @@ export class TestArenaScene extends BaseScene {
       }
     });
 
+    // Boss events
+    this.events.on('boss:defeated', (data) => {
+      console.log(`Boss defeated! Unlocked weapon: ${data.weaponDrop}`);
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.BOSS_DEATH);
+      }
+      this.currentBoss = null;
+    });
+
+    this.events.on('boss:phaseChange', (data) => {
+      console.log(`Boss entered phase ${data.phase + 1}!`);
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.BOSS_PHASE);
+      }
+    });
+
+    // Additional audio events
+    this.events.on('combo:milestone', (data) => {
+      if (this.audioManager) {
+        this.audioManager.playComboMilestone(data.combo);
+      }
+    });
+
+    this.events.on('weapon:equipped', () => {
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.WEAPON_SWAP);
+      }
+    });
+
+    this.events.on('ultimate:ready', () => {
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.ULTIMATE_READY);
+      }
+    });
+
+    this.events.on('ultimate:activated', () => {
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.ULTIMATE_ACTIVATE);
+      }
+    });
+
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
-    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies');
+    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies, B to spawn boss');
   }
 
   setupInputHandlers() {
@@ -136,6 +194,54 @@ export class TestArenaScene extends BaseScene {
     this.input.keyboard.on('keydown-T', () => {
       this.player.takeDamage(10);
     });
+
+    // Spawn boss
+    this.input.keyboard.on('keydown-B', () => {
+      this.spawnBoss();
+    });
+
+    // Mute audio toggle
+    this.input.keyboard.on('keydown-M', () => {
+      if (this.audioManager) {
+        const muted = this.audioManager.toggleMute('master');
+        console.log(`Audio ${muted ? 'muted' : 'unmuted'}`);
+      }
+    });
+  }
+
+  /**
+   * Spawn the Tonfa Warden boss
+   */
+  spawnBoss() {
+    // Clear existing boss
+    if (this.currentBoss) {
+      this.currentBoss.destroy();
+      this.currentBoss = null;
+    }
+
+    // Clear regular enemies
+    for (const enemy of this.enemies) {
+      enemy.destroy();
+    }
+    this.enemies = [];
+
+    // Clear projectiles
+    if (this.enemyProjectiles) {
+      for (const proj of this.enemyProjectiles) {
+        if (proj.sprite && proj.sprite.active) {
+          proj.sprite.destroy();
+        }
+      }
+    }
+    this.enemyProjectiles = [];
+
+    // Spawn boss in center-right of arena
+    this.currentBoss = new TonfaWarden(this, 800, 450);
+    this.currentBoss.addCollider(this.ground);
+    this.currentBoss.addCollider(this.platforms);
+
+    console.log('Boss spawned: The Tonfa Warden');
+    console.log('Tip: Attack during blue circle = parried! Bait the defensive stance.');
   }
 
   spawnEnemies() {
@@ -145,13 +251,25 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemies = [];
 
-    // Spawn positions with enemy types
+    // Clear existing projectiles
+    if (this.enemyProjectiles) {
+      for (const proj of this.enemyProjectiles) {
+        if (proj.sprite && proj.sprite.active) {
+          proj.sprite.destroy();
+        }
+      }
+    }
+    this.enemyProjectiles = [];
+
+    // Spawn a variety of enemy types
     const spawnPoints = [
+      { x: 500, y: 400, type: 'SWARMER' },
       { x: 600, y: 400, type: 'SWARMER' },
-      { x: 800, y: 400, type: 'SWARMER' },
-      { x: 1000, y: 400, type: 'BRUTE' },
-      { x: 700, y: 200, type: 'SWARMER' },  // On platform
-      { x: 1100, y: 100, type: 'BRUTE' },   // On high platform
+      { x: 700, y: 400, type: 'SWARMER' },
+      { x: 800, y: 400, type: 'LUNGER' },
+      { x: 900, y: 400, type: 'SHIELD_BEARER' },
+      { x: 1000, y: 400, type: 'LOBBER' },
+      { x: 1100, y: 400, type: 'DETONATOR' },
     ];
 
     for (const pos of spawnPoints) {
@@ -167,7 +285,7 @@ export class TestArenaScene extends BaseScene {
       this.enemies.push(enemy);
     }
 
-    console.log(`Spawned ${this.enemies.length} enemies`);
+    console.log(`Spawned ${this.enemies.length} enemies (Swarmer x3, Lunger, Shield Bearer, Lobber, Detonator)`);
   }
 
   createArena() {
@@ -228,8 +346,21 @@ export class TestArenaScene extends BaseScene {
         enemy.update(time, scaledDelta);
       }
 
+      // Update boss
+      if (this.currentBoss && this.currentBoss.isAlive) {
+        this.currentBoss.update(time, scaledDelta);
+
+        // Check boss hitbox collision with player
+        if (this.player && this.player.isAlive) {
+          this.currentBoss.checkHitboxCollision(this.player);
+        }
+      }
+
       // Update combat manager
       this.combatManager.update(time, scaledDelta);
+
+      // Check enemy projectiles
+      this.updateEnemyProjectiles();
     }
 
     // Update HUD
@@ -237,6 +368,43 @@ export class TestArenaScene extends BaseScene {
 
     // Always update debug HUD
     this.updateDebugHUD();
+  }
+
+  /**
+   * Handle enemy projectile collisions
+   */
+  updateEnemyProjectiles() {
+    if (!this.enemyProjectiles) return;
+
+    for (let i = this.enemyProjectiles.length - 1; i >= 0; i--) {
+      const proj = this.enemyProjectiles[i];
+
+      if (!proj.sprite || !proj.sprite.active) {
+        this.enemyProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Check collision with player
+      if (this.player && this.player.isAlive && Phaser.Geom.Intersects.RectangleToRectangle(
+        proj.sprite.getBounds(),
+        this.player.sprite.getBounds()
+      )) {
+        this.player.takeDamage(proj.damage, {
+          knockback: { x: 100, y: -100 },
+          hitstun: 150,
+        });
+
+        proj.sprite.destroy();
+        this.enemyProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Check collision with ground (below arena)
+      if (proj.sprite.y > 550) {
+        proj.sprite.destroy();
+        this.enemyProjectiles.splice(i, 1);
+      }
+    }
   }
 
   updateDebugHUD() {
@@ -254,11 +422,21 @@ export class TestArenaScene extends BaseScene {
       `Combo: ${hudStats.combo}`,
       `Kills: ${hudStats.kills}`,
       `Enemies: ${this.enemies.length}`,
-      '',
-      `Hitstop: ${timeDebug.hitstop}ms`,
-      '',
-      'R - Respawn | C - Combat Debug',
     ];
+
+    // Add boss info if present
+    if (this.currentBoss && this.currentBoss.isAlive) {
+      const bossDebug = this.currentBoss.getDebugInfo();
+      lines.push('');
+      lines.push(`Boss: ${bossDebug.name}`);
+      lines.push(`HP: ${bossDebug.health} | Phase: ${bossDebug.phase}`);
+      lines.push(`State: ${bossDebug.state} | Attack: ${bossDebug.attack}`);
+    }
+
+    lines.push('');
+    lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
+    lines.push('');
+    lines.push('R - Respawn | B - Boss | M - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
@@ -269,6 +447,22 @@ export class TestArenaScene extends BaseScene {
     // Clean up global debug references
     window.player = null;
     window.scene = null;
+
+    // Clean up projectiles
+    if (this.enemyProjectiles) {
+      for (const proj of this.enemyProjectiles) {
+        if (proj.sprite && proj.sprite.active) {
+          proj.sprite.destroy();
+        }
+      }
+      this.enemyProjectiles = [];
+    }
+
+    // Clean up boss
+    if (this.currentBoss) {
+      this.currentBoss.destroy();
+      this.currentBoss = null;
+    }
 
     // Clean up enemies
     for (const enemy of this.enemies) {
@@ -296,6 +490,10 @@ export class TestArenaScene extends BaseScene {
     if (this.effectsManager) {
       this.effectsManager.destroy();
       this.effectsManager = null;
+    }
+    if (this.audioManager) {
+      this.audioManager.destroy();
+      this.audioManager = null;
     }
   }
 }
