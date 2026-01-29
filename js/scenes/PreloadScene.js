@@ -1,3 +1,5 @@
+import { SOUNDS, MUSIC } from '../utils/audio.js';
+
 /**
  * Asset loading scene - loads all game assets and shows progress
  * For now, creates placeholder textures for development
@@ -14,11 +16,82 @@ export class PreloadScene extends Phaser.Scene {
     // this.load.image('player', 'assets/sprites/player.png');
     // this.load.spritesheet('player_run', 'assets/sprites/player_run.png', {...});
 
+    // Load audio assets
+    this.loadAudio();
+
     // Simulate loading time for testing loading bar
     // Remove this when you have real assets
     for (let i = 0; i < 100; i++) {
       this.load.image(`dummy${i}`, 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
     }
+
+    // Handle load errors gracefully (audio files may not exist yet)
+    this.load.on('loaderror', (file) => {
+      // Silently ignore missing audio files during development
+      if (file.type === 'audio') {
+        console.debug(`Audio not found (expected during dev): ${file.key}`);
+      } else {
+        console.warn(`Failed to load: ${file.key}`);
+      }
+    });
+  }
+
+  /**
+   * Load all audio assets
+   * Files may not exist yet - errors handled gracefully
+   */
+  loadAudio() {
+    // Combat sounds
+    this.load.audio(SOUNDS.SWING_LIGHT, 'assets/audio/sfx/swing_light.wav');
+    this.load.audio(SOUNDS.SWING_HEAVY, 'assets/audio/sfx/swing_heavy.wav');
+    this.load.audio(SOUNDS.HIT_LIGHT, 'assets/audio/sfx/hit_light.wav');
+    this.load.audio(SOUNDS.HIT_HEAVY, 'assets/audio/sfx/hit_heavy.wav');
+    this.load.audio(SOUNDS.HIT_CRITICAL, 'assets/audio/sfx/hit_critical.wav');
+    this.load.audio(SOUNDS.PARRY, 'assets/audio/sfx/parry.wav');
+    this.load.audio(SOUNDS.BLOCK, 'assets/audio/sfx/block.wav');
+
+    // Movement sounds
+    this.load.audio(SOUNDS.JUMP, 'assets/audio/sfx/jump.wav');
+    this.load.audio(SOUNDS.LAND, 'assets/audio/sfx/land.wav');
+    this.load.audio(SOUNDS.FOOTSTEP, 'assets/audio/sfx/footstep.wav');
+    this.load.audio(SOUNDS.DODGE, 'assets/audio/sfx/dodge.wav');
+    this.load.audio(SOUNDS.BLINK, 'assets/audio/sfx/blink.wav');
+    this.load.audio(SOUNDS.GRAPPLE_FIRE, 'assets/audio/sfx/grapple_fire.wav');
+    this.load.audio(SOUNDS.GRAPPLE_HIT, 'assets/audio/sfx/grapple_hit.wav');
+
+    // Player sounds
+    this.load.audio(SOUNDS.HURT, 'assets/audio/sfx/player_hurt.wav');
+    this.load.audio(SOUNDS.DEATH, 'assets/audio/sfx/player_death.wav');
+    this.load.audio(SOUNDS.HEAL, 'assets/audio/sfx/heal.wav');
+
+    // Enemy sounds
+    this.load.audio(SOUNDS.ENEMY_HURT, 'assets/audio/sfx/enemy_hurt.wav');
+    this.load.audio(SOUNDS.ENEMY_DEATH, 'assets/audio/sfx/enemy_death.wav');
+    this.load.audio(SOUNDS.ENEMY_ALERT, 'assets/audio/sfx/enemy_alert.wav');
+
+    // Boss sounds
+    this.load.audio(SOUNDS.BOSS_INTRO, 'assets/audio/sfx/boss_intro.wav');
+    this.load.audio(SOUNDS.BOSS_PHASE, 'assets/audio/sfx/boss_phase.wav');
+    this.load.audio(SOUNDS.BOSS_DEATH, 'assets/audio/sfx/boss_death.wav');
+
+    // UI sounds
+    this.load.audio(SOUNDS.MENU_SELECT, 'assets/audio/sfx/menu_select.wav');
+    this.load.audio(SOUNDS.MENU_CONFIRM, 'assets/audio/sfx/menu_confirm.wav');
+    this.load.audio(SOUNDS.MENU_BACK, 'assets/audio/sfx/menu_back.wav');
+    this.load.audio(SOUNDS.COMBO_MILESTONE, 'assets/audio/sfx/combo_milestone.wav');
+    this.load.audio(SOUNDS.WEAPON_SWAP, 'assets/audio/sfx/weapon_swap.wav');
+    this.load.audio(SOUNDS.ULTIMATE_READY, 'assets/audio/sfx/ultimate_ready.wav');
+    this.load.audio(SOUNDS.ULTIMATE_ACTIVATE, 'assets/audio/sfx/ultimate_activate.wav');
+
+    // Ambient sounds
+    this.load.audio(SOUNDS.EXPLOSION, 'assets/audio/sfx/explosion.wav');
+
+    // Music tracks
+    this.load.audio(MUSIC.MENU, 'assets/audio/music/menu.ogg');
+    this.load.audio(MUSIC.EXPLORATION, 'assets/audio/music/exploration.ogg');
+    this.load.audio(MUSIC.COMBAT, 'assets/audio/music/combat.ogg');
+    this.load.audio(MUSIC.BOSS, 'assets/audio/music/boss.ogg');
+    this.load.audio(MUSIC.VICTORY, 'assets/audio/music/victory.ogg');
   }
 
   create() {

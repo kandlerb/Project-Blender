@@ -5,9 +5,11 @@ import { TonfaWarden } from '../entities/bosses/TonfaWarden.js';
 import { CombatManager } from '../systems/CombatManager.js';
 import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
+import { AudioManager } from '../systems/AudioManager.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
+import { SOUNDS, MUSIC } from '../utils/audio.js';
 
 // Import weapons module to register all weapons
 import '../weapons/index.js';
@@ -29,6 +31,7 @@ export class TestArenaScene extends BaseScene {
     this.combatManager = null;
     this.timeManager = null;
     this.effectsManager = null;
+    this.audioManager = null;
     this.hud = null;
     this.showCombatDebug = false;
   }
@@ -42,6 +45,7 @@ export class TestArenaScene extends BaseScene {
     this.combatManager = new CombatManager(this);
     this.combatManager.setTimeManager(this.timeManager);
     this.effectsManager = new EffectsManager(this);
+    this.audioManager = new AudioManager(this);
 
     // Create HUD
     this.hud = new HUD(this);
@@ -86,6 +90,11 @@ export class TestArenaScene extends BaseScene {
       // Spawn effects
       this.effectsManager.hitEffect(x, y, intensity, direction);
       this.effectsManager.damageNumber(x, y - 20, hitData.damage);
+
+      // Play hit sound
+      if (this.audioManager) {
+        this.audioManager.playHit(hitData.damage, hitData.isCritical);
+      }
     });
 
     this.events.on('enemy:killed', (data) => {
@@ -99,6 +108,11 @@ export class TestArenaScene extends BaseScene {
       // Death effect
       this.effectsManager.deathEffect(data.enemy.sprite.x, data.enemy.sprite.y);
 
+      // Play death sound
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.ENEMY_DEATH);
+      }
+
       // Remove from array
       const index = this.enemies.indexOf(data.enemy);
       if (index > -1) {
@@ -109,11 +123,42 @@ export class TestArenaScene extends BaseScene {
     // Boss events
     this.events.on('boss:defeated', (data) => {
       console.log(`Boss defeated! Unlocked weapon: ${data.weaponDrop}`);
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.BOSS_DEATH);
+      }
       this.currentBoss = null;
     });
 
     this.events.on('boss:phaseChange', (data) => {
       console.log(`Boss entered phase ${data.phase + 1}!`);
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.BOSS_PHASE);
+      }
+    });
+
+    // Additional audio events
+    this.events.on('combo:milestone', (data) => {
+      if (this.audioManager) {
+        this.audioManager.playComboMilestone(data.combo);
+      }
+    });
+
+    this.events.on('weapon:equipped', () => {
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.WEAPON_SWAP);
+      }
+    });
+
+    this.events.on('ultimate:ready', () => {
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.ULTIMATE_READY);
+      }
+    });
+
+    this.events.on('ultimate:activated', () => {
+      if (this.audioManager) {
+        this.audioManager.playSFX(SOUNDS.ULTIMATE_ACTIVATE);
+      }
     });
 
     console.log('TestArena ready');
@@ -153,6 +198,14 @@ export class TestArenaScene extends BaseScene {
     // Spawn boss
     this.input.keyboard.on('keydown-B', () => {
       this.spawnBoss();
+    });
+
+    // Mute audio toggle
+    this.input.keyboard.on('keydown-M', () => {
+      if (this.audioManager) {
+        const muted = this.audioManager.toggleMute('master');
+        console.log(`Audio ${muted ? 'muted' : 'unmuted'}`);
+      }
     });
   }
 
@@ -383,7 +436,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | C - Debug');
+    lines.push('R - Respawn | B - Boss | M - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
@@ -437,6 +490,10 @@ export class TestArenaScene extends BaseScene {
     if (this.effectsManager) {
       this.effectsManager.destroy();
       this.effectsManager = null;
+    }
+    if (this.audioManager) {
+      this.audioManager.destroy();
+      this.audioManager = null;
     }
   }
 }
