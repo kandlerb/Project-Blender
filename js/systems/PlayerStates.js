@@ -32,6 +32,9 @@ export const PLAYER_STATES = Object.freeze({
   GRAPPLE_PULL: 'grapple_pull',
   // Wall mechanics
   WALL_SLIDE: 'wall_slide',
+  // Weapon-specific states
+  PARRY: 'parry',
+  COUNTER_ATTACK: 'counter_attack',
 });
 
 /**
@@ -165,6 +168,12 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.GRAPPLE_FIRE;
     }
 
+    // Parry (weapon-specific - only if weapon has parry mechanic)
+    const weapon = this.player.getCurrentWeapon();
+    if (weapon?.mechanics?.parry && this.input.justPressed(ACTIONS.SPECIAL)) {
+      return PLAYER_STATES.PARRY;
+    }
+
     return null;
   }
 }
@@ -234,6 +243,12 @@ export class RunState extends PlayerState {
     // Grapple
     if (this.input.justPressed(ACTIONS.GRAPPLE)) {
       return PLAYER_STATES.GRAPPLE_FIRE;
+    }
+
+    // Parry (weapon-specific - only if weapon has parry mechanic)
+    const weapon = this.player.getCurrentWeapon();
+    if (weapon?.mechanics?.parry && this.input.justPressed(ACTIONS.SPECIAL)) {
+      return PLAYER_STATES.PARRY;
     }
 
     return null;
@@ -1973,6 +1988,296 @@ export class WallSlideState extends PlayerState {
 }
 
 /**
+ * Parry State - Block with counter opportunity (Tonfas special)
+ */
+export class ParryState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.PARRY, stateMachine);
+
+    this.parryDuration = 400;     // Total parry stance time
+    this.perfectWindow = 80;      // Perfect parry frames
+    this.wasHit = false;
+    this.wasPerfect = false;
+    this.counterWindowActive = false;
+    this.counterWindowTime = 400;
+    this.counterTimer = 0;
+  }
+
+  enter(prevState, params) {
+    this.wasHit = false;
+    this.wasPerfect = false;
+    this.counterWindowActive = false;
+    this.counterTimer = 0;
+
+    // Get parry data from weapon
+    const weapon = this.player.getCurrentWeapon();
+    const parryData = weapon?.mechanics?.parry;
+
+    if (parryData) {
+      this.parryDuration = parryData.windowTime + 200; // Window + recovery
+      this.perfectWindow = parryData.perfectWindow;
+      this.counterWindowTime = parryData.counterWindowTime;
+    }
+
+    // Stop movement
+    this.body.setVelocityX(0);
+
+    // Visual: defensive stance
+    this.sprite.setTint(0x8888ff);
+
+    // Register for incoming damage
+    this.player.isParrying = true;
+    this.player.parryState = this;
+  }
+
+  /**
+   * Called by combat system when player would take damage
+   * @param {object} hitData
+   * @returns {boolean} True if damage was blocked
+   */
+  onIncomingDamage(hitData) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Check if within parry window
+    if (stateTime > this.parryDuration - 200) {
+      // Recovery frames, can't parry
+      return false;
+    }
+
+    this.wasHit = true;
+
+    // Perfect parry?
+    if (stateTime <= this.perfectWindow) {
+      this.wasPerfect = true;
+      this.counterWindowActive = true;
+      this.counterTimer = 0;
+
+      // Visual feedback
+      this.sprite.setTint(0xffff00);
+
+      if (this.player.scene.effectsManager) {
+        this.player.scene.effectsManager.screenFlash(0xffff00, 100, 0.3);
+        this.player.scene.effectsManager.hitSparks(
+          this.sprite.x,
+          this.sprite.y,
+          8,
+          hitData.attacker?.sprite?.flipX ? 1 : -1
+        );
+      }
+
+      // Stun the attacker
+      if (hitData.attacker && hitData.attacker.hitstunRemaining !== undefined) {
+        const weapon = this.player.getCurrentWeapon();
+        const stunTime = weapon?.mechanics?.parry?.stunOnParry || 200;
+        hitData.attacker.hitstunRemaining = stunTime;
+      }
+
+      // Time slow for impact
+      if (this.player.scene.timeManager) {
+        this.player.scene.timeManager.applySlowmo(150, 0.3);
+      }
+
+      // Full block
+      return true;
+    }
+
+    // Normal parry - reduced damage
+    const weapon = this.player.getCurrentWeapon();
+    const reduction = weapon?.mechanics?.parry?.blockReduction || 0.5;
+
+    // Apply reduced damage
+    const reducedDamage = Math.floor(hitData.damage * (1 - reduction));
+    if (reducedDamage > 0) {
+      this.player.health -= reducedDamage;
+
+      // Still show some feedback
+      if (this.player.scene.effectsManager) {
+        this.player.scene.effectsManager.hitSparks(
+          this.sprite.x,
+          this.sprite.y,
+          3,
+          hitData.attacker?.sprite?.flipX ? 1 : -1
+        );
+      }
+    }
+
+    // Damage was "blocked" (reduced)
+    return true;
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Maintain floor contact
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
+
+    // Counter window active after perfect parry
+    if (this.counterWindowActive) {
+      this.counterTimer += delta;
+
+      // Attack input during counter window = counter attack
+      if (this.input.justPressed(ACTIONS.ATTACK_LIGHT) ||
+          this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
+        return PLAYER_STATES.COUNTER_ATTACK;
+      }
+
+      // Counter window expired
+      if (this.counterTimer >= this.counterWindowTime) {
+        this.counterWindowActive = false;
+      }
+    }
+
+    // Can release parry early
+    if (this.input.isUp(ACTIONS.SPECIAL) && stateTime > 100) {
+      return this.exitParry();
+    }
+
+    // Parry duration complete
+    if (stateTime >= this.parryDuration) {
+      return this.exitParry();
+    }
+
+    // Can flip cancel
+    if (this.input.justPressed(ACTIONS.FLIP)) {
+      return PLAYER_STATES.FLIP;
+    }
+
+    return null;
+  }
+
+  exitParry() {
+    if (this.body.onFloor()) {
+      return this.input.getHorizontalAxis() !== 0
+        ? PLAYER_STATES.RUN
+        : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    this.player.isParrying = false;
+    this.player.parryState = null;
+    this.sprite.clearTint();
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.COUNTER_ATTACK;
+  }
+}
+
+/**
+ * Counter Attack State - Powerful strike after perfect parry
+ */
+export class CounterAttackState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.COUNTER_ATTACK, stateMachine);
+
+    this.attackData = null;
+    this.hitboxActivated = false;
+  }
+
+  enter(prevState, params) {
+    this.hitboxActivated = false;
+
+    // Get counter attack data (weapon's special)
+    this.attackData = this.player.getAttackData('special');
+
+    if (!this.attackData) {
+      // Fallback
+      this.attackData = {
+        startupTime: 30,
+        activeTime: 100,
+        recoveryTime: 150,
+        damage: 35,
+        knockback: { x: 400, y: -200 },
+        hitstun: 450,
+        hitstop: 100,
+        hitbox: { width: 60, height: 50, offsetX: 35, offsetY: 0 },
+      };
+    }
+
+    // Dash forward slightly
+    const direction = this.sprite.flipX ? -1 : 1;
+    this.body.setVelocityX(direction * 300);
+
+    // Visual flair
+    this.sprite.setTint(0xffaa00);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Maintain floor contact
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
+
+    // Startup
+    if (stateTime < this.attackData.startupTime) {
+      return null;
+    }
+
+    // Active
+    if (stateTime < this.attackData.startupTime + this.attackData.activeTime) {
+      if (!this.hitboxActivated) {
+        this.hitboxActivated = true;
+        this.player.activateAttackHitbox({
+          damage: this.attackData.damage,
+          knockback: this.attackData.knockback,
+          hitstun: this.attackData.hitstun,
+          hitstop: this.attackData.hitstop,
+          width: this.attackData.hitbox.width,
+          height: this.attackData.hitbox.height,
+          offsetX: this.attackData.hitbox.offsetX,
+          offsetY: this.attackData.hitbox.offsetY,
+        });
+
+        // Big screen shake
+        if (this.player.scene.effectsManager) {
+          this.player.scene.effectsManager.screenShake(10, 150);
+        }
+      }
+      return null;
+    }
+
+    // Recovery
+    if (this.hitboxActivated) {
+      this.player.deactivateAttackHitbox();
+      this.hitboxActivated = false;
+    }
+
+    const totalDuration = this.attackData.startupTime +
+                          this.attackData.activeTime +
+                          this.attackData.recoveryTime;
+
+    if (stateTime >= totalDuration) {
+      if (this.body.onFloor()) {
+        return this.input.getHorizontalAxis() !== 0
+          ? PLAYER_STATES.RUN
+          : PLAYER_STATES.IDLE;
+      }
+      return PLAYER_STATES.FALL;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.player.deactivateAttackHitbox();
+    this.sprite.clearTint();
+    this.hitboxActivated = false;
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.BLINK;
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -2005,5 +2310,8 @@ export function createPlayerStates(stateMachine) {
     new GrapplePullState(stateMachine),
     // Wall slide
     new WallSlideState(stateMachine),
+    // Weapon-specific states
+    new ParryState(stateMachine),
+    new CounterAttackState(stateMachine),
   ];
 }

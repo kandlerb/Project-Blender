@@ -34,6 +34,10 @@ export class Player {
     this.comboCount = 0;
     this.ultimateMeter = 0;
 
+    // Parry tracking (for Tonfas and similar weapons)
+    this.isParrying = false;
+    this.parryState = null;
+
     // State machine
     this.stateMachine = new StateMachine(this, PLAYER_STATES.IDLE);
     this.stateMachine.addStates(createPlayerStates(this.stateMachine));
@@ -151,10 +155,20 @@ export class Player {
   /**
    * Take damage
    * @param {number} amount - Damage amount
-   * @param {object} source - What dealt the damage
+   * @param {object} source - What dealt the damage (hitData object)
    */
   takeDamage(amount, source = null) {
     if (this.isInvulnerable) return;
+
+    // Check for parry
+    if (this.isParrying && this.parryState) {
+      const blocked = this.parryState.onIncomingDamage({
+        damage: amount,
+        attacker: source?.owner || source,
+        ...source,
+      });
+      if (blocked) return;
+    }
 
     this.health = Math.max(0, this.health - amount);
 
