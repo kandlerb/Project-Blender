@@ -70,13 +70,15 @@ export class Corpse {
   setupPhysics() {
     const body = this.sprite.body;
 
-    // Immovable so other entities collide with it
-    body.setImmovable(true);
+    // NOT immovable - we want physics interactions
+    // But high mass so they're hard to push
+    body.setImmovable(false);
+    body.setMass(10);  // Heavy so they don't get pushed easily
 
-    // Allow gravity so corpses fall if spawned in air
+    // Allow gravity so corpses fall
     body.setAllowGravity(true);
 
-    // High drag so they settle quickly after falling
+    // High drag so they settle quickly
     body.setDrag(1000, 0);
 
     // Limited movement speed
