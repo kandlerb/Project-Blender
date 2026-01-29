@@ -11,6 +11,7 @@ import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
 import { SOUNDS, MUSIC } from '../utils/audio.js';
+import { PHYSICS } from '../utils/physics.js';
 
 // Import weapons module to register all weapons
 import '../weapons/index.js';
@@ -332,7 +333,9 @@ export class TestArenaScene extends BaseScene {
       this.enemyGroup.add(enemy.sprite);
 
       // Re-apply enemy physics settings that group may have overwritten
+      // World gravity is 0, so we must set per-body gravity
       enemy.sprite.body.setAllowGravity(true);
+      enemy.sprite.body.setGravityY(PHYSICS.GRAVITY);
       enemy.sprite.body.setCollideWorldBounds(true);
 
       if (this.showCombatDebug) {
