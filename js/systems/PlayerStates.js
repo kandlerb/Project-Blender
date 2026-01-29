@@ -298,17 +298,42 @@ export class RunState extends PlayerState {
 export class JumpState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.JUMP, stateMachine);
+    this.wallJumpGracePeriod = 150; // ms before input can override wall jump velocity
+    this.isWallJump = false;
+    this.wallJumpDirection = 0;
   }
 
   enter(prevState, params) {
     // Reset coyote time
     this.player.leftGroundTime = 0;
+
+    // Track if this is a wall jump
+    this.isWallJump = prevState === PLAYER_STATES.WALL_SLIDE;
+    if (this.isWallJump && this.player.lastWallJumpDirection) {
+      this.wallJumpDirection = this.player.lastWallJumpDirection;
+      this.player.lastWallJumpDirection = 0; // Clear after reading
+    } else {
+      this.wallJumpDirection = 0;
+    }
     // TODO: Play jump animation
   }
 
   update(time, delta) {
-    // Air movement (reduced control)
-    this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+    const stateTime = this.stateMachine.getStateTime();
+
+    // During wall jump grace period, don't let input override the jump velocity
+    if (this.isWallJump && stateTime < this.wallJumpGracePeriod) {
+      // Only allow input in the same direction as the wall jump
+      const inputH = this.input.getHorizontalAxis();
+      if (inputH !== 0 && Math.sign(inputH) === Math.sign(this.wallJumpDirection)) {
+        // Player pressing in jump direction - allow slight boost
+        this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+      }
+      // Otherwise preserve wall jump velocity
+    } else {
+      // Normal air movement
+      this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+    }
 
     // Variable jump height - release early for short hop
     if (this.input.justReleased(ACTIONS.JUMP) && this.body.velocity.y < 0) {
@@ -2092,10 +2117,17 @@ export class WallSlideState extends PlayerState {
     // Jump away from wall
     const jumpDirX = -this.wallDirection; // Opposite of wall direction
 
+    // Push player away from wall to prevent collision with wall above
+    const pushDistance = 8;
+    this.sprite.x += jumpDirX * pushDistance;
+
     this.body.setVelocity(
       jumpDirX * this.wallJumpForceX,
       -this.wallJumpForceY
     );
+
+    // Store wall jump direction for JumpState to use
+    this.player.lastWallJumpDirection = jumpDirX;
 
     // Face jump direction
     this.sprite.setFlipX(jumpDirX < 0);
