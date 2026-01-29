@@ -1,6 +1,7 @@
 import { BaseScene } from './BaseScene.js';
 import { Player } from '../entities/Player.js';
 import { Enemy } from '../entities/Enemy.js';
+import { TonfaWarden } from '../entities/bosses/TonfaWarden.js';
 import { CombatManager } from '../systems/CombatManager.js';
 import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
@@ -21,6 +22,7 @@ export class TestArenaScene extends BaseScene {
     this.player = null;
     this.enemies = [];
     this.enemyProjectiles = [];
+    this.currentBoss = null;
     this.ground = null;
     this.platforms = null;
     this.debugText = null;
@@ -104,9 +106,19 @@ export class TestArenaScene extends BaseScene {
       }
     });
 
+    // Boss events
+    this.events.on('boss:defeated', (data) => {
+      console.log(`Boss defeated! Unlocked weapon: ${data.weaponDrop}`);
+      this.currentBoss = null;
+    });
+
+    this.events.on('boss:phaseChange', (data) => {
+      console.log(`Boss entered phase ${data.phase + 1}!`);
+    });
+
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
-    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies');
+    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies, B to spawn boss');
   }
 
   setupInputHandlers() {
@@ -137,6 +149,46 @@ export class TestArenaScene extends BaseScene {
     this.input.keyboard.on('keydown-T', () => {
       this.player.takeDamage(10);
     });
+
+    // Spawn boss
+    this.input.keyboard.on('keydown-B', () => {
+      this.spawnBoss();
+    });
+  }
+
+  /**
+   * Spawn the Tonfa Warden boss
+   */
+  spawnBoss() {
+    // Clear existing boss
+    if (this.currentBoss) {
+      this.currentBoss.destroy();
+      this.currentBoss = null;
+    }
+
+    // Clear regular enemies
+    for (const enemy of this.enemies) {
+      enemy.destroy();
+    }
+    this.enemies = [];
+
+    // Clear projectiles
+    if (this.enemyProjectiles) {
+      for (const proj of this.enemyProjectiles) {
+        if (proj.sprite && proj.sprite.active) {
+          proj.sprite.destroy();
+        }
+      }
+    }
+    this.enemyProjectiles = [];
+
+    // Spawn boss in center-right of arena
+    this.currentBoss = new TonfaWarden(this, 800, 450);
+    this.currentBoss.addCollider(this.ground);
+    this.currentBoss.addCollider(this.platforms);
+
+    console.log('Boss spawned: The Tonfa Warden');
+    console.log('Tip: Attack during blue circle = parried! Bait the defensive stance.');
   }
 
   spawnEnemies() {
@@ -241,6 +293,16 @@ export class TestArenaScene extends BaseScene {
         enemy.update(time, scaledDelta);
       }
 
+      // Update boss
+      if (this.currentBoss && this.currentBoss.isAlive) {
+        this.currentBoss.update(time, scaledDelta);
+
+        // Check boss hitbox collision with player
+        if (this.player && this.player.isAlive) {
+          this.currentBoss.checkHitboxCollision(this.player);
+        }
+      }
+
       // Update combat manager
       this.combatManager.update(time, scaledDelta);
 
@@ -307,11 +369,21 @@ export class TestArenaScene extends BaseScene {
       `Combo: ${hudStats.combo}`,
       `Kills: ${hudStats.kills}`,
       `Enemies: ${this.enemies.length}`,
-      '',
-      `Hitstop: ${timeDebug.hitstop}ms`,
-      '',
-      'R - Respawn | C - Combat Debug',
     ];
+
+    // Add boss info if present
+    if (this.currentBoss && this.currentBoss.isAlive) {
+      const bossDebug = this.currentBoss.getDebugInfo();
+      lines.push('');
+      lines.push(`Boss: ${bossDebug.name}`);
+      lines.push(`HP: ${bossDebug.health} | Phase: ${bossDebug.phase}`);
+      lines.push(`State: ${bossDebug.state} | Attack: ${bossDebug.attack}`);
+    }
+
+    lines.push('');
+    lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
+    lines.push('');
+    lines.push('R - Respawn | B - Boss | C - Debug');
 
     this.debugText.setText(lines.join('\n'));
   }
@@ -331,6 +403,12 @@ export class TestArenaScene extends BaseScene {
         }
       }
       this.enemyProjectiles = [];
+    }
+
+    // Clean up boss
+    if (this.currentBoss) {
+      this.currentBoss.destroy();
+      this.currentBoss = null;
     }
 
     // Clean up enemies
