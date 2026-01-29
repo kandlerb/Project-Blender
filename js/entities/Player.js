@@ -2,6 +2,8 @@ import { StateMachine } from '../systems/StateMachine.js';
 import { createPlayerStates, PLAYER_STATES } from '../systems/PlayerStates.js';
 import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
+import { COMBAT } from '../utils/combat.js';
+import { WeaponManager } from '../weapons/WeaponManager.js';
 
 /**
  * Player Entity
@@ -32,11 +34,19 @@ export class Player {
     // Combat stats (will expand later)
     this.comboCount = 0;
     this.ultimateMeter = 0;
+    this.maxUltimateMeter = COMBAT.ULTIMATE.MAX_METER;
+
+    // Parry tracking (for Tonfas and similar weapons)
+    this.isParrying = false;
+    this.parryState = null;
 
     // State machine
     this.stateMachine = new StateMachine(this, PLAYER_STATES.IDLE);
     this.stateMachine.addStates(createPlayerStates(this.stateMachine));
     this.stateMachine.start();
+
+    // Weapon system
+    this.weaponManager = new WeaponManager(this);
 
     // Combat boxes
     this.hurtbox = new CombatBox(scene, {
@@ -102,6 +112,9 @@ export class Player {
   update(time, delta) {
     this.stateMachine.update(time, delta);
 
+    // Update weapon manager
+    this.weaponManager.update(delta);
+
     // Update facing direction based on sprite flip
     this.facingRight = !this.sprite.flipX;
   }
@@ -144,12 +157,28 @@ export class Player {
   /**
    * Take damage
    * @param {number} amount - Damage amount
-   * @param {object} source - What dealt the damage
+   * @param {object} source - What dealt the damage (hitData object)
    */
   takeDamage(amount, source = null) {
     if (this.isInvulnerable) return;
 
+    // Check for parry
+    if (this.isParrying && this.parryState) {
+      const blocked = this.parryState.onIncomingDamage({
+        damage: amount,
+        attacker: source?.owner || source,
+        ...source,
+      });
+      if (blocked) return;
+    }
+
     this.health = Math.max(0, this.health - amount);
+
+    // Reduce ultimate meter on damage
+    this.ultimateMeter = Math.max(
+      0,
+      this.ultimateMeter - COMBAT.ULTIMATE.METER_DECAY_ON_HIT
+    );
 
     // Notify state machine
     this.stateMachine.onDamage(amount, source);
@@ -179,6 +208,41 @@ export class Player {
       amount,
       health: this.health,
     });
+  }
+
+  /**
+   * Add to ultimate meter
+   * @param {number} amount
+   */
+  addUltimateMeter(amount) {
+    this.ultimateMeter = Math.min(
+      this.maxUltimateMeter,
+      this.ultimateMeter + amount
+    );
+
+    if (this.ultimateMeter >= this.maxUltimateMeter) {
+      this.scene.events.emit('ultimate:ready');
+    }
+  }
+
+  /**
+   * Check if ultimate is ready
+   * @returns {boolean}
+   */
+  isUltimateReady() {
+    return this.ultimateMeter >= this.maxUltimateMeter;
+  }
+
+  /**
+   * Consume ultimate meter
+   * @returns {boolean} True if consumed
+   */
+  consumeUltimate() {
+    if (this.isUltimateReady()) {
+      this.ultimateMeter = 0;
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -260,6 +324,39 @@ export class Player {
   setCombatDebug(show) {
     this.hurtbox.setDebug(show);
     this.attackHitbox.setDebug(show);
+  }
+
+  /**
+   * Get current weapon's attack data
+   * @param {string} attackType
+   * @returns {AttackData|null}
+   */
+  getAttackData(attackType) {
+    return this.weaponManager.getAttack(attackType);
+  }
+
+  /**
+   * Get current weapon
+   * @returns {Weapon|null}
+   */
+  getCurrentWeapon() {
+    return this.weaponManager.equippedWeapon;
+  }
+
+  /**
+   * Unlock a new weapon
+   * @param {string} weaponId
+   */
+  unlockWeapon(weaponId) {
+    this.weaponManager.unlockWeapon(weaponId);
+  }
+
+  /**
+   * Start swapping to a different weapon
+   * @param {string} weaponId
+   */
+  swapWeapon(weaponId) {
+    this.weaponManager.startSwap(weaponId);
   }
 
   /**

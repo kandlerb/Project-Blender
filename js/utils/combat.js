@@ -30,11 +30,17 @@ export const COMBAT = Object.freeze({
   // Ultimate meter settings
   ULTIMATE: Object.freeze({
     MAX_METER: 100,
-    GAIN_LIGHT_HIT: 2,
-    GAIN_HEAVY_HIT: 5,
-    GAIN_PERFECT_TIMING: 3,
-    GAIN_KILL: 5,
-    GAIN_COMBO_MILESTONE: 10,
-    LOSS_ON_HIT: 10,
+    METER_DECAY_ON_HIT: 10,    // Lose meter when taking damage
+
+    // Gain rates
+    GAIN_PER_LIGHT_HIT: 3,
+    GAIN_PER_HEAVY_HIT: 6,
+    GAIN_PER_KILL: 10,
+    GAIN_PER_PERFECT_TIMING: 5,
+
+    // Attack properties
+    DURATION: 2000,           // Total ultimate duration
+    DAMAGE: 50,
+    INVULNERABLE: true,
   }),
 });
