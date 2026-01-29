@@ -539,6 +539,7 @@ class AttackState extends PlayerState {
 
   enter(prevState, params) {
     this.hitboxActivated = false;
+    this._debugLogged = false; // Reset debug flag
     // Reset time tracking - use accumulation with capped deltas
     this.realElapsedTime = 0;
     this.lastUpdateTime = performance.now();
@@ -556,6 +557,14 @@ class AttackState extends PlayerState {
       console.warn(`No attack data for ${this.attackType}`);
       this.totalDuration = this.startupTime + this.activeTime + this.recoveryTime;
     }
+
+    // DEBUG: Log attack entry
+    console.log('Attack enter:', {
+      attackType: this.attackType,
+      totalDuration: this.totalDuration,
+      lastUpdateTime: this.lastUpdateTime,
+      hasAttackData: !!this.attackData,
+    });
 
     // Stop horizontal movement (slight momentum)
     this.body.setVelocityX(this.body.velocity.x * 0.3);
@@ -641,6 +650,20 @@ class AttackState extends PlayerState {
     }
 
     // Attack complete (use real elapsed time from performance.now())
+    // DEBUG: Log timing values once to understand why attack isn't completing
+    if (!this._debugLogged && realElapsedTime > 300) {
+      this._debugLogged = true;
+      console.log('Attack timing debug:', {
+        realElapsedTime,
+        totalDuration: this.totalDuration,
+        startupTime: this.startupTime,
+        activeTime: this.activeTime,
+        recoveryTime: this.recoveryTime,
+        attackData: this.attackData ? 'present' : 'null',
+        comparison: realElapsedTime >= this.totalDuration,
+      });
+    }
+
     if (realElapsedTime >= this.totalDuration) {
       return this.getExitState();
     }
