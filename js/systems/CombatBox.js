@@ -90,6 +90,11 @@ export class CombatBox {
     this.active = false;
     this.zone.body.enable = false;
     this.hasHit.clear();
+
+    // Clear debug graphics when deactivated
+    if (this.debugGraphics) {
+      this.debugGraphics.clear();
+    }
   }
 
   /**
