@@ -218,6 +218,9 @@ export class Enemy {
     this.sprite = scene.physics.add.sprite(x, y, 'enemy_placeholder');
     this.setupPhysics();
 
+    // Terrain groups for clipping fix
+    this.terrainGroups = [];
+
     // Apply color tint if defined
     if (this.stats.color) {
       this.sprite.setTint(this.stats.color);
@@ -437,6 +440,9 @@ export class Enemy {
 
     this.hurtbox.updatePosition();
     this.attackHitbox.updatePosition();
+
+    // Fix any terrain clipping
+    this.fixTerrainClipping();
   }
 
   takeDamage(amount, hitData = null) {
@@ -1074,6 +1080,61 @@ export class Enemy {
 
   addCollider(target) {
     this.scene.physics.add.collider(this.sprite, target);
+    // Track static groups for terrain clipping fix
+    if (target && target.getChildren) {
+      this.terrainGroups.push(target);
+    }
+  }
+
+  /**
+   * Check for and fix clipping into terrain
+   * Pushes enemy up if embedded in ground/platforms
+   */
+  fixTerrainClipping() {
+    if (this.terrainGroups.length === 0) return;
+
+    const body = this.sprite.body;
+    if (!body) return;
+
+    let maxOverlap = 0;
+
+    // Check against all terrain groups
+    for (const terrainGroup of this.terrainGroups) {
+      if (!terrainGroup) continue;
+
+      const children = terrainGroup.getChildren();
+      for (const terrain of children) {
+        if (!terrain.body) continue;
+
+        const terrainBody = terrain.body;
+
+        // Check if there's horizontal overlap
+        const horizontalOverlap =
+          body.right > terrainBody.left && body.left < terrainBody.right;
+
+        if (!horizontalOverlap) continue;
+
+        // Check if enemy bottom is below terrain top (embedded)
+        if (body.bottom > terrainBody.top && body.top < terrainBody.bottom) {
+          // Calculate how much the enemy is embedded
+          const overlap = body.bottom - terrainBody.top;
+          if (overlap > maxOverlap) {
+            maxOverlap = overlap;
+          }
+        }
+      }
+    }
+
+    // If embedded, push enemy up
+    if (maxOverlap > 0) {
+      this.sprite.y -= maxOverlap + 1; // +1 to ensure clearance
+      body.reset(this.sprite.x, this.sprite.y);
+
+      // Stop downward velocity to prevent re-embedding
+      if (body.velocity.y > 0) {
+        body.setVelocityY(0);
+      }
+    }
   }
 
   setCombatDebug(show) {
