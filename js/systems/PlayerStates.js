@@ -938,10 +938,13 @@ export class SpinChargeState extends PlayerState {
 
   exit(nextState) {
     // When resetting scale, adjust Y position to prevent ground clipping
+    // sprite.height already includes scale, so baseHeight = height / scale
+    // When scaling down, the bottom moves up, so we move sprite down to compensate
     const currentScale = this.sprite.scaleY;
     if (currentScale > 1 && this.body.onFloor()) {
-      const heightDiff = (this.sprite.height * currentScale - this.sprite.height) / 2;
-      this.sprite.y -= heightDiff;
+      const baseHeight = this.sprite.height / currentScale;
+      const heightDiff = (this.sprite.height - baseHeight) / 2;
+      this.sprite.y += heightDiff;
     }
 
     this.sprite.setScale(1);
@@ -1126,12 +1129,13 @@ export class SpinReleaseState extends PlayerState {
     this.player.deactivateAttackHitbox();
 
     // When resetting scale, adjust Y position to prevent ground clipping
-    // The sprite origin is at center, so scaling down moves the bottom up
-    // We need to move the sprite down to compensate and keep feet on ground
+    // sprite.height already includes scale, so baseHeight = height / scale
+    // When scaling down, the bottom moves up, so we move sprite down to compensate
     const currentScale = this.sprite.scaleY;
     if (currentScale > 1 && this.body.onFloor()) {
-      const heightDiff = (this.sprite.height * currentScale - this.sprite.height) / 2;
-      this.sprite.y -= heightDiff;
+      const baseHeight = this.sprite.height / currentScale;
+      const heightDiff = (this.sprite.height - baseHeight) / 2;
+      this.sprite.y += heightDiff;
     }
 
     this.sprite.setScale(1);
