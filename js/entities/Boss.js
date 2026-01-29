@@ -53,8 +53,9 @@ export class Boss {
     this.hitstunResistance = config.hitstunResistance || 0.3;
 
     // Create sprite
-    this.sprite = scene.add.rectangle(x, y, config.width || 64, config.height || 80, config.color || 0xff0000);
-    scene.physics.add.existing(this.sprite);
+    this.sprite = scene.physics.add.sprite(x, y, 'boss_placeholder');
+    this.sprite.setDisplaySize(config.width || 64, config.height || 80);
+    this.sprite.setTint(config.color || 0xff0000);
     this.body = this.sprite.body;
     this.body.setCollideWorldBounds(true);
 
