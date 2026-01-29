@@ -35,4 +35,7 @@ const config = {
 // Create game instance
 const game = new Phaser.Game(config);
 
+// Expose game globally for console debugging
+window.game = game;
+
 console.log('Project Blender starting...');
