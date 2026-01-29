@@ -165,6 +165,13 @@ export class PreloadScene extends Phaser.Scene {
     enemyGfx.generateTexture('enemy_placeholder', 28, 28);
     enemyGfx.destroy();
 
+    // Boss placeholder (64x80 white square - tinted by Boss class)
+    const bossGfx = this.make.graphics({ x: 0, y: 0, add: false });
+    bossGfx.fillStyle(0xffffff, 1);
+    bossGfx.fillRect(0, 0, 64, 80);
+    bossGfx.generateTexture('boss_placeholder', 64, 80);
+    bossGfx.destroy();
+
     // Platform placeholder (wider ground)
     const platGfx = this.make.graphics({ x: 0, y: 0, add: false });
     platGfx.fillStyle(0x555555, 1);
