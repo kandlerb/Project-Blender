@@ -83,7 +83,7 @@ export class TestArenaScene extends BaseScene {
     this.player.addCollider(this.platforms);
 
     // Player-corpse collision with step-up handling
-    this.playerStepUpHeight = 24; // Same as Swarmers
+    this.playerStepUpHeight = 32; // Generous height for smooth traversal
     this.isPlayerSteppingUp = false;
     this.physics.add.collider(
       this.player.sprite,
@@ -561,11 +561,11 @@ export class TestArenaScene extends BaseScene {
     if (heightDiff > 0 && heightDiff <= this.playerStepUpHeight) {
       this.isPlayerSteppingUp = true;
 
-      // Brief upward boost (same as enemies)
-      playerSprite.body.setVelocityY(-250);
+      // Gentle upward lift - just enough to clear the corpse without a hop
+      playerSprite.body.setVelocityY(-150);
 
-      // Clear stepping flag after brief delay
-      this.time.delayedCall(200, () => {
+      // Short cooldown for smooth traversal over multiple corpses
+      this.time.delayedCall(80, () => {
         this.isPlayerSteppingUp = false;
       });
     }
