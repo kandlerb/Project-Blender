@@ -121,6 +121,9 @@ export class IdleState extends PlayerState {
       return PLAYER_STATES.FALL;
     }
 
+    // Maintain floor contact to prevent ground clipping
+    this.body.setVelocityY(0);
+
     // Transition to run if moving
     if (this.input.getHorizontalAxis() !== 0) {
       return PLAYER_STATES.RUN;
@@ -185,6 +188,9 @@ export class RunState extends PlayerState {
       this.player.leftGroundTime = time;
       return PLAYER_STATES.FALL;
     }
+
+    // Maintain floor contact to prevent ground clipping
+    this.body.setVelocityY(0);
 
     // Handle movement
     const isMoving = this.handleHorizontalMovement();
@@ -396,11 +402,18 @@ export class LandState extends PlayerState {
   }
 
   enter(prevState, params) {
+    // Zero Y velocity on landing to prevent ground clipping
+    this.body.setVelocityY(0);
     // TODO: Play land animation/effect
     // TODO: Screen shake for hard landings?
   }
 
   update(time, delta) {
+    // Maintain floor contact to prevent ground clipping
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
+
     // Can still move during landing
     this.handleHorizontalMovement();
 
@@ -465,6 +478,11 @@ class AttackState extends PlayerState {
 
   update(time, delta) {
     const stateTime = this.stateMachine.getStateTime();
+
+    // Maintain floor contact to prevent ground clipping during attacks
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
 
     // Flip cancel (after startup)
     if (stateTime > this.startupTime && this.input.justPressed(ACTIONS.FLIP)) {
@@ -919,7 +937,18 @@ export class SpinChargeState extends PlayerState {
   }
 
   exit(nextState) {
+    // When resetting scale, adjust Y position to prevent ground clipping
+    const currentScale = this.sprite.scaleY;
+    if (currentScale > 1 && this.body.onFloor()) {
+      const heightDiff = (this.sprite.height * currentScale - this.sprite.height) / 2;
+      this.sprite.y -= heightDiff;
+    }
+
     this.sprite.setScale(1);
+
+    // Sync physics body position after scale change
+    this.body.setVelocityY(0);
+    this.body.reset(this.sprite.x, this.sprite.y);
   }
 
   canBeInterrupted(nextStateName) {
@@ -1095,7 +1124,21 @@ export class SpinReleaseState extends PlayerState {
 
   exit(nextState) {
     this.player.deactivateAttackHitbox();
+
+    // When resetting scale, adjust Y position to prevent ground clipping
+    // The sprite origin is at center, so scaling down moves the bottom up
+    // We need to move the sprite down to compensate and keep feet on ground
+    const currentScale = this.sprite.scaleY;
+    if (currentScale > 1 && this.body.onFloor()) {
+      const heightDiff = (this.sprite.height * currentScale - this.sprite.height) / 2;
+      this.sprite.y -= heightDiff;
+    }
+
     this.sprite.setScale(1);
+
+    // Zero velocity and sync physics body position after scale change
+    this.body.setVelocityY(0);
+    this.body.reset(this.sprite.x, this.sprite.y);
   }
 
   canBeInterrupted(nextStateName) {
@@ -1696,6 +1739,11 @@ export class GrapplePullState extends PlayerState {
 
   update(time, delta) {
     const stateTime = this.stateMachine.getStateTime();
+
+    // Maintain floor contact to prevent ground clipping
+    if (this.body.onFloor()) {
+      this.body.setVelocityY(0);
+    }
 
     // Allow movement while pulling
     this.handleHorizontalMovement(0.6);
