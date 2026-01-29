@@ -51,6 +51,10 @@ export class TestArenaScene extends BaseScene {
     this.player.addCollider(this.ground);
     this.player.addCollider(this.platforms);
 
+    // Expose for console debugging
+    window.player = this.player;
+    window.scene = this;
+
     // Spawn initial enemies
     this.spawnEnemies();
 
@@ -261,6 +265,10 @@ export class TestArenaScene extends BaseScene {
 
   shutdown() {
     super.shutdown();
+
+    // Clean up global debug references
+    window.player = null;
+    window.scene = null;
 
     // Clean up enemies
     for (const enemy of this.enemies) {
