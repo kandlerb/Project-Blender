@@ -1,4 +1,4 @@
-import { Corpse } from '../entities/Corpse.js';
+import { Corpse, CORPSE_DEFAULTS } from '../entities/Corpse.js';
 import { PHYSICS } from '../utils/physics.js';
 
 /**
@@ -120,11 +120,13 @@ export class CorpseManager {
 
     // Re-apply physics settings that group membership may have overwritten
     // World gravity is 0, so we must set per-body gravity
-    corpse.sprite.body.setImmovable(true); // Must re-apply - group clears this
+    // Corpses are movable with high mass for natural stacking
+    corpse.sprite.body.setImmovable(false);
+    corpse.sprite.body.setMass(CORPSE_DEFAULTS.MASS);
     corpse.sprite.body.setAllowGravity(true);
     corpse.sprite.body.setGravityY(PHYSICS.GRAVITY);
     corpse.sprite.body.setBounce(0.1);
-    corpse.sprite.body.setDrag(1000, 0);
+    corpse.sprite.body.setDrag(CORPSE_DEFAULTS.DRAG_X, CORPSE_DEFAULTS.DRAG_Y);
     corpse.sprite.body.setMaxVelocity(200, 800);
 
     // Set up individual terrain colliders for this corpse

@@ -11,6 +11,10 @@ export const CORPSE_DEFAULTS = Object.freeze({
   DECAY: false,
   DECAY_TIME: 30000,
   DECAY_DURATION: 1000,
+  // Physics settings for natural stacking
+  MASS: 50, // High mass so entities don't push corpses easily
+  DRAG_X: 800, // High drag so corpses settle quickly
+  DRAG_Y: 0,
 });
 
 /**
@@ -67,21 +71,24 @@ export class Corpse {
   }
 
   /**
-   * Configure physics body for static-like collision behavior
+   * Configure physics body for natural stacking behavior
+   * Corpses are movable with high mass so they stack on each other,
+   * but collision handlers freeze them when entities stand on them
    */
   setupPhysics() {
     const body = this.sprite.body;
 
-    // Immovable by default - only Brutes can move corpses (via destroyCorpseWithForce)
-    // All other entities should step up onto or be blocked by corpses
-    body.setImmovable(true);
+    // Movable with high mass - allows natural stacking with other corpses
+    // Collision handlers will freeze velocity when entities stand on them
+    body.setImmovable(false);
+    body.setMass(CORPSE_DEFAULTS.MASS);
 
     // Allow gravity so corpses fall (world gravity is 0, so we set per-body)
     body.setAllowGravity(true);
     body.setGravityY(PHYSICS.GRAVITY);
 
-    // High drag so they settle quickly
-    body.setDrag(1000, 0);
+    // High drag so they settle quickly after physics interactions
+    body.setDrag(CORPSE_DEFAULTS.DRAG_X, CORPSE_DEFAULTS.DRAG_Y);
 
     // Limited movement speed
     body.setMaxVelocity(200, 800);
