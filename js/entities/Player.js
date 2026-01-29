@@ -59,7 +59,7 @@ export class Player {
       offsetY: 0,
     });
 
-    // Attack hitbox (activated during attacks)
+    // Primary attack hitbox (activated during attacks)
     this.attackHitbox = new CombatBox(scene, {
       owner: this,
       type: BOX_TYPE.HITBOX,
@@ -74,10 +74,27 @@ export class Player {
       hitstop: 50,
     });
 
+    // Secondary attack hitbox (for attacks that hit both sides, like spin)
+    this.attackHitboxSecondary = new CombatBox(scene, {
+      owner: this,
+      type: BOX_TYPE.HITBOX,
+      team: TEAM.PLAYER,
+      width: 50,
+      height: 40,
+      offsetX: -35, // Behind player
+      offsetY: -5,
+      damage: 10,
+      knockback: { x: -300, y: -150 }, // Knockback in opposite direction
+      hitstun: 200,
+      hitstop: 50,
+      followFacing: false, // Don't flip with facing - stay on opposite side
+    });
+
     // Register with combat manager if available
     if (scene.combatManager) {
       scene.combatManager.register(this.hurtbox);
       scene.combatManager.register(this.attackHitbox);
+      scene.combatManager.register(this.attackHitboxSecondary);
     }
 
     // Hurtbox always active
@@ -284,37 +301,85 @@ export class Player {
   /**
    * Activate attack hitbox with specific properties
    * @param {object} config - Attack configuration
+   *   - For single hitbox: { damage, knockback, width, height, offsetX, offsetY, ... }
+   *   - For multi-hitbox (e.g. spin): { hitboxes: [{ offsetX, offsetY, knockback }, ...], damage, ... }
    */
   activateAttackHitbox(config = {}) {
-    this.attackHitbox.activate({
-      damage: config.damage || 10,
-      knockback: config.knockback || { x: 300, y: -150 },
-      hitstun: config.hitstun || 200,
-      hitstop: config.hitstop || 50,
-    });
+    // Check if this is a multi-hitbox attack
+    if (config.hitboxes && Array.isArray(config.hitboxes)) {
+      // Multi-hitbox attack (like spin that hits both sides)
+      const hitboxTargets = [this.attackHitbox, this.attackHitboxSecondary];
 
-    // Update dimensions if provided
-    if (config.width) {
-      this.attackHitbox.width = config.width;
-      this.attackHitbox.zone.body.setSize(config.width, this.attackHitbox.height);
-    }
-    if (config.height) {
-      this.attackHitbox.height = config.height;
-      this.attackHitbox.zone.body.setSize(this.attackHitbox.width, config.height);
-    }
-    if (config.offsetX !== undefined) {
-      this.attackHitbox.offsetX = config.offsetX;
-    }
-    if (config.offsetY !== undefined) {
-      this.attackHitbox.offsetY = config.offsetY;
+      config.hitboxes.forEach((hitboxConfig, index) => {
+        if (index >= hitboxTargets.length) return; // Only support 2 hitboxes for now
+
+        const hitbox = hitboxTargets[index];
+        const hbKnockback = hitboxConfig.knockback || config.knockback || { x: 300, y: -150 };
+
+        hitbox.activate({
+          damage: config.damage || 10,
+          knockback: hbKnockback,
+          hitstun: config.hitstun || 200,
+          hitstop: config.hitstop || 50,
+        });
+
+        // Update dimensions
+        const width = hitboxConfig.width || config.width;
+        const height = hitboxConfig.height || config.height;
+        if (width) {
+          hitbox.width = width;
+          hitbox.zone.body.setSize(width, hitbox.height);
+        }
+        if (height) {
+          hitbox.height = height;
+          hitbox.zone.body.setSize(hitbox.width, height);
+        }
+        if (hitboxConfig.offsetX !== undefined) {
+          hitbox.offsetX = hitboxConfig.offsetX;
+        }
+        if (hitboxConfig.offsetY !== undefined) {
+          hitbox.offsetY = hitboxConfig.offsetY;
+        }
+
+        // Update position immediately with new offset
+        hitbox.updatePosition();
+      });
+    } else {
+      // Single hitbox attack (normal attacks)
+      this.attackHitbox.activate({
+        damage: config.damage || 10,
+        knockback: config.knockback || { x: 300, y: -150 },
+        hitstun: config.hitstun || 200,
+        hitstop: config.hitstop || 50,
+      });
+
+      // Update dimensions if provided
+      if (config.width) {
+        this.attackHitbox.width = config.width;
+        this.attackHitbox.zone.body.setSize(config.width, this.attackHitbox.height);
+      }
+      if (config.height) {
+        this.attackHitbox.height = config.height;
+        this.attackHitbox.zone.body.setSize(this.attackHitbox.width, config.height);
+      }
+      if (config.offsetX !== undefined) {
+        this.attackHitbox.offsetX = config.offsetX;
+      }
+      if (config.offsetY !== undefined) {
+        this.attackHitbox.offsetY = config.offsetY;
+      }
+
+      // Update position immediately with new offset
+      this.attackHitbox.updatePosition();
     }
   }
 
   /**
-   * Deactivate attack hitbox
+   * Deactivate attack hitbox(es)
    */
   deactivateAttackHitbox() {
     this.attackHitbox.deactivate();
+    this.attackHitboxSecondary.deactivate();
   }
 
   /**
@@ -324,6 +389,7 @@ export class Player {
   setCombatDebug(show) {
     this.hurtbox.setDebug(show);
     this.attackHitbox.setDebug(show);
+    this.attackHitboxSecondary.setDebug(show);
   }
 
   /**

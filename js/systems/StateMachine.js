@@ -179,7 +179,9 @@ export class StateMachine {
     const nextStateName = this.currentState.update(time, delta);
 
     if (nextStateName && nextStateName !== this.currentState.name) {
-      this.transition(nextStateName);
+      // Force the transition since the state is voluntarily exiting
+      // (canBeInterrupted is for external interrupts, not self-transitions)
+      this.transition(nextStateName, {}, true);
     }
   }
 
