@@ -42,7 +42,7 @@ A fast-paced 2D action Metroidvania blending Hollow Knight's weighty combat with
 
 | Type | Behavior | Counter Strategy |
 |------|----------|------------------|
-| **Swarmer** | Fast rushdown, low HP | Crowd control, spin attack |
+| **Swarmer** | Fast rushdown, 10 HP | Crowd control, spin attack |
 | **Brute** | Slow tank, heavy hits | Bait attacks, punish recovery |
 | **Lunger** | Telegraphed charge | Dodge the charge, punish |
 | **Shield Bearer** | Frontal block | Flank or guard break with heavy |
@@ -93,7 +93,7 @@ A fast-paced 2D action Metroidvania blending Hollow Knight's weighty combat with
 ### Debug
 | Action | Key |
 |--------|-----|
-| Respawn Enemies | R |
+| Spawn More Enemies | R |
 | Spawn Boss | B |
 | Combat Debug | C |
 | Physics Debug | ` |
@@ -221,6 +221,8 @@ Player and enemies use a generic state machine with discrete states for each beh
 - Attack patterns with cooldowns
 - Invulnerability during phase transitions
 - Weapon drops on defeat
+- Integrated with CombatManager (standard hurtbox/damage system)
+- Chase AI maintains fighting distance when idle
 
 ### Audio System
 - Sound pools for frequent effects

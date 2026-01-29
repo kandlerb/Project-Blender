@@ -23,7 +23,7 @@ export const ENEMY_PRESETS = Object.freeze({
    * Low HP, high speed, swarms the player
    */
   SWARMER: {
-    maxHealth: 20,
+    maxHealth: 10,
     damage: 8,
     speed: 150,
     chaseSpeed: 250,
@@ -230,25 +230,29 @@ export class Enemy {
   }
 
   setupCombatBoxes() {
-    // Hurtbox
+    // Hurtbox - match sprite size from config
     this.hurtbox = new CombatBox(this.scene, {
       owner: this,
       type: BOX_TYPE.HURTBOX,
       team: TEAM.ENEMY,
-      width: 24,
-      height: 24,
+      width: this.stats.width,
+      height: this.stats.height,
       offsetX: 0,
       offsetY: 0,
     });
 
-    // Attack hitbox
+    // Attack hitbox - scale based on enemy size
+    const attackWidth = Math.max(35, this.stats.width * 1.2);
+    const attackHeight = Math.max(30, this.stats.height * 0.7);
+    const attackOffset = Math.max(25, this.stats.width * 0.6);
+
     this.attackHitbox = new CombatBox(this.scene, {
       owner: this,
       type: BOX_TYPE.HITBOX,
       team: TEAM.ENEMY,
-      width: 35,
-      height: 30,
-      offsetX: 25,
+      width: attackWidth,
+      height: attackHeight,
+      offsetX: attackOffset,
       offsetY: 0,
       damage: this.damage,
       knockback: { x: 200, y: -100 },
@@ -806,12 +810,14 @@ export class Enemy {
     const projBody = projectile.body;
     projBody.setCircle(8);
     projBody.setAllowGravity(true);
-    projBody.setGravityY(400 * this.stats.projectileArc);
 
-    // Calculate velocity for arc
+    const gravity = 400 * this.stats.projectileArc;
+    projBody.setGravityY(gravity);
+
+    // Calculate velocity for arc (corrected formula for projectile motion)
     const flightTime = distance / this.stats.projectileSpeed;
     const vx = dx / flightTime;
-    const vy = (dy / flightTime) - (0.5 * 400 * this.stats.projectileArc * flightTime);
+    const vy = (dy / flightTime) + (0.5 * gravity * flightTime);
 
     projBody.setVelocity(vx, vy);
 
