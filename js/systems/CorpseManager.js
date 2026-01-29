@@ -57,6 +57,17 @@ export class CorpseManager {
     // Reference position for farthest cleanup (usually player position)
     this.referenceX = 0;
     this.referenceY = 0;
+
+    // Terrain references for individual corpse colliders
+    this.terrainGroups = [];
+  }
+
+  /**
+   * Set terrain groups that corpses should collide with
+   * @param  {...Phaser.Physics.Arcade.StaticGroup} groups - Terrain static groups
+   */
+  setTerrain(...groups) {
+    this.terrainGroups = groups.filter((g) => g != null);
   }
 
   /**
@@ -115,6 +126,12 @@ export class CorpseManager {
     corpse.sprite.body.setBounce(0.1);
     corpse.sprite.body.setDrag(1000, 0);
     corpse.sprite.body.setMaxVelocity(200, 800);
+
+    // Set up individual terrain colliders for this corpse
+    // Group-level colliders don't reliably apply to sprites with pre-existing physics bodies
+    for (const terrain of this.terrainGroups) {
+      corpse.addCollider(terrain);
+    }
 
     // Emit spawned event
     this.scene.events.emit('corpse:spawned', {

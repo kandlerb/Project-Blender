@@ -64,9 +64,10 @@ export class TestArenaScene extends BaseScene {
       decayEnabled: false,
     });
 
-    // Corpse collisions with world geometry
-    this.physics.add.collider(this.corpseManager.corpseGroup, this.ground);
-    this.physics.add.collider(this.corpseManager.corpseGroup, this.platforms);
+    // Set terrain for individual corpse colliders
+    // Individual colliders are more reliable than group-level colliders for sprites
+    // with pre-existing physics bodies
+    this.corpseManager.setTerrain(this.ground, this.platforms);
 
     // Corpses can stack on each other
     this.physics.add.collider(this.corpseManager.corpseGroup, this.corpseManager.corpseGroup);
