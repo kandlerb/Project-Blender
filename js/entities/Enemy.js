@@ -46,7 +46,7 @@ export const ENEMY_PRESETS = Object.freeze({
     canBePulled: true,
     behavior: 'swarmer',
     corpseInteraction: 'climb',
-    stepUpHeight: 24,
+    stepUpHeight: 32,
   },
   /**
    * BRUTE - Slow tanky enemy
@@ -88,7 +88,8 @@ export const ENEMY_PRESETS = Object.freeze({
     behavior: 'lunger',
     chargeWindup: 600,
     chargeDuration: 400,
-    corpseInteraction: 'block',
+    corpseInteraction: 'climb',
+    stepUpHeight: 32,
   },
   /**
    * SHIELD_BEARER - Blocks frontal attacks
@@ -110,7 +111,8 @@ export const ENEMY_PRESETS = Object.freeze({
     behavior: 'shield',
     blockAngle: 90,
     guardBreakThreshold: 30,
-    corpseInteraction: 'block',
+    corpseInteraction: 'climb',
+    stepUpHeight: 32,
   },
   /**
    * LOBBER - Ranged projectile attacker
@@ -132,7 +134,8 @@ export const ENEMY_PRESETS = Object.freeze({
     behavior: 'lobber',
     projectileSpeed: 300,
     projectileArc: 0.5,
-    corpseInteraction: 'avoid',
+    corpseInteraction: 'climb',
+    stepUpHeight: 32,
   },
   /**
    * DETONATOR - Suicide bomber
@@ -155,7 +158,7 @@ export const ENEMY_PRESETS = Object.freeze({
     fuseTime: 500,
     chainReaction: true,
     corpseInteraction: 'climb',
-    stepUpHeight: 24,
+    stepUpHeight: 32,
   },
 });
 
@@ -394,11 +397,11 @@ export class Enemy {
 
     this.isSteppingUp = true;
 
-    // Brief upward boost
-    this.sprite.body.setVelocityY(-250); // Small hop
+    // Gentle upward lift - just enough to clear corpses without a hop
+    this.sprite.body.setVelocityY(-150);
 
-    // Clear stepping flag after brief delay
-    this.scene.time.delayedCall(200, () => {
+    // Short cooldown for smooth traversal over multiple corpses
+    this.scene.time.delayedCall(80, () => {
       this.isSteppingUp = false;
     });
   }

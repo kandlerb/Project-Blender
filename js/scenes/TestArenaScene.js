@@ -81,7 +81,17 @@ export class TestArenaScene extends BaseScene {
     this.player = new Player(this, 300, 400);
     this.player.addCollider(this.ground);
     this.player.addCollider(this.platforms);
-    this.player.addCollider(this.corpseManager.corpseGroup);
+
+    // Player-corpse collision with step-up handling
+    this.playerStepUpHeight = 32; // Generous height for smooth traversal
+    this.isPlayerSteppingUp = false;
+    this.physics.add.collider(
+      this.player.sprite,
+      this.corpseManager.corpseGroup,
+      this.handlePlayerCorpseCollision,
+      null,
+      this
+    );
 
     // Expose for console debugging
     window.player = this.player;
@@ -525,6 +535,40 @@ export class TestArenaScene extends BaseScene {
       }
       this.corpseManager.remove(corpse);
     });
+  }
+
+  /**
+   * Handle collision between player and corpse
+   * Allows player to step up onto corpses like Swarmers
+   * @param {Phaser.Physics.Arcade.Sprite} playerSprite
+   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
+   */
+  handlePlayerCorpseCollision(playerSprite, corpseSprite) {
+    if (this.isPlayerSteppingUp) return;
+
+    // Check if blocked horizontally
+    const blocked = playerSprite.body.blocked.left || playerSprite.body.blocked.right;
+    const touching = playerSprite.body.touching.left || playerSprite.body.touching.right;
+
+    if (!blocked && !touching) return;
+
+    // Calculate height difference
+    const playerBottom = playerSprite.body.bottom;
+    const corpseTop = corpseSprite.body.top;
+    const heightDiff = playerBottom - corpseTop;
+
+    // Can step up if corpse top is within step-up range
+    if (heightDiff > 0 && heightDiff <= this.playerStepUpHeight) {
+      this.isPlayerSteppingUp = true;
+
+      // Gentle upward lift - just enough to clear the corpse without a hop
+      playerSprite.body.setVelocityY(-150);
+
+      // Short cooldown for smooth traversal over multiple corpses
+      this.time.delayedCall(80, () => {
+        this.isPlayerSteppingUp = false;
+      });
+    }
   }
 
   updateDebugHUD() {

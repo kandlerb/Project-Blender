@@ -72,10 +72,9 @@ export class Corpse {
   setupPhysics() {
     const body = this.sprite.body;
 
-    // NOT immovable - we want physics interactions
-    // But high mass so they're hard to push
-    body.setImmovable(false);
-    body.setMass(10);  // Heavy so they don't get pushed easily
+    // Immovable by default - only Brutes can move corpses (via destroyCorpseWithForce)
+    // All other entities should step up onto or be blocked by corpses
+    body.setImmovable(true);
 
     // Allow gravity so corpses fall (world gravity is 0, so we set per-body)
     body.setAllowGravity(true);
