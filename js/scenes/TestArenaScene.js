@@ -57,10 +57,10 @@ export class TestArenaScene extends BaseScene {
     // Create arena
     this.createArena();
 
-    // Create corpse manager
+    // Create corpse manager (no limit on corpses)
     this.corpseManager = new CorpseManager(this, {
-      maxCorpses: 30,
-      cleanupMode: 'oldest',
+      maxCorpses: Infinity,
+      cleanupMode: 'none',
       decayEnabled: false,
     });
 
@@ -89,7 +89,7 @@ export class TestArenaScene extends BaseScene {
       this.player.sprite,
       this.corpseManager.corpseGroup,
       this.handlePlayerCorpseCollision,
-      null,
+      this.shouldPlayerCollideWithCorpse,
       this
     );
 
@@ -271,7 +271,7 @@ export class TestArenaScene extends BaseScene {
         width: 24,
         height: 16,
       });
-      console.log(`Corpses: ${this.corpseManager.getCount()}/${this.corpseManager.config.maxCorpses}`);
+      console.log(`Corpses: ${this.corpseManager.getCount()}`);
     });
   }
 
@@ -538,30 +538,61 @@ export class TestArenaScene extends BaseScene {
   }
 
   /**
+   * Process callback for player-corpse collision
+   * Returns false for horizontal collisions (allows walking over)
+   * Returns true for vertical collisions (allows landing on corpses)
+   * @param {Phaser.Physics.Arcade.Sprite} playerSprite
+   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
+   * @returns {boolean} Whether to apply collision physics
+   */
+  shouldPlayerCollideWithCorpse(playerSprite, corpseSprite) {
+    const playerBody = playerSprite.body;
+    const corpseBody = corpseSprite.body;
+
+    // Player falling and above the corpse - allow landing on it
+    const playerBottom = playerBody.bottom;
+    const corpseTop = corpseBody.top;
+    const playerFalling = playerBody.velocity.y > 0;
+    const playerAbove = playerBottom <= corpseTop + 4; // Small tolerance
+
+    if (playerFalling && playerAbove) {
+      return true; // Allow landing on corpse
+    }
+
+    // For horizontal collisions, don't apply physics - player will walk through
+    // The collision callback will handle the step-up
+    return false;
+  }
+
+  /**
    * Handle collision between player and corpse
-   * Allows player to step up onto corpses like Swarmers
+   * Applies step-up velocity when walking into corpses
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
   handlePlayerCorpseCollision(playerSprite, corpseSprite) {
     if (this.isPlayerSteppingUp) return;
 
-    // Check if blocked horizontally
-    const blocked = playerSprite.body.blocked.left || playerSprite.body.blocked.right;
-    const touching = playerSprite.body.touching.left || playerSprite.body.touching.right;
-
-    if (!blocked && !touching) return;
+    const playerBody = playerSprite.body;
+    const corpseBody = corpseSprite.body;
 
     // Calculate height difference
-    const playerBottom = playerSprite.body.bottom;
-    const corpseTop = corpseSprite.body.top;
+    const playerBottom = playerBody.bottom;
+    const corpseTop = corpseBody.top;
     const heightDiff = playerBottom - corpseTop;
+
+    // Check if player is beside the corpse (not falling onto it from above)
+    const playerFalling = playerBody.velocity.y > 0;
+    const playerAbove = playerBottom <= corpseTop + 4;
+
+    // Skip if landing on corpse from above (normal collision handles this)
+    if (playerFalling && playerAbove) return;
 
     // Can step up if corpse top is within step-up range
     if (heightDiff > 0 && heightDiff <= this.playerStepUpHeight) {
       this.isPlayerSteppingUp = true;
 
-      // Gentle upward lift - just enough to clear the corpse without a hop
+      // Gentle upward lift - just enough to clear the corpse
       playerSprite.body.setVelocityY(-150);
 
       // Short cooldown for smooth traversal over multiple corpses
@@ -586,7 +617,7 @@ export class TestArenaScene extends BaseScene {
       `Combo: ${hudStats.combo}`,
       `Kills: ${hudStats.kills}`,
       `Enemies: ${this.enemies.length}`,
-      `Corpses: ${this.corpseManager.getCount()}/${this.corpseManager.config.maxCorpses}`,
+      `Corpses: ${this.corpseManager.getCount()}`,
     ];
 
     // Add boss info if present
