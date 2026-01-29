@@ -15,6 +15,16 @@ export const ENEMY_STATES = Object.freeze({
 });
 
 /**
+ * Corpse interaction types for enemies
+ */
+export const CORPSE_INTERACTION = Object.freeze({
+  BLOCK: 'block',       // Corpses block movement (default)
+  DESTROY: 'destroy',   // Destroy corpses on contact (Brutes)
+  CLIMB: 'climb',       // Can step up onto corpses (Swarmers)
+  AVOID: 'avoid',       // Pathfind around corpses (Lobbers, future)
+});
+
+/**
  * Enemy configuration presets
  */
 export const ENEMY_PRESETS = Object.freeze({
@@ -35,6 +45,8 @@ export const ENEMY_PRESETS = Object.freeze({
     height: 32,
     canBePulled: true,
     behavior: 'swarmer',
+    corpseInteraction: 'climb',
+    stepUpHeight: 24,
   },
   /**
    * BRUTE - Slow tanky enemy
@@ -53,6 +65,8 @@ export const ENEMY_PRESETS = Object.freeze({
     height: 52,
     canBePulled: false,
     behavior: 'brute',
+    corpseInteraction: 'destroy',
+    corpseDestroyForce: 300,
   },
   /**
    * LUNGER - Telegraphed charge attack
@@ -74,6 +88,7 @@ export const ENEMY_PRESETS = Object.freeze({
     behavior: 'lunger',
     chargeWindup: 600,
     chargeDuration: 400,
+    corpseInteraction: 'block',
   },
   /**
    * SHIELD_BEARER - Blocks frontal attacks
@@ -95,6 +110,7 @@ export const ENEMY_PRESETS = Object.freeze({
     behavior: 'shield',
     blockAngle: 90,
     guardBreakThreshold: 30,
+    corpseInteraction: 'block',
   },
   /**
    * LOBBER - Ranged projectile attacker
@@ -116,6 +132,7 @@ export const ENEMY_PRESETS = Object.freeze({
     behavior: 'lobber',
     projectileSpeed: 300,
     projectileArc: 0.5,
+    corpseInteraction: 'avoid',
   },
   /**
    * DETONATOR - Suicide bomber
@@ -137,6 +154,8 @@ export const ENEMY_PRESETS = Object.freeze({
     explosionRadius: 80,
     fuseTime: 500,
     chainReaction: true,
+    corpseInteraction: 'climb',
+    stepUpHeight: 24,
   },
 });
 
@@ -170,6 +189,11 @@ export class Enemy {
     this.lastAttackTime = 0;
     this.target = null; // Will be set to player
 
+    // Corpse interaction
+    this.corpseInteraction = this.config.corpseInteraction || 'block';
+    this.stepUpHeight = this.config.stepUpHeight || 0;
+    this.corpseDestroyForce = this.config.corpseDestroyForce || 0;
+
     // Patrol
     this.patrolDirection = 1;
     this.patrolDistance = config.patrolDistance || 150;
@@ -179,6 +203,7 @@ export class Enemy {
     this.currentState = 'IDLE';
     this.isBlocking = false;
     this.isExploding = false;
+    this.isSteppingUp = false;
     this.chargeDirection = 1;
     this.windupTimer = 0;
     this.chargeTimer = 0;
@@ -341,6 +366,41 @@ export class Enemy {
    */
   stop() {
     this.sprite.setVelocityX(0);
+  }
+
+  /**
+   * Check if enemy can step up onto an obstacle
+   * @param {Phaser.Physics.Arcade.Sprite} obstacleSprite
+   * @returns {boolean} Whether step-up is possible
+   */
+  canStepUp(obstacleSprite) {
+    if (this.corpseInteraction !== CORPSE_INTERACTION.CLIMB) return false;
+    if (this.stepUpHeight <= 0) return false;
+
+    // Calculate height difference
+    const enemyBottom = this.sprite.body.bottom;
+    const obstacleTop = obstacleSprite.body.top;
+    const heightDiff = enemyBottom - obstacleTop;
+
+    // Can step up if obstacle top is within step-up range
+    return heightDiff > 0 && heightDiff <= this.stepUpHeight;
+  }
+
+  /**
+   * Perform step-up onto obstacle
+   */
+  performStepUp() {
+    if (this.isSteppingUp) return;
+
+    this.isSteppingUp = true;
+
+    // Brief upward boost
+    this.sprite.body.setVelocityY(-250); // Small hop
+
+    // Clear stepping flag after brief delay
+    this.scene.time.delayedCall(200, () => {
+      this.isSteppingUp = false;
+    });
   }
 
   update(time, delta) {
