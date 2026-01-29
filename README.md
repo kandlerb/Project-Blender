@@ -273,10 +273,4 @@ Player and enemies use a generic state machine with discrete states for each beh
 
 ---
 
-## License
-
-MIT License - See LICENSE file for details.
-
----
-
 *Project Blender — Be the boss fight.*
