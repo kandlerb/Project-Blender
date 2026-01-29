@@ -1366,6 +1366,11 @@ export class GrappleFireState extends PlayerState {
     this.targetType = null;
     this.targetPoint = { x: 0, y: 0 };
 
+    // Get grapple range from weapon (if modified)
+    const weapon = this.player.getCurrentWeapon();
+    const grappleMod = weapon?.getMovementMod('grapple');
+    this.grappleRange = grappleMod?.range || 400;
+
     // Determine hook direction from input
     const inputH = this.input.getHorizontalAxis();
     const inputV = this.input.getVerticalAxis();
@@ -1740,7 +1745,8 @@ export class GrappleTravelState extends PlayerState {
 }
 
 /**
- * Grapple Pull State - Pull enemy toward player
+ * Grapple Pull State - Pull enemy/enemies toward player
+ * Chain Whip can pull multiple enemies
  */
 export class GrapplePullState extends PlayerState {
   constructor(stateMachine) {
@@ -1751,15 +1757,49 @@ export class GrapplePullState extends PlayerState {
     this.stunDuration = 500; // How long enemy is stunned after pull
     this.hookGraphics = null;
     this.foundTarget = null;
+    this.additionalTargets = []; // For multi-pull
   }
 
   enter(prevState, params) {
-    // Inherited from fire state
+    this.additionalTargets = [];
 
-    // Stun the enemy
+    // Check if weapon supports multi-pull
+    const weapon = this.player.getCurrentWeapon();
+    const grappleMod = weapon?.getMovementMod('grapple');
+
+    if (grappleMod?.multiPull && this.foundTarget) {
+      // Find additional nearby enemies
+      const maxTargets = grappleMod.maxTargets || 3;
+      const scene = this.player.scene;
+
+      if (scene.enemies) {
+        const primaryPos = this.foundTarget.sprite;
+
+        for (const enemy of scene.enemies) {
+          if (enemy === this.foundTarget) continue;
+          if (!enemy.isAlive) continue;
+          if (this.additionalTargets.length >= maxTargets - 1) break;
+
+          // Check if nearby the primary target
+          const dx = enemy.sprite.x - primaryPos.x;
+          const dy = enemy.sprite.y - primaryPos.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance < 100) { // Within 100 units of primary target
+            this.additionalTargets.push(enemy);
+            enemy.hitstunRemaining = this.pullDuration + this.stunDuration;
+            enemy.sprite.setTint(0x8888ff);
+          }
+        }
+      }
+    }
+
+    // Stop player movement
+    this.body.setVelocityX(0);
+
+    // Stun the primary target
     if (this.foundTarget && this.foundTarget.isAlive) {
       this.foundTarget.hitstunRemaining = this.pullDuration + this.stunDuration;
-      // Visual feedback
       this.foundTarget.sprite.setTint(0x8888ff);
     }
   }
@@ -1772,54 +1812,75 @@ export class GrapplePullState extends PlayerState {
       this.body.setVelocityY(0);
     }
 
-    // Allow movement while pulling
-    this.handleHorizontalMovement(0.6);
-
     if (!this.foundTarget || !this.foundTarget.isAlive) {
       return this.finishPull();
     }
 
-    // Pull enemy toward player
-    const enemySprite = this.foundTarget.sprite;
-    const dx = this.sprite.x - enemySprite.x;
-    const dy = this.sprite.y - enemySprite.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
+    // Pull all targets toward player
+    const allTargets = [this.foundTarget, ...this.additionalTargets];
+    let allArrived = true;
 
-    if (distance < 50 || stateTime >= this.pullDuration) {
-      // Enemy arrived - leave them stunned in front of player
-      return this.finishPull();
+    for (const target of allTargets) {
+      if (!target.isAlive) continue;
+
+      const enemySprite = target.sprite;
+      const dx = this.sprite.x - enemySprite.x;
+      const dy = this.sprite.y - enemySprite.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance >= 50) {
+        allArrived = false;
+
+        // Move enemy toward player
+        const speed = this.pullSpeed * (delta / 1000);
+        enemySprite.x += (dx / distance) * speed;
+        enemySprite.y += (dy / distance) * speed;
+      }
     }
 
-    // Move enemy toward player
-    const speed = this.pullSpeed * (delta / 1000);
-    enemySprite.x += (dx / distance) * speed;
-    enemySprite.y += (dy / distance) * speed;
-
     // Update grapple visual
-    this.drawGrapple(enemySprite.x, enemySprite.y);
+    this.drawGrapple(allTargets);
+
+    // All arrived or time up
+    if (allArrived || stateTime >= this.pullDuration) {
+      return this.finishPull();
+    }
 
     return null;
   }
 
-  drawGrapple(targetX, targetY) {
+  drawGrapple(targets) {
     if (!this.hookGraphics) return;
 
     this.hookGraphics.clear();
 
-    this.hookGraphics.lineStyle(3, 0x888888, 1);
-    this.hookGraphics.beginPath();
-    this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
-    this.hookGraphics.lineTo(targetX, targetY);
-    this.hookGraphics.strokePath();
+    // Draw chain to each target
+    for (const target of targets) {
+      if (!target.isAlive) continue;
 
-    this.hookGraphics.fillStyle(0x8888ff, 1); // Blue for pull
-    this.hookGraphics.fillCircle(targetX, targetY, 8);
+      const targetX = target.sprite.x;
+      const targetY = target.sprite.y;
+
+      this.hookGraphics.lineStyle(3, 0x888888, 1);
+      this.hookGraphics.beginPath();
+      this.hookGraphics.moveTo(this.sprite.x, this.sprite.y);
+      this.hookGraphics.lineTo(targetX, targetY);
+      this.hookGraphics.strokePath();
+
+      this.hookGraphics.fillStyle(0x8888ff, 1);
+      this.hookGraphics.fillCircle(targetX, targetY, 6);
+    }
   }
 
   finishPull() {
-    // Clear enemy tint
+    // Clear all target tints
     if (this.foundTarget && this.foundTarget.sprite) {
       this.foundTarget.sprite.clearTint();
+    }
+    for (const target of this.additionalTargets) {
+      if (target.sprite) {
+        target.sprite.clearTint();
+      }
     }
 
     // Return to idle/fall
@@ -1832,9 +1893,16 @@ export class GrapplePullState extends PlayerState {
   }
 
   exit(nextState) {
+    // Clear tints
     if (this.foundTarget && this.foundTarget.sprite) {
       this.foundTarget.sprite.clearTint();
     }
+    for (const target of this.additionalTargets) {
+      if (target.sprite) {
+        target.sprite.clearTint();
+      }
+    }
+    this.additionalTargets = [];
 
     if (this.hookGraphics) {
       this.hookGraphics.destroy();

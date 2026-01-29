@@ -5,3 +5,4 @@ export { WEAPONS, registerWeapon, getWeapon, getAllWeaponIds } from './WeaponReg
 // Import weapons to register them
 import './FistsWeapon.js';
 import './TonfasWeapon.js';
+import './ChainWhipWeapon.js';
