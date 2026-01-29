@@ -532,13 +532,16 @@ class AttackState extends PlayerState {
 
     this.hitboxActivated = false;
 
-    // Track real elapsed time (unaffected by slowmo)
+    // Track real elapsed time by accumulating actual frame time
     this.realElapsedTime = 0;
+    this.lastUpdateTime = 0;
   }
 
   enter(prevState, params) {
     this.hitboxActivated = false;
+    // Reset time tracking - use accumulation with capped deltas
     this.realElapsedTime = 0;
+    this.lastUpdateTime = performance.now();
 
     // Get attack data from current weapon
     this.attackData = this.player.getAttackData(this.attackType);
@@ -559,11 +562,16 @@ class AttackState extends PlayerState {
   }
 
   update(time, delta) {
-    // Calculate real elapsed time (unaffected by slowmo)
-    const timeManager = this.player.scene.timeManager;
-    const timeScale = timeManager?.getTimeScale() || 1;
-    const realDelta = timeScale > 0 ? delta / timeScale : delta;
-    this.realElapsedTime += realDelta;
+    // Calculate real elapsed time by tracking actual frame intervals
+    // This handles hitstop (update not called) and slowmo (delta is scaled) correctly
+    const now = performance.now();
+    const rawDelta = now - this.lastUpdateTime;
+    this.lastUpdateTime = now;
+
+    // Cap delta to handle pauses (hitstop, tab switch, etc.) - max 50ms per frame
+    const cappedDelta = Math.min(rawDelta, 50);
+    this.realElapsedTime += cappedDelta;
+    const realElapsedTime = this.realElapsedTime;
 
     // Maintain floor contact to prevent ground clipping during attacks
     if (this.body.onFloor()) {
@@ -571,7 +579,7 @@ class AttackState extends PlayerState {
     }
 
     // Movement ability cancels (after startup)
-    if (this.realElapsedTime > this.startupTime) {
+    if (realElapsedTime > this.startupTime) {
       if (this.input.justPressed(ACTIONS.FLIP)) {
         return PLAYER_STATES.FLIP;
       }
@@ -581,12 +589,12 @@ class AttackState extends PlayerState {
     }
 
     // Phase: Startup
-    if (this.realElapsedTime < this.startupTime) {
+    if (realElapsedTime < this.startupTime) {
       return null;
     }
 
     // Phase: Active - hitbox on
-    if (this.realElapsedTime < this.startupTime + this.activeTime) {
+    if (realElapsedTime < this.startupTime + this.activeTime) {
       if (!this.hitboxActivated) {
         this.hitboxActivated = true;
         if (this.attackData) {
@@ -624,7 +632,7 @@ class AttackState extends PlayerState {
     }
 
     // Check for combo input during cancel window
-    const recoveryProgress = (this.realElapsedTime - this.startupTime - this.activeTime) / this.recoveryTime;
+    const recoveryProgress = (realElapsedTime - this.startupTime - this.activeTime) / this.recoveryTime;
     const cancelThreshold = this.attackData?.cancelWindow || 0.6;
 
     if (recoveryProgress < cancelThreshold) {
@@ -632,8 +640,8 @@ class AttackState extends PlayerState {
       if (nextState) return nextState;
     }
 
-    // Attack complete (use real elapsed time, not scaled stateTime)
-    if (this.realElapsedTime >= this.totalDuration) {
+    // Attack complete (use real elapsed time from performance.now())
+    if (realElapsedTime >= this.totalDuration) {
       return this.getExitState();
     }
 
@@ -2340,10 +2348,16 @@ export class CounterAttackState extends PlayerState {
 
     this.attackData = null;
     this.hitboxActivated = false;
+    // Track real elapsed time by accumulating actual frame time
+    this.realElapsedTime = 0;
+    this.lastUpdateTime = 0;
   }
 
   enter(prevState, params) {
     this.hitboxActivated = false;
+    // Reset time tracking - use accumulation with capped deltas
+    this.realElapsedTime = 0;
+    this.lastUpdateTime = performance.now();
 
     // Get counter attack data (weapon's special)
     this.attackData = this.player.getAttackData('special');
@@ -2371,7 +2385,15 @@ export class CounterAttackState extends PlayerState {
   }
 
   update(time, delta) {
-    const stateTime = this.stateMachine.getStateTime();
+    // Calculate real elapsed time by tracking actual frame intervals
+    const now = performance.now();
+    const rawDelta = now - this.lastUpdateTime;
+    this.lastUpdateTime = now;
+
+    // Cap delta to handle pauses (hitstop, tab switch, etc.) - max 50ms per frame
+    const cappedDelta = Math.min(rawDelta, 50);
+    this.realElapsedTime += cappedDelta;
+    const realElapsedTime = this.realElapsedTime;
 
     // Maintain floor contact
     if (this.body.onFloor()) {
@@ -2379,12 +2401,12 @@ export class CounterAttackState extends PlayerState {
     }
 
     // Startup
-    if (stateTime < this.attackData.startupTime) {
+    if (realElapsedTime < this.attackData.startupTime) {
       return null;
     }
 
     // Active
-    if (stateTime < this.attackData.startupTime + this.attackData.activeTime) {
+    if (realElapsedTime < this.attackData.startupTime + this.attackData.activeTime) {
       if (!this.hitboxActivated) {
         this.hitboxActivated = true;
         this.player.activateAttackHitbox({
@@ -2416,7 +2438,7 @@ export class CounterAttackState extends PlayerState {
                           this.attackData.activeTime +
                           this.attackData.recoveryTime;
 
-    if (stateTime >= totalDuration) {
+    if (realElapsedTime >= totalDuration) {
       if (this.body.onFloor()) {
         return this.input.getHorizontalAxis() !== 0
           ? PLAYER_STATES.RUN
@@ -2543,8 +2565,9 @@ export class UltimateState extends PlayerState {
     this.lastAttackTime = 0;
     this.targetsHit = new Set();
 
-    // Track real elapsed time (unaffected by slowmo)
+    // Track real elapsed time by accumulating actual frame time
     this.realElapsedTime = 0;
+    this.lastUpdateTime = 0;
   }
 
   enter(prevState, params) {
@@ -2557,7 +2580,9 @@ export class UltimateState extends PlayerState {
     this.attacksPerformed = 0;
     this.lastAttackTime = 0;
     this.targetsHit.clear();
+    // Reset time tracking - use accumulation with capped deltas
     this.realElapsedTime = 0;
+    this.lastUpdateTime = performance.now();
 
     // Become invulnerable
     this.setInvulnerable(true);
@@ -2587,29 +2612,30 @@ export class UltimateState extends PlayerState {
   }
 
   update(time, delta) {
-    // Track real elapsed time (unscaled) for duration check
-    // The delta we receive is scaled by slowmo, so we need to reverse it
-    const timeManager = this.player.scene.timeManager;
-    const timeScale = timeManager?.getTimeScale() || 1;
-    const realDelta = timeScale > 0 ? delta / timeScale : delta;
-    this.realElapsedTime += realDelta;
+    // Calculate real elapsed time by tracking actual frame intervals
+    const now = performance.now();
+    const rawDelta = now - this.lastUpdateTime;
+    this.lastUpdateTime = now;
 
-    const stateTime = this.stateMachine.getStateTime();
+    // Cap delta to handle pauses (hitstop, tab switch, etc.) - max 50ms per frame
+    const cappedDelta = Math.min(rawDelta, 50);
+    this.realElapsedTime += cappedDelta;
+    const realElapsedTime = this.realElapsedTime;
 
     // Perform attacks at intervals (use real time for consistent attack rate)
-    if (this.realElapsedTime - this.lastAttackTime >= this.attackInterval &&
+    if (realElapsedTime - this.lastAttackTime >= this.attackInterval &&
         this.attacksPerformed < this.maxAttacks) {
       this.performUltimateStrike();
-      this.lastAttackTime = this.realElapsedTime;
+      this.lastAttackTime = realElapsedTime;
       this.attacksPerformed++;
     }
 
     // Pulse effect
-    const pulse = Math.sin(this.realElapsedTime * 0.02) * 0.2 + 1;
+    const pulse = Math.sin(realElapsedTime * 0.02) * 0.2 + 1;
     this.sprite.setScale(pulse);
 
-    // Ultimate complete (use real elapsed time, not scaled stateTime)
-    if (this.realElapsedTime >= this.duration) {
+    // Ultimate complete
+    if (realElapsedTime >= this.duration) {
       return this.finishUltimate();
     }
 
