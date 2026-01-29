@@ -36,6 +36,8 @@ export const PLAYER_STATES = Object.freeze({
   PARRY: 'parry',
   COUNTER_ATTACK: 'counter_attack',
   WEAPON_SWAP: 'weapon_swap',
+  // Ultimate
+  ULTIMATE: 'ultimate',
 });
 
 /**
@@ -181,6 +183,11 @@ export class IdleState extends PlayerState {
       }
     }
 
+    // Ultimate attack
+    if (this.input.justPressed(ACTIONS.ULTIMATE) && this.player.isUltimateReady()) {
+      return PLAYER_STATES.ULTIMATE;
+    }
+
     // Parry (weapon-specific - only if weapon has parry mechanic)
     const weapon = this.player.getCurrentWeapon();
     if (weapon?.mechanics?.parry && this.input.justPressed(ACTIONS.SPECIAL)) {
@@ -268,6 +275,11 @@ export class RunState extends PlayerState {
       if (this.player.weaponManager?.cycleWeapon(-1)) {
         return PLAYER_STATES.WEAPON_SWAP;
       }
+    }
+
+    // Ultimate attack
+    if (this.input.justPressed(ACTIONS.ULTIMATE) && this.player.isUltimateReady()) {
+      return PLAYER_STATES.ULTIMATE;
     }
 
     // Parry (weapon-specific - only if weapon has parry mechanic)
@@ -2459,6 +2471,226 @@ export class WeaponSwapState extends PlayerState {
 }
 
 /**
+ * Ultimate Attack State - Devastating area attack
+ */
+export class UltimateState extends PlayerState {
+  constructor(stateMachine) {
+    super(PLAYER_STATES.ULTIMATE, stateMachine);
+
+    this.duration = 2000;
+    this.damage = 50;
+    this.attacksPerformed = 0;
+    this.maxAttacks = 8;
+    this.attackInterval = 200;
+    this.lastAttackTime = 0;
+    this.targetsHit = new Set();
+  }
+
+  enter(prevState, params) {
+    // Consume ultimate meter
+    if (!this.player.consumeUltimate()) {
+      // Shouldn't happen, but failsafe
+      return PLAYER_STATES.IDLE;
+    }
+
+    this.attacksPerformed = 0;
+    this.lastAttackTime = 0;
+    this.targetsHit.clear();
+
+    // Become invulnerable
+    this.setInvulnerable(true);
+
+    // Stop movement
+    this.body.setVelocity(0, 0);
+    this.body.setAllowGravity(false);
+
+    // Visual: glow effect
+    this.sprite.setTint(0xffdd44);
+
+    // Time slow effect
+    if (this.player.scene.timeManager) {
+      this.player.scene.timeManager.applySlowmo(this.duration, 0.3);
+    }
+
+    // Screen effects
+    if (this.player.scene.effectsManager) {
+      this.player.scene.effectsManager.screenFlash(0xffdd44, 200, 0.4);
+      this.player.scene.effectsManager.screenShake(5, this.duration);
+    }
+
+    // Emit event
+    this.player.scene.events.emit('ultimate:activated');
+
+    return null;
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Perform attacks at intervals
+    if (stateTime - this.lastAttackTime >= this.attackInterval &&
+        this.attacksPerformed < this.maxAttacks) {
+      this.performUltimateStrike();
+      this.lastAttackTime = stateTime;
+      this.attacksPerformed++;
+    }
+
+    // Pulse effect
+    const pulse = Math.sin(stateTime * 0.02) * 0.2 + 1;
+    this.sprite.setScale(pulse);
+
+    // Ultimate complete
+    if (stateTime >= this.duration) {
+      return this.finishUltimate();
+    }
+
+    return null;
+  }
+
+  performUltimateStrike() {
+    const scene = this.player.scene;
+    if (!scene.enemies) return;
+
+    // Find nearest enemy not yet hit (or cycle back)
+    let target = null;
+    let minDistance = Infinity;
+
+    for (const enemy of scene.enemies) {
+      if (!enemy.isAlive) continue;
+
+      const dx = enemy.sprite.x - this.sprite.x;
+      const dy = enemy.sprite.y - this.sprite.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // Prioritize unhit targets, but allow re-hits if all hit
+      if (!this.targetsHit.has(enemy) && distance < 400) {
+        if (distance < minDistance) {
+          minDistance = distance;
+          target = enemy;
+        }
+      }
+    }
+
+    // If all enemies hit, reset and allow re-hits
+    if (!target && this.targetsHit.size > 0) {
+      this.targetsHit.clear();
+      // Try again
+      for (const enemy of scene.enemies) {
+        if (!enemy.isAlive) continue;
+        const dx = enemy.sprite.x - this.sprite.x;
+        const dy = enemy.sprite.y - this.sprite.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < 400 && distance < minDistance) {
+          minDistance = distance;
+          target = enemy;
+        }
+      }
+    }
+
+    if (target) {
+      // Teleport to target and strike
+      const direction = target.sprite.x < this.sprite.x ? -1 : 1;
+
+      // Create afterimage at current position
+      this.createAfterimage();
+
+      // Teleport near target
+      this.sprite.setPosition(
+        target.sprite.x - (direction * 40),
+        target.sprite.y
+      );
+      this.sprite.setFlipX(direction < 0);
+
+      // Deal damage
+      const hitData = {
+        damage: this.damage,
+        knockback: { x: direction * 200, y: -150 },
+        hitstun: 300,
+        hitstop: 0, // No hitstop during ultimate (too many hits)
+        attacker: this.player,
+      };
+
+      target.takeDamage(this.damage, hitData);
+      this.targetsHit.add(target);
+
+      // Hit effect
+      if (scene.effectsManager) {
+        scene.effectsManager.hitEffect(
+          target.sprite.x,
+          target.sprite.y,
+          'heavy',
+          direction
+        );
+        scene.effectsManager.damageNumber(
+          target.sprite.x,
+          target.sprite.y - 20,
+          this.damage,
+          true // Always crit visual
+        );
+      }
+    }
+  }
+
+  createAfterimage() {
+    const scene = this.player.scene;
+
+    const afterimage = scene.add.sprite(
+      this.sprite.x,
+      this.sprite.y,
+      this.sprite.texture.key
+    );
+
+    afterimage.setFlipX(this.sprite.flipX);
+    afterimage.setAlpha(0.5);
+    afterimage.setTint(0xffdd44);
+    afterimage.setDepth(this.sprite.depth - 1);
+
+    scene.tweens.add({
+      targets: afterimage,
+      alpha: 0,
+      scale: 1.5,
+      duration: 300,
+      ease: 'Power2',
+      onComplete: () => afterimage.destroy(),
+    });
+  }
+
+  finishUltimate() {
+    // Final explosion effect
+    if (this.player.scene.effectsManager) {
+      this.player.scene.effectsManager.screenFlash(0xffffff, 100, 0.5);
+      this.player.scene.effectsManager.screenShake(12, 200);
+    }
+
+    // Return to normal
+    this.body.setAllowGravity(true);
+
+    if (this.body.onFloor()) {
+      return PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    this.setInvulnerable(false);
+    this.sprite.clearTint();
+    this.sprite.setScale(1);
+    this.body.setAllowGravity(true);
+
+    // End time slow
+    if (this.player.scene.timeManager) {
+      this.player.scene.timeManager.clearSlowmo();
+    }
+
+    this.player.scene.events.emit('ultimate:ended');
+  }
+
+  canBeInterrupted(nextStateName) {
+    return false; // Ultimate cannot be interrupted
+  }
+}
+
+/**
  * Factory function to create all player states
  * @param {StateMachine} stateMachine
  * @returns {State[]}
@@ -2495,5 +2727,7 @@ export function createPlayerStates(stateMachine) {
     new ParryState(stateMachine),
     new CounterAttackState(stateMachine),
     new WeaponSwapState(stateMachine),
+    // Ultimate
+    new UltimateState(stateMachine),
   ];
 }

@@ -2,6 +2,7 @@ import { StateMachine } from '../systems/StateMachine.js';
 import { createPlayerStates, PLAYER_STATES } from '../systems/PlayerStates.js';
 import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
+import { COMBAT } from '../utils/combat.js';
 import { WeaponManager } from '../weapons/WeaponManager.js';
 
 /**
@@ -33,6 +34,7 @@ export class Player {
     // Combat stats (will expand later)
     this.comboCount = 0;
     this.ultimateMeter = 0;
+    this.maxUltimateMeter = COMBAT.ULTIMATE.MAX_METER;
 
     // Parry tracking (for Tonfas and similar weapons)
     this.isParrying = false;
@@ -172,6 +174,12 @@ export class Player {
 
     this.health = Math.max(0, this.health - amount);
 
+    // Reduce ultimate meter on damage
+    this.ultimateMeter = Math.max(
+      0,
+      this.ultimateMeter - COMBAT.ULTIMATE.METER_DECAY_ON_HIT
+    );
+
     // Notify state machine
     this.stateMachine.onDamage(amount, source);
 
@@ -200,6 +208,41 @@ export class Player {
       amount,
       health: this.health,
     });
+  }
+
+  /**
+   * Add to ultimate meter
+   * @param {number} amount
+   */
+  addUltimateMeter(amount) {
+    this.ultimateMeter = Math.min(
+      this.maxUltimateMeter,
+      this.ultimateMeter + amount
+    );
+
+    if (this.ultimateMeter >= this.maxUltimateMeter) {
+      this.scene.events.emit('ultimate:ready');
+    }
+  }
+
+  /**
+   * Check if ultimate is ready
+   * @returns {boolean}
+   */
+  isUltimateReady() {
+    return this.ultimateMeter >= this.maxUltimateMeter;
+  }
+
+  /**
+   * Consume ultimate meter
+   * @returns {boolean} True if consumed
+   */
+  consumeUltimate() {
+    if (this.isUltimateReady()) {
+      this.ultimateMeter = 0;
+      return true;
+    }
+    return false;
   }
 
   /**

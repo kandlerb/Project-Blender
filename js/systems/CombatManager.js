@@ -1,4 +1,5 @@
 import { BOX_TYPE, TEAM } from './CombatBox.js';
+import { COMBAT } from '../utils/combat.js';
 
 /**
  * CombatManager - Handles all combat collision detection and resolution
@@ -163,6 +164,14 @@ export class CombatManager {
     // Deal damage to defender
     if (hurtbox.owner.takeDamage) {
       hurtbox.owner.takeDamage(hitData.damage, hitData);
+    }
+
+    // Grant ultimate meter to attacker (if player)
+    if (hitbox.team === TEAM.PLAYER && hitbox.owner.addUltimateMeter) {
+      const meterGain = hitbox.damage >= 20
+        ? COMBAT.ULTIMATE.GAIN_PER_HEAVY_HIT
+        : COMBAT.ULTIMATE.GAIN_PER_LIGHT_HIT;
+      hitbox.owner.addUltimateMeter(meterGain);
     }
 
     // Apply knockback to defender

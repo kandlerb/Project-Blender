@@ -13,6 +13,7 @@ export const ACTIONS = Object.freeze({
   ATTACK_HEAVY: 'attack_heavy',
   SPIN: 'spin',
   SPECIAL: 'special',
+  ULTIMATE: 'ultimate',
 
   // Movement Abilities
   FLIP: 'flip',
@@ -47,6 +48,7 @@ const DEFAULT_BINDINGS = {
   [ACTIONS.ATTACK_HEAVY]: ['K'],
   [ACTIONS.SPIN]: ['L'],
   [ACTIONS.SPECIAL]: ['O'],
+  [ACTIONS.ULTIMATE]: ['V'],
   [ACTIONS.FLIP]: ['SHIFT'],
   [ACTIONS.BLINK]: ['I'],
   [ACTIONS.GRAPPLE]: ['U'],

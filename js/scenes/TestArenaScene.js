@@ -6,6 +6,7 @@ import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
+import { COMBAT } from '../utils/combat.js';
 
 // Import weapons module to register all weapons
 import '../weapons/index.js';
@@ -81,6 +82,11 @@ export class TestArenaScene extends BaseScene {
     });
 
     this.events.on('enemy:killed', (data) => {
+      // Grant ultimate meter
+      if (this.player) {
+        this.player.addUltimateMeter(COMBAT.ULTIMATE.GAIN_PER_KILL);
+      }
+
       // HUD handles kill count display
 
       // Death effect
