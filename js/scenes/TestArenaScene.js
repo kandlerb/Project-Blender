@@ -187,9 +187,9 @@ export class TestArenaScene extends BaseScene {
     this.platforms.create(1100, groundY - 400, 'platform_placeholder');
     this.platforms.create(200, groundY - 450, 'platform_placeholder');
 
-    // Side walls
+    // Side walls (start above ground to avoid collision overlap)
     const wallHeight = 20;
-    for (let i = 0; i < wallHeight; i++) {
+    for (let i = 1; i <= wallHeight; i++) {
       this.ground.create(16, groundY - (i * 32), 'ground_placeholder');
       this.ground.create(width - 16, groundY - (i * 32), 'ground_placeholder');
     }

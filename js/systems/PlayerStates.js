@@ -298,17 +298,42 @@ export class RunState extends PlayerState {
 export class JumpState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.JUMP, stateMachine);
+    this.wallJumpGracePeriod = 150; // ms before input can override wall jump velocity
+    this.isWallJump = false;
+    this.wallJumpDirection = 0;
   }
 
   enter(prevState, params) {
     // Reset coyote time
     this.player.leftGroundTime = 0;
+
+    // Track if this is a wall jump
+    this.isWallJump = prevState === PLAYER_STATES.WALL_SLIDE;
+    if (this.isWallJump && this.player.lastWallJumpDirection) {
+      this.wallJumpDirection = this.player.lastWallJumpDirection;
+      this.player.lastWallJumpDirection = 0; // Clear after reading
+    } else {
+      this.wallJumpDirection = 0;
+    }
     // TODO: Play jump animation
   }
 
   update(time, delta) {
-    // Air movement (reduced control)
-    this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+    const stateTime = this.stateMachine.getStateTime();
+
+    // During wall jump grace period, don't let input override the jump velocity
+    if (this.isWallJump && stateTime < this.wallJumpGracePeriod) {
+      // Only allow input in the same direction as the wall jump
+      const inputH = this.input.getHorizontalAxis();
+      if (inputH !== 0 && Math.sign(inputH) === Math.sign(this.wallJumpDirection)) {
+        // Player pressing in jump direction - allow slight boost
+        this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+      }
+      // Otherwise preserve wall jump velocity
+    } else {
+      // Normal air movement
+      this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+    }
 
     // Variable jump height - release early for short hop
     if (this.input.justReleased(ACTIONS.JUMP) && this.body.velocity.y < 0) {
@@ -506,10 +531,14 @@ class AttackState extends PlayerState {
     this.totalDuration = 350;
 
     this.hitboxActivated = false;
+
+    // Track real elapsed time (unaffected by slowmo)
+    this.realElapsedTime = 0;
   }
 
   enter(prevState, params) {
     this.hitboxActivated = false;
+    this.realElapsedTime = 0;
 
     // Get attack data from current weapon
     this.attackData = this.player.getAttackData(this.attackType);
@@ -530,7 +559,11 @@ class AttackState extends PlayerState {
   }
 
   update(time, delta) {
-    const stateTime = this.stateMachine.getStateTime();
+    // Calculate real elapsed time (unaffected by slowmo)
+    const timeManager = this.player.scene.timeManager;
+    const timeScale = timeManager?.getTimeScale() || 1;
+    const realDelta = timeScale > 0 ? delta / timeScale : delta;
+    this.realElapsedTime += realDelta;
 
     // Maintain floor contact to prevent ground clipping during attacks
     if (this.body.onFloor()) {
@@ -538,7 +571,7 @@ class AttackState extends PlayerState {
     }
 
     // Movement ability cancels (after startup)
-    if (stateTime > this.startupTime) {
+    if (this.realElapsedTime > this.startupTime) {
       if (this.input.justPressed(ACTIONS.FLIP)) {
         return PLAYER_STATES.FLIP;
       }
@@ -548,12 +581,12 @@ class AttackState extends PlayerState {
     }
 
     // Phase: Startup
-    if (stateTime < this.startupTime) {
+    if (this.realElapsedTime < this.startupTime) {
       return null;
     }
 
     // Phase: Active - hitbox on
-    if (stateTime < this.startupTime + this.activeTime) {
+    if (this.realElapsedTime < this.startupTime + this.activeTime) {
       if (!this.hitboxActivated) {
         this.hitboxActivated = true;
         if (this.attackData) {
@@ -591,7 +624,7 @@ class AttackState extends PlayerState {
     }
 
     // Check for combo input during cancel window
-    const recoveryProgress = (stateTime - this.startupTime - this.activeTime) / this.recoveryTime;
+    const recoveryProgress = (this.realElapsedTime - this.startupTime - this.activeTime) / this.recoveryTime;
     const cancelThreshold = this.attackData?.cancelWindow || 0.6;
 
     if (recoveryProgress < cancelThreshold) {
@@ -599,8 +632,8 @@ class AttackState extends PlayerState {
       if (nextState) return nextState;
     }
 
-    // Attack complete
-    if (stateTime >= this.totalDuration) {
+    // Attack complete (use real elapsed time, not scaled stateTime)
+    if (this.realElapsedTime >= this.totalDuration) {
       return this.getExitState();
     }
 
@@ -2084,10 +2117,17 @@ export class WallSlideState extends PlayerState {
     // Jump away from wall
     const jumpDirX = -this.wallDirection; // Opposite of wall direction
 
+    // Push player away from wall to prevent collision with wall above
+    const pushDistance = 8;
+    this.sprite.x += jumpDirX * pushDistance;
+
     this.body.setVelocity(
       jumpDirX * this.wallJumpForceX,
       -this.wallJumpForceY
     );
+
+    // Store wall jump direction for JumpState to use
+    this.player.lastWallJumpDirection = jumpDirX;
 
     // Face jump direction
     this.sprite.setFlipX(jumpDirX < 0);
