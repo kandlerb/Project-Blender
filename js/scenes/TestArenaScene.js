@@ -101,11 +101,12 @@ export class TestArenaScene extends BaseScene {
     this.spawnEnemies();
 
     // Set up enemy-corpse collision (after enemies are spawned)
+    // Process callback prevents physics from moving corpses - only step-up/destroy logic applies
     this.physics.add.collider(
       this.enemyGroup,
       this.corpseManager.corpseGroup,
       this.handleEnemyCorpseCollision,
-      null,
+      this.shouldEnemyCollideWithCorpse,
       this
     );
 
@@ -483,6 +484,7 @@ export class TestArenaScene extends BaseScene {
 
   /**
    * Handle collision between enemy and corpse
+   * Called after collision resolution - handles destroy behavior for Brutes
    * @param {Phaser.Physics.Arcade.Sprite} enemySprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
@@ -495,15 +497,70 @@ export class TestArenaScene extends BaseScene {
     // Brutes destroy corpses on contact
     if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
       this.destroyCorpseWithForce(enemy, corpse);
-    } else if (enemy.corpseInteraction === CORPSE_INTERACTION.CLIMB) {
-      // Check if blocked horizontally and can step up
-      const blocked = enemySprite.body.blocked.left || enemySprite.body.blocked.right;
-      const touching = enemySprite.body.touching.left || enemySprite.body.touching.right;
-
-      if ((blocked || touching) && enemy.canStepUp(corpseSprite)) {
-        enemy.performStepUp();
-      }
     }
+    // Step-up positioning is handled in shouldEnemyCollideWithCorpse process callback
+  }
+
+  /**
+   * Process callback for enemy-corpse collision
+   * Handles step-up positioning for climbing enemies
+   * @param {Phaser.Physics.Arcade.Sprite} enemySprite
+   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
+   * @returns {boolean} Whether to apply collision physics
+   */
+  shouldEnemyCollideWithCorpse(enemySprite, corpseSprite) {
+    const enemy = enemySprite.getData('owner');
+    if (!enemy) return true;
+
+    // Brutes need collision to detect and destroy corpses
+    if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
+      return true;
+    }
+
+    // Blocking enemies are blocked by corpses
+    if (enemy.corpseInteraction === CORPSE_INTERACTION.BLOCK) {
+      return true;
+    }
+
+    // Climbing enemies: check if they should land on or step over
+    const enemyBody = enemySprite.body;
+    const corpseBody = corpseSprite.body;
+
+    const enemyBottom = enemyBody.bottom;
+    const corpseTop = corpseBody.top;
+    const heightDiff = enemyBottom - corpseTop;
+
+    // Enemy falling and above corpse - allow landing on it
+    const enemyFalling = enemyBody.velocity.y > 0;
+    const enemyAbove = enemyBottom <= corpseTop + 8;
+
+    if (enemyFalling && enemyAbove) {
+      return true; // Allow landing on corpse
+    }
+
+    // Enemy moving horizontally and can step up - position on top
+    const isMovingHorizontally = Math.abs(enemyBody.velocity.x) > 10;
+    const stepUpHeight = enemy.stepUpHeight || 32;
+    const canStepUp = heightDiff > -8 && heightDiff <= stepUpHeight;
+
+    if (isMovingHorizontally && canStepUp) {
+      // Position enemy on top of the corpse for smooth step-up
+      const targetY = corpseTop - enemyBody.halfHeight;
+
+      // Only step up if we're not already above this corpse
+      if (enemySprite.y > targetY) {
+        enemySprite.y = targetY;
+        enemyBody.y = targetY - enemyBody.halfHeight;
+        // Small upward velocity to ensure they stay on top
+        if (enemyBody.velocity.y >= 0) {
+          enemyBody.velocity.y = -50;
+        }
+      }
+      return true; // Enable collision to stand on corpse
+    }
+
+    // Default: enable collision
+    return true;
   }
 
   /**
@@ -539,8 +596,7 @@ export class TestArenaScene extends BaseScene {
 
   /**
    * Process callback for player-corpse collision
-   * Returns false for horizontal collisions (allows walking over)
-   * Returns true for vertical collisions (allows landing on corpses)
+   * Enables collision when player should land on or step onto corpse
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    * @returns {boolean} Whether to apply collision physics
@@ -549,56 +605,60 @@ export class TestArenaScene extends BaseScene {
     const playerBody = playerSprite.body;
     const corpseBody = corpseSprite.body;
 
-    // Player falling and above the corpse - allow landing on it
     const playerBottom = playerBody.bottom;
     const corpseTop = corpseBody.top;
+    const heightDiff = playerBottom - corpseTop;
+
+    // Player falling and above the corpse - allow landing on it
     const playerFalling = playerBody.velocity.y > 0;
-    const playerAbove = playerBottom <= corpseTop + 4; // Small tolerance
+    const playerAbove = playerBottom <= corpseTop + 8; // Tolerance for landing
 
     if (playerFalling && playerAbove) {
       return true; // Allow landing on corpse
     }
 
-    // For horizontal collisions, don't apply physics - player will walk through
-    // The collision callback will handle the step-up
-    return false;
+    // Player moving horizontally and can step up - enable collision to land on top
+    const isMovingHorizontally = Math.abs(playerBody.velocity.x) > 10;
+    const canStepUp = heightDiff > -8 && heightDiff <= this.playerStepUpHeight;
+
+    if (isMovingHorizontally && canStepUp) {
+      // Position player on top of the corpse for smooth step-up
+      // This happens before physics resolution, so we set the position directly
+      const targetY = corpseTop - playerBody.halfHeight;
+
+      // Only step up if we're not already above this corpse
+      if (playerSprite.y > targetY) {
+        playerSprite.y = targetY;
+        playerBody.y = targetY - playerBody.halfHeight;
+        // Small upward velocity to ensure we stay on top
+        if (playerBody.velocity.y >= 0) {
+          playerBody.velocity.y = -50;
+        }
+      }
+      return true; // Enable collision to stand on corpse
+    }
+
+    // Default: enable collision
+    return true;
   }
 
   /**
    * Handle collision between player and corpse
-   * Applies step-up velocity when walking into corpses
+   * Called after collision resolution - handles edge cases
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
   handlePlayerCorpseCollision(playerSprite, corpseSprite) {
-    if (this.isPlayerSteppingUp) return;
-
+    // Most step-up logic is now in the process callback
+    // This handles any additional cases like being pushed by corpses
     const playerBody = playerSprite.body;
     const corpseBody = corpseSprite.body;
 
-    // Calculate height difference
-    const playerBottom = playerBody.bottom;
-    const corpseTop = corpseBody.top;
-    const heightDiff = playerBottom - corpseTop;
-
-    // Check if player is beside the corpse (not falling onto it from above)
-    const playerFalling = playerBody.velocity.y > 0;
-    const playerAbove = playerBottom <= corpseTop + 4;
-
-    // Skip if landing on corpse from above (normal collision handles this)
-    if (playerFalling && playerAbove) return;
-
-    // Can step up if corpse top is within step-up range
-    if (heightDiff > 0 && heightDiff <= this.playerStepUpHeight) {
-      this.isPlayerSteppingUp = true;
-
-      // Gentle upward lift - just enough to clear the corpse
-      playerSprite.body.setVelocityY(-150);
-
-      // Short cooldown for smooth traversal over multiple corpses
-      this.time.delayedCall(80, () => {
-        this.isPlayerSteppingUp = false;
-      });
+    // If player is standing on this corpse, ensure they stay grounded
+    if (playerBody.bottom >= corpseBody.top - 2 && playerBody.bottom <= corpseBody.top + 8) {
+      if (playerBody.velocity.y > 0) {
+        playerBody.velocity.y = 0;
+      }
     }
   }
 

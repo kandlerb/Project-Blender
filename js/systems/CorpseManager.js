@@ -109,6 +109,7 @@ export class CorpseManager {
 
     // Re-apply physics settings that group membership may have overwritten
     // World gravity is 0, so we must set per-body gravity
+    corpse.sprite.body.setImmovable(true); // Must re-apply - group clears this
     corpse.sprite.body.setAllowGravity(true);
     corpse.sprite.body.setGravityY(PHYSICS.GRAVITY);
     corpse.sprite.body.setBounce(0.1);
