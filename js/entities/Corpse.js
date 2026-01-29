@@ -14,7 +14,7 @@ export const CORPSE_DEFAULTS = Object.freeze({
   // Physics settings for natural stacking
   MASS: 50, // High mass so entities don't push corpses easily
   DRAG_X: 800, // High drag so corpses settle quickly
-  DRAG_Y: 0,
+  DRAG_Y: 100, // Some vertical drag to help settle
 });
 
 /**
@@ -93,8 +93,8 @@ export class Corpse {
     // Limited movement speed
     body.setMaxVelocity(200, 800);
 
-    // Slight bounce for feel
-    body.setBounce(0.1);
+    // No bounce - corpses should settle, not bounce
+    body.setBounce(0);
 
     // Set collision size to match config dimensions
     body.setSize(this.config.width, this.config.height);

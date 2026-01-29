@@ -125,7 +125,7 @@ export class CorpseManager {
     corpse.sprite.body.setMass(CORPSE_DEFAULTS.MASS);
     corpse.sprite.body.setAllowGravity(true);
     corpse.sprite.body.setGravityY(PHYSICS.GRAVITY);
-    corpse.sprite.body.setBounce(0.1);
+    corpse.sprite.body.setBounce(0);
     corpse.sprite.body.setDrag(CORPSE_DEFAULTS.DRAG_X, CORPSE_DEFAULTS.DRAG_Y);
     corpse.sprite.body.setMaxVelocity(200, 800);
 
@@ -299,6 +299,12 @@ export class CorpseManager {
       if (!corpse.sprite?.body || !corpse.sprite.active) continue;
 
       const body = corpse.sprite.body;
+
+      // Skip corpses that are settled (not moving significantly)
+      const isSettled =
+        Math.abs(body.velocity.x) < 5 && Math.abs(body.velocity.y) < 5;
+      if (isSettled) continue;
+
       let maxOverlap = 0;
 
       // Check against all terrain groups
@@ -330,7 +336,7 @@ export class CorpseManager {
 
       // If embedded, push corpse up and any corpses stacked above it
       if (maxOverlap > 0) {
-        this.pushCorpseUp(corpse, maxOverlap + 1); // +1 to ensure clearance
+        this.pushCorpseUp(corpse, maxOverlap); // Exact correction, no overshoot
       }
     }
   }
@@ -344,7 +350,8 @@ export class CorpseManager {
     if (!corpse.sprite?.body) return;
 
     const body = corpse.sprite.body;
-    const oldBottom = body.bottom;
+    // Calculate old top position before moving (bottom - height = top)
+    const oldTop = body.bottom - body.height;
 
     // Move the corpse up
     corpse.sprite.y -= amount;
@@ -362,9 +369,9 @@ export class CorpseManager {
 
       const otherBody = otherCorpse.sprite.body;
 
-      // Check if other corpse was resting on this one (within tolerance)
+      // Check if other corpse was resting on this one (their bottom near our old top)
       const wasOnTop =
-        Math.abs(otherBody.bottom - oldBottom + body.height) < 5 &&
+        Math.abs(otherBody.bottom - oldTop) < 5 &&
         otherBody.right > body.left &&
         otherBody.left < body.right;
 
