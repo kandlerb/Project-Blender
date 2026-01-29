@@ -207,6 +207,21 @@ this.events.on('combat:hit', (hitData) => {
 | LOBBER | Ranged projectiles | Keeps distance, arcing shots |
 | DETONATOR | Suicide bomber | Explodes on contact/death, chains |
 
+**Note:** Enemy hurtboxes match their sprite dimensions; attack hitboxes scale proportionally based on enemy size.
+
+## Boss System (js/entities/Boss.js)
+
+Base boss class features:
+- **Hurtbox**: Registered with CombatManager, uses standard damage system
+- **Gravity**: Applied via PHYSICS constants (grounded movement)
+- **Chase AI**: IDLE state maintains fighting distance (~150px by default)
+- **Phases**: Triggered by health thresholds with invulnerability during transitions
+- **Config options**: `idealRange`, `chaseSpeed` for movement tuning
+
+| Boss | Location | Drops | Key Mechanic |
+|------|----------|-------|--------------|
+| Tonfa Warden | `bosses/TonfaWarden.js` | Tonfas | Defensive stance parries attacks |
+
 ## Player States Reference
 
 ### Movement States
@@ -236,7 +251,7 @@ this.events.on('combat:hit', (hitData) => {
 |-----|--------|
 | ` (backtick) | Toggle physics debug |
 | C | Toggle combat debug (hitboxes) |
-| R | Respawn enemies |
+| R | Spawn additional enemies (additive) |
 | B | Spawn boss |
 | T | Test damage on player |
 | M | Toggle mute |
@@ -347,7 +362,7 @@ if (this.input.consumeBuffered(ACTIONS.JUMP, time, PHYSICS.PLAYER.JUMP_BUFFER)) 
 1. Start local server
 2. Open browser to localhost
 3. Use debug keys (`, C) to visualize
-4. Press R to respawn enemies, B for boss
+4. Press R to spawn more enemies (additive), B for boss
 5. Check browser console for errors and debug logs
 
 ## Known Issues / TODOs
