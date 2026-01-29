@@ -20,6 +20,7 @@ export class TestArenaScene extends BaseScene {
     super('TestArena');
     this.player = null;
     this.enemies = [];
+    this.enemyProjectiles = [];
     this.ground = null;
     this.platforms = null;
     this.debugText = null;
@@ -145,13 +146,25 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemies = [];
 
-    // Spawn positions with enemy types
+    // Clear existing projectiles
+    if (this.enemyProjectiles) {
+      for (const proj of this.enemyProjectiles) {
+        if (proj.sprite && proj.sprite.active) {
+          proj.sprite.destroy();
+        }
+      }
+    }
+    this.enemyProjectiles = [];
+
+    // Spawn a variety of enemy types
     const spawnPoints = [
+      { x: 500, y: 400, type: 'SWARMER' },
       { x: 600, y: 400, type: 'SWARMER' },
-      { x: 800, y: 400, type: 'SWARMER' },
-      { x: 1000, y: 400, type: 'BRUTE' },
-      { x: 700, y: 200, type: 'SWARMER' },  // On platform
-      { x: 1100, y: 100, type: 'BRUTE' },   // On high platform
+      { x: 700, y: 400, type: 'SWARMER' },
+      { x: 800, y: 400, type: 'LUNGER' },
+      { x: 900, y: 400, type: 'SHIELD_BEARER' },
+      { x: 1000, y: 400, type: 'LOBBER' },
+      { x: 1100, y: 400, type: 'DETONATOR' },
     ];
 
     for (const pos of spawnPoints) {
@@ -167,7 +180,7 @@ export class TestArenaScene extends BaseScene {
       this.enemies.push(enemy);
     }
 
-    console.log(`Spawned ${this.enemies.length} enemies`);
+    console.log(`Spawned ${this.enemies.length} enemies (Swarmer x3, Lunger, Shield Bearer, Lobber, Detonator)`);
   }
 
   createArena() {
@@ -230,6 +243,9 @@ export class TestArenaScene extends BaseScene {
 
       // Update combat manager
       this.combatManager.update(time, scaledDelta);
+
+      // Check enemy projectiles
+      this.updateEnemyProjectiles();
     }
 
     // Update HUD
@@ -237,6 +253,43 @@ export class TestArenaScene extends BaseScene {
 
     // Always update debug HUD
     this.updateDebugHUD();
+  }
+
+  /**
+   * Handle enemy projectile collisions
+   */
+  updateEnemyProjectiles() {
+    if (!this.enemyProjectiles) return;
+
+    for (let i = this.enemyProjectiles.length - 1; i >= 0; i--) {
+      const proj = this.enemyProjectiles[i];
+
+      if (!proj.sprite || !proj.sprite.active) {
+        this.enemyProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Check collision with player
+      if (this.player && this.player.isAlive && Phaser.Geom.Intersects.RectangleToRectangle(
+        proj.sprite.getBounds(),
+        this.player.sprite.getBounds()
+      )) {
+        this.player.takeDamage(proj.damage, {
+          knockback: { x: 100, y: -100 },
+          hitstun: 150,
+        });
+
+        proj.sprite.destroy();
+        this.enemyProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Check collision with ground (below arena)
+      if (proj.sprite.y > 550) {
+        proj.sprite.destroy();
+        this.enemyProjectiles.splice(i, 1);
+      }
+    }
   }
 
   updateDebugHUD() {
@@ -269,6 +322,16 @@ export class TestArenaScene extends BaseScene {
     // Clean up global debug references
     window.player = null;
     window.scene = null;
+
+    // Clean up projectiles
+    if (this.enemyProjectiles) {
+      for (const proj of this.enemyProjectiles) {
+        if (proj.sprite && proj.sprite.active) {
+          proj.sprite.destroy();
+        }
+      }
+      this.enemyProjectiles = [];
+    }
 
     // Clean up enemies
     for (const enemy of this.enemies) {
