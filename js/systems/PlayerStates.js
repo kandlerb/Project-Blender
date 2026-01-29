@@ -434,46 +434,47 @@ export class LandState extends PlayerState {
 }
 
 /**
- * Base class for attack states
+ * Base class for attack states - reads from weapon data
  */
 class AttackState extends PlayerState {
-  constructor(name, stateMachine, config) {
+  /**
+   * @param {string} name - State name
+   * @param {StateMachine} stateMachine
+   * @param {string} attackType - 'light1', 'light2', 'light3', 'heavy', 'air'
+   */
+  constructor(name, stateMachine, attackType) {
     super(name, stateMachine);
+    this.attackType = attackType;
 
-    // Attack timing (in ms)
-    this.startupTime = config.startup || 50;
-    this.activeTime = config.active || 100;
-    this.recoveryTime = config.recovery || 150;
-    this.totalDuration = this.startupTime + this.activeTime + this.recoveryTime;
+    // These will be populated from weapon data in enter()
+    this.attackData = null;
+    this.startupTime = 100;
+    this.activeTime = 100;
+    this.recoveryTime = 150;
+    this.totalDuration = 350;
 
-    // Combo data
-    this.nextComboState = config.nextCombo || null;
-    this.comboWindowStart = this.startupTime + this.activeTime;
-    this.comboWindowEnd = this.totalDuration - 30; // 30ms before end
-
-    // Attack properties
-    this.damage = config.damage || 10;
-    this.knockback = config.knockback || { x: 300, y: -150 };
-    this.hitstun = config.hitstun || 200;
-    this.hitstop = config.hitstop || 50;
-    this.canMoveWhileAttacking = config.canMove || false;
-    this.movementMultiplier = config.moveMultiplier || 0.3;
-
-    // State tracking
-    this.hasHit = false;
-    this.comboQueued = false;
+    this.hitboxActivated = false;
   }
 
   enter(prevState, params) {
-    this.hasHit = false;
-    this.comboQueued = false;
+    this.hitboxActivated = false;
 
-    // Brief forward momentum on attack
-    const facing = this.sprite.flipX ? -1 : 1;
-    this.body.setVelocityX(facing * 100);
+    // Get attack data from current weapon
+    this.attackData = this.player.getAttackData(this.attackType);
 
-    // TODO: Play attack animation
-    // TODO: Spawn hitbox during active frames
+    if (this.attackData) {
+      this.startupTime = this.attackData.startupTime;
+      this.activeTime = this.attackData.activeTime;
+      this.recoveryTime = this.attackData.recoveryTime;
+      this.totalDuration = this.startupTime + this.activeTime + this.recoveryTime;
+    } else {
+      // Fallback defaults if no weapon data
+      console.warn(`No attack data for ${this.attackType}`);
+      this.totalDuration = this.startupTime + this.activeTime + this.recoveryTime;
+    }
+
+    // Stop horizontal movement (slight momentum)
+    this.body.setVelocityX(this.body.velocity.x * 0.3);
   }
 
   update(time, delta) {
@@ -484,188 +485,184 @@ class AttackState extends PlayerState {
       this.body.setVelocityY(0);
     }
 
-    // Flip cancel (after startup)
-    if (stateTime > this.startupTime && this.input.justPressed(ACTIONS.FLIP)) {
-      return PLAYER_STATES.FLIP;
+    // Movement ability cancels (after startup)
+    if (stateTime > this.startupTime) {
+      if (this.input.justPressed(ACTIONS.FLIP)) {
+        return PLAYER_STATES.FLIP;
+      }
+      if (this.input.justPressed(ACTIONS.BLINK)) {
+        return PLAYER_STATES.BLINK;
+      }
     }
 
-    // Blink cancel (after startup)
-    if (stateTime > this.startupTime && this.input.justPressed(ACTIONS.BLINK)) {
-      return PLAYER_STATES.BLINK;
+    // Phase: Startup
+    if (stateTime < this.startupTime) {
+      return null;
     }
 
-    // Activate hitbox during active frames
-    if (stateTime >= this.startupTime && stateTime < this.startupTime + this.activeTime) {
-      if (!this.player.attackHitbox.active) {
+    // Phase: Active - hitbox on
+    if (stateTime < this.startupTime + this.activeTime) {
+      if (!this.hitboxActivated && this.attackData) {
+        this.hitboxActivated = true;
         this.player.activateAttackHitbox({
-          damage: this.damage,
-          knockback: this.knockback,
-          hitstun: this.hitstun,
-          hitstop: this.hitstop,
+          damage: this.attackData.damage,
+          knockback: this.attackData.knockback,
+          hitstun: this.attackData.hitstun,
+          hitstop: this.attackData.hitstop,
+          width: this.attackData.hitbox.width,
+          height: this.attackData.hitbox.height,
+          offsetX: this.attackData.hitbox.offsetX,
+          offsetY: this.attackData.hitbox.offsetY,
         });
       }
-    } else {
-      // Deactivate outside active frames
-      if (this.player.attackHitbox.active) {
-        this.player.deactivateAttackHitbox();
-      }
+      return null;
     }
 
-    // Limited movement during attack (if allowed)
-    if (this.canMoveWhileAttacking) {
-      this.handleHorizontalMovement(this.movementMultiplier);
-    } else {
-      // Slow down horizontal movement during attack
-      this.body.setVelocityX(this.body.velocity.x * 0.9);
+    // Phase: Recovery - hitbox off, can cancel
+    if (this.hitboxActivated) {
+      this.player.deactivateAttackHitbox();
+      this.hitboxActivated = false;
     }
 
-    // Check for combo input during combo window
-    if (this.nextComboState &&
-        stateTime >= this.comboWindowStart &&
-        stateTime <= this.comboWindowEnd) {
-      if (this.input.justPressed(ACTIONS.ATTACK_LIGHT)) {
-        this.comboQueued = true;
-      }
+    // Check for combo input during cancel window
+    const recoveryProgress = (stateTime - this.startupTime - this.activeTime) / this.recoveryTime;
+    const cancelThreshold = this.attackData?.cancelWindow || 0.6;
+
+    if (recoveryProgress < cancelThreshold) {
+      const nextState = this.checkComboInput();
+      if (nextState) return nextState;
     }
 
-    // Attack finished
+    // Attack complete
     if (stateTime >= this.totalDuration) {
-      // Execute queued combo
-      if (this.comboQueued && this.nextComboState) {
-        return this.nextComboState;
-      }
-
-      // Return to appropriate state
-      if (!this.body.onFloor()) {
-        return PLAYER_STATES.FALL;
-      }
-      return this.input.getHorizontalAxis() !== 0
-        ? PLAYER_STATES.RUN
-        : PLAYER_STATES.IDLE;
+      return this.getExitState();
     }
 
     return null;
   }
 
-  exit(nextState) {
-    // Always deactivate hitbox when leaving attack state
-    this.player.deactivateAttackHitbox();
+  /**
+   * Check for combo follow-up input
+   * @returns {string|null} Next state or null
+   */
+  checkComboInput() {
+    // Override in subclasses
+    return null;
   }
 
   /**
-   * Attack states can be interrupted by dodge/flip
+   * Determine exit state when attack completes
+   * @returns {string}
    */
+  getExitState() {
+    if (this.body.onFloor()) {
+      return this.input.getHorizontalAxis() !== 0
+        ? PLAYER_STATES.RUN
+        : PLAYER_STATES.IDLE;
+    }
+    return PLAYER_STATES.FALL;
+  }
+
+  exit(nextState) {
+    this.player.deactivateAttackHitbox();
+    this.hitboxActivated = false;
+  }
+
   canBeInterrupted(nextStateName) {
-    // Can always cancel into dodge (flip)
-    if (nextStateName === PLAYER_STATES.FLIP) {
-      return true;
-    }
-    // Can't be interrupted by most states during startup/active
-    const stateTime = this.stateMachine.getStateTime();
-    if (stateTime < this.comboWindowStart) {
-      return false;
-    }
-    return true;
+    return nextStateName === PLAYER_STATES.FLIP ||
+           nextStateName === PLAYER_STATES.BLINK ||
+           nextStateName === PLAYER_STATES.HITSTUN;
   }
 }
 
 /**
- * Light Attack 1 - First hit of combo
+ * Light Attack 1
  */
 export class AttackLight1State extends AttackState {
   constructor(stateMachine) {
-    super(PLAYER_STATES.ATTACK_LIGHT_1, stateMachine, {
-      startup: 40,
-      active: 80,
-      recovery: 120,
-      damage: 10,
-      nextCombo: PLAYER_STATES.ATTACK_LIGHT_2,
-      knockback: { x: 200, y: -50 },
-      hitstun: 150,
-      hitstop: 40,
-    });
+    super(PLAYER_STATES.ATTACK_LIGHT_1, stateMachine, 'light1');
+  }
+
+  checkComboInput() {
+    if (this.input.justPressed(ACTIONS.ATTACK_LIGHT)) {
+      return PLAYER_STATES.ATTACK_LIGHT_2;
+    }
+    if (this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
+      return PLAYER_STATES.ATTACK_HEAVY;
+    }
+    return null;
   }
 }
 
 /**
- * Light Attack 2 - Second hit of combo
+ * Light Attack 2
  */
 export class AttackLight2State extends AttackState {
   constructor(stateMachine) {
-    super(PLAYER_STATES.ATTACK_LIGHT_2, stateMachine, {
-      startup: 30,
-      active: 80,
-      recovery: 120,
-      damage: 12,
-      nextCombo: PLAYER_STATES.ATTACK_LIGHT_3,
-      knockback: { x: 250, y: -80 },
-      hitstun: 180,
-      hitstop: 50,
-    });
+    super(PLAYER_STATES.ATTACK_LIGHT_2, stateMachine, 'light2');
+  }
+
+  checkComboInput() {
+    if (this.input.justPressed(ACTIONS.ATTACK_LIGHT)) {
+      return PLAYER_STATES.ATTACK_LIGHT_3;
+    }
+    if (this.input.justPressed(ACTIONS.ATTACK_HEAVY)) {
+      return PLAYER_STATES.ATTACK_HEAVY;
+    }
+    return null;
   }
 }
 
 /**
- * Light Attack 3 - Finisher
+ * Light Attack 3 (Finisher)
  */
 export class AttackLight3State extends AttackState {
   constructor(stateMachine) {
-    super(PLAYER_STATES.ATTACK_LIGHT_3, stateMachine, {
-      startup: 50,
-      active: 100,
-      recovery: 200,
-      damage: 18,
-      nextCombo: null, // Combo ends here
-      knockback: { x: 400, y: -200 },
-      hitstun: 300,
-      hitstop: 80,
-    });
+    super(PLAYER_STATES.ATTACK_LIGHT_3, stateMachine, 'light3');
+  }
+
+  // No combo follow-ups from finisher
+  checkComboInput() {
+    return null;
   }
 }
 
 /**
- * Heavy Attack - Slower, more damage
+ * Heavy Attack
  */
 export class AttackHeavyState extends AttackState {
   constructor(stateMachine) {
-    super(PLAYER_STATES.ATTACK_HEAVY, stateMachine, {
-      startup: 150,
-      active: 120,
-      recovery: 250,
-      damage: 35,
-      nextCombo: null,
-      knockback: { x: 500, y: -250 },
-      hitstun: 400,
-      hitstop: 100,
-    });
+    super(PLAYER_STATES.ATTACK_HEAVY, stateMachine, 'heavy');
+  }
+
+  checkComboInput() {
+    return null;
   }
 }
 
 /**
- * Air Attack - Attack while airborne
+ * Air Attack
  */
 export class AttackAirState extends AttackState {
   constructor(stateMachine) {
-    super(PLAYER_STATES.ATTACK_AIR, stateMachine, {
-      startup: 50,
-      active: 150,
-      recovery: 100,
-      damage: 15,
-      canMove: true,
-      moveMultiplier: 0.5,
-      knockback: { x: 250, y: -100 },
-      hitstun: 200,
-      hitstop: 50,
-    });
+    super(PLAYER_STATES.ATTACK_AIR, stateMachine, 'air');
   }
 
   update(time, delta) {
-    // Land cancels air attack
+    // Air attack can land during animation
     if (this.body.onFloor()) {
       return PLAYER_STATES.LAND;
     }
 
     return super.update(time, delta);
+  }
+
+  checkComboInput() {
+    return null;
+  }
+
+  getExitState() {
+    return PLAYER_STATES.FALL;
   }
 }
 
@@ -967,7 +964,6 @@ export class SpinActiveState extends PlayerState {
     super(PLAYER_STATES.SPIN_ACTIVE, stateMachine);
 
     this.maxSpinDuration = 2000; // Max time can spin
-    this.damagePerTick = 5; // Damage per hit
     this.tickRate = 150; // MS between damage ticks
     this.spinSpeed = 200; // Movement speed while spinning
 
@@ -979,16 +975,25 @@ export class SpinActiveState extends PlayerState {
     this.lastTickTime = 0;
     this.totalRotation = 0;
 
+    // Get spin attack data from weapon
+    const spinData = this.player.getAttackData('spin');
+
+    const damage = spinData?.damage || 5;
+    const knockback = spinData?.knockback || { x: 100, y: -50 };
+    const hitstun = spinData?.hitstun || 100;
+    const hitstop = spinData?.hitstop || 20;
+    const hitbox = spinData?.hitbox || { width: 80, height: 60, offsetX: 0, offsetY: 0 };
+
     // Activate spin hitbox (larger radius)
     this.player.activateAttackHitbox({
-      damage: this.damagePerTick,
-      knockback: { x: 100, y: -50 }, // Small knockback during spin
-      hitstun: 100,
-      hitstop: 20, // Minimal hitstop for multi-hit
-      width: 80,
-      height: 60,
-      offsetX: 0, // Centered for spin
-      offsetY: 0,
+      damage,
+      knockback,
+      hitstun,
+      hitstop,
+      width: hitbox.width,
+      height: hitbox.height,
+      offsetX: hitbox.offsetX,
+      offsetY: hitbox.offsetY,
     });
   }
 
@@ -1058,7 +1063,6 @@ export class SpinReleaseState extends PlayerState {
     super(PLAYER_STATES.SPIN_RELEASE, stateMachine);
 
     this.releaseDuration = 200;
-    this.damage = 25;
   }
 
   enter(prevState, params) {
@@ -1066,18 +1070,26 @@ export class SpinReleaseState extends PlayerState {
     const spinTime = prevState ? this.stateMachine.stateTime : 0;
     const isPerfect = spinTime >= 300 && spinTime <= 500; // Sweet spot
 
-    const finalDamage = isPerfect ? this.damage * 1.5 : this.damage;
+    // Get spin release data from weapon (uses 'special' slot)
+    const releaseData = this.player.getAttackData('special');
+
+    const baseDamage = releaseData?.damage || 25;
+    const finalDamage = isPerfect ? baseDamage * 1.5 : baseDamage;
+    const knockback = releaseData?.knockback || { x: 400, y: -350 };
+    const hitstun = releaseData?.hitstun || 400;
+    const baseHitstop = releaseData?.hitstop || 80;
+    const hitbox = releaseData?.hitbox || { width: 100, height: 80, offsetX: 0, offsetY: 0 };
 
     // Big launch hitbox
     this.player.activateAttackHitbox({
       damage: finalDamage,
-      knockback: { x: 400, y: -350 }, // Strong launch
-      hitstun: 400,
-      hitstop: isPerfect ? 100 : 60,
-      width: 100,
-      height: 80,
-      offsetX: 0,
-      offsetY: 0,
+      knockback,
+      hitstun,
+      hitstop: isPerfect ? baseHitstop * 1.25 : baseHitstop,
+      width: hitbox.width,
+      height: hitbox.height,
+      offsetX: hitbox.offsetX,
+      offsetY: hitbox.offsetY,
     });
 
     // Screen shake on release

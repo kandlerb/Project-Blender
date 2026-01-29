@@ -7,6 +7,9 @@ import { EffectsManager } from '../systems/EffectsManager.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 
+// Import weapons module to register all weapons
+import '../weapons/index.js';
+
 /**
  * Development testing arena
  * Flat ground, platforms, for testing player mechanics
