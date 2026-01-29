@@ -937,7 +937,18 @@ export class SpinChargeState extends PlayerState {
   }
 
   exit(nextState) {
+    // When resetting scale, adjust Y position to prevent ground clipping
+    const currentScale = this.sprite.scaleY;
+    if (currentScale > 1 && this.body.onFloor()) {
+      const heightDiff = (this.sprite.height * currentScale - this.sprite.height) / 2;
+      this.sprite.y -= heightDiff;
+    }
+
     this.sprite.setScale(1);
+
+    // Sync physics body position after scale change
+    this.body.setVelocityY(0);
+    this.body.reset(this.sprite.x, this.sprite.y);
   }
 
   canBeInterrupted(nextStateName) {
@@ -1113,7 +1124,21 @@ export class SpinReleaseState extends PlayerState {
 
   exit(nextState) {
     this.player.deactivateAttackHitbox();
+
+    // When resetting scale, adjust Y position to prevent ground clipping
+    // The sprite origin is at center, so scaling down moves the bottom up
+    // We need to move the sprite down to compensate and keep feet on ground
+    const currentScale = this.sprite.scaleY;
+    if (currentScale > 1 && this.body.onFloor()) {
+      const heightDiff = (this.sprite.height * currentScale - this.sprite.height) / 2;
+      this.sprite.y -= heightDiff;
+    }
+
     this.sprite.setScale(1);
+
+    // Zero velocity and sync physics body position after scale change
+    this.body.setVelocityY(0);
+    this.body.reset(this.sprite.x, this.sprite.y);
   }
 
   canBeInterrupted(nextStateName) {
