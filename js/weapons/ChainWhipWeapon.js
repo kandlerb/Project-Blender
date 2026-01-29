@@ -90,7 +90,7 @@ export const ChainWhipWeapon = new Weapon({
     }),
 
     spin: new AttackData({
-      // Chain whip spin has massive range
+      // Chain whip spin has massive range - hits both sides
       startupTime: 0,
       activeTime: 180,
       recoveryTime: 0,
@@ -98,12 +98,12 @@ export const ChainWhipWeapon = new Weapon({
       knockback: { x: 50, y: -10 },
       hitstun: 50,
       hitstop: 10,
-      hitbox: { width: 120, height: 80, offsetX: 0, offsetY: 0 },
+      hitbox: { width: 80, height: 80, offsetX: 60, offsetY: 0 }, // Offset for dual hitbox
       meterGain: 1,
     }),
 
     special: new AttackData({
-      // Spin release - wide horizontal sweep
+      // Spin release - wide horizontal sweep - hits both sides
       startupTime: 0,
       activeTime: 180,
       recoveryTime: 220,
@@ -111,7 +111,7 @@ export const ChainWhipWeapon = new Weapon({
       knockback: { x: 400, y: -100 },
       hitstun: 350,
       hitstop: 70,
-      hitbox: { width: 150, height: 70, offsetX: 0, offsetY: 0 },
+      hitbox: { width: 100, height: 70, offsetX: 75, offsetY: 0 }, // Offset for dual hitbox
       launches: false,
       meterGain: 8,
     }),

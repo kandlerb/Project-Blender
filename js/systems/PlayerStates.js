@@ -1092,18 +1092,31 @@ export class SpinActiveState extends PlayerState {
     const knockback = spinData?.knockback || { x: 100, y: -50 };
     const hitstun = spinData?.hitstun || 100;
     const hitstop = spinData?.hitstop || 20;
-    const hitbox = spinData?.hitbox || { width: 80, height: 60, offsetX: 0, offsetY: 0 };
+    const hitbox = spinData?.hitbox || { width: 80, height: 60, offsetX: 40, offsetY: 0 };
 
-    // Activate spin hitbox (larger radius)
+    // Activate dual spin hitboxes (one on each side for 360 coverage)
     this.player.activateAttackHitbox({
       damage,
-      knockback,
       hitstun,
       hitstop,
-      width: hitbox.width,
-      height: hitbox.height,
-      offsetX: hitbox.offsetX,
-      offsetY: hitbox.offsetY,
+      hitboxes: [
+        {
+          // Front hitbox
+          width: hitbox.width,
+          height: hitbox.height,
+          offsetX: hitbox.offsetX,
+          offsetY: hitbox.offsetY,
+          knockback: knockback,
+        },
+        {
+          // Back hitbox (mirror of front)
+          width: hitbox.width,
+          height: hitbox.height,
+          offsetX: -hitbox.offsetX, // Opposite side
+          offsetY: hitbox.offsetY,
+          knockback: { x: -knockback.x, y: knockback.y }, // Knockback away from player
+        },
+      ],
     });
   }
 
@@ -1128,10 +1141,11 @@ export class SpinActiveState extends PlayerState {
       this.body.setVelocityY(0);
     }
 
-    // Reset hitbox tracking periodically for multi-hit
+    // Reset hitbox tracking periodically for multi-hit (both hitboxes)
     if (stateTime - this.lastTickTime >= this.tickRate) {
       this.lastTickTime = stateTime;
       this.player.attackHitbox.hasHit.clear();
+      this.player.attackHitboxSecondary.hasHit.clear();
     }
 
     // Release button to finish
@@ -1188,18 +1202,31 @@ export class SpinReleaseState extends PlayerState {
     const knockback = releaseData?.knockback || { x: 400, y: -350 };
     const hitstun = releaseData?.hitstun || 400;
     const baseHitstop = releaseData?.hitstop || 80;
-    const hitbox = releaseData?.hitbox || { width: 100, height: 80, offsetX: 0, offsetY: 0 };
+    const hitbox = releaseData?.hitbox || { width: 100, height: 80, offsetX: 50, offsetY: 0 };
 
-    // Big launch hitbox
+    // Big launch hitbox - dual hitboxes for 360 coverage
     this.player.activateAttackHitbox({
       damage: finalDamage,
-      knockback,
       hitstun,
       hitstop: isPerfect ? baseHitstop * 1.25 : baseHitstop,
-      width: hitbox.width,
-      height: hitbox.height,
-      offsetX: hitbox.offsetX,
-      offsetY: hitbox.offsetY,
+      hitboxes: [
+        {
+          // Front hitbox
+          width: hitbox.width,
+          height: hitbox.height,
+          offsetX: hitbox.offsetX,
+          offsetY: hitbox.offsetY,
+          knockback: knockback,
+        },
+        {
+          // Back hitbox (mirror of front)
+          width: hitbox.width,
+          height: hitbox.height,
+          offsetX: -hitbox.offsetX, // Opposite side
+          offsetY: hitbox.offsetY,
+          knockback: { x: -knockback.x, y: knockback.y }, // Knockback away from player
+        },
+      ],
     });
 
     // Screen shake on release
@@ -1216,16 +1243,32 @@ export class SpinReleaseState extends PlayerState {
       this.body.setVelocityY(0);
     }
 
+    // Store base height before scaling for Y compensation
+    this.baseHeight = this.sprite.height;
+    this.lastScale = 1;
+
     // Set initial scale for release animation
     this.sprite.setScale(1.3);
+    this.lastScale = 1.3;
   }
 
   update(time, delta) {
     const stateTime = this.stateMachine.getStateTime();
 
-    // Quick release animation
-    const progress = stateTime / this.releaseDuration;
-    this.sprite.setScale(1 + (1 - progress) * 0.3); // Shrink back to normal
+    // Quick release animation - scale from 1.3 to 1.0
+    const progress = Math.min(stateTime / this.releaseDuration, 1);
+    const newScale = 1 + (1 - progress) * 0.3;
+
+    // Adjust Y position to keep feet planted as scale changes
+    // When scale decreases, the sprite shrinks toward center, so we need to move down
+    if (this.body.onFloor() && this.lastScale !== newScale) {
+      const scaleDiff = this.lastScale - newScale;
+      // Move Y down by half the height change to keep feet at same position
+      this.sprite.y += (scaleDiff * this.baseHeight) / 2;
+    }
+
+    this.sprite.setScale(newScale);
+    this.lastScale = newScale;
 
     // Maintain floor contact to prevent clipping through ground
     if (this.body.onFloor()) {
@@ -1247,20 +1290,10 @@ export class SpinReleaseState extends PlayerState {
   exit(nextState) {
     this.player.deactivateAttackHitbox();
 
-    // When resetting scale, adjust Y position to prevent ground clipping
-    // sprite.height already includes scale, so baseHeight = height / scale
-    // When scaling down, the bottom moves up, so we move sprite down to compensate
-    const currentScale = this.sprite.scaleY;
-    if (currentScale > 1 && this.body.onFloor()) {
-      const baseHeight = this.sprite.height / currentScale;
-      const heightDiff = (this.sprite.height - baseHeight) / 2;
-      this.sprite.y += heightDiff;
-    }
-
+    // Ensure scale is reset to 1
     this.sprite.setScale(1);
 
-    // Zero velocity and sync physics body position after scale change
-    this.body.setVelocityY(0);
+    // Sync physics body position
     this.body.reset(this.sprite.x, this.sprite.y);
   }
 

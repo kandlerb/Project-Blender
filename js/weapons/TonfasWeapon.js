@@ -86,7 +86,7 @@ export const TonfasWeapon = new Weapon({
     }),
 
     spin: new AttackData({
-      // Tonfas spin is faster but weaker per hit
+      // Tonfas spin is faster but weaker per hit - hits both sides
       startupTime: 0,
       activeTime: 100, // Faster ticks
       recoveryTime: 0,
@@ -94,12 +94,12 @@ export const TonfasWeapon = new Weapon({
       knockback: { x: 60, y: -20 },
       hitstun: 60,
       hitstop: 10,
-      hitbox: { width: 65, height: 50, offsetX: 0, offsetY: 0 },
+      hitbox: { width: 50, height: 50, offsetX: 38, offsetY: 0 }, // Offset for dual hitbox
       meterGain: 1,
     }),
 
     special: new AttackData({
-      // Counter attack (after perfect parry)
+      // Counter attack (after perfect parry) - hits both sides
       startupTime: 30, // Very fast
       activeTime: 100,
       recoveryTime: 150,
@@ -107,7 +107,7 @@ export const TonfasWeapon = new Weapon({
       knockback: { x: 400, y: -200 },
       hitstun: 450,
       hitstop: 100,
-      hitbox: { width: 60, height: 50, offsetX: 35, offsetY: 0 },
+      hitbox: { width: 50, height: 50, offsetX: 40, offsetY: 0 }, // Offset for dual hitbox
       launches: true,
       meterGain: 15,
     }),

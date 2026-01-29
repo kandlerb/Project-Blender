@@ -86,7 +86,7 @@ export const FistsWeapon = new Weapon({
     }),
 
     spin: new AttackData({
-      // Spin active tick damage
+      // Spin active tick damage - hits both sides
       startupTime: 0,
       activeTime: 150, // Per tick
       recoveryTime: 0,
@@ -94,12 +94,12 @@ export const FistsWeapon = new Weapon({
       knockback: { x: 80, y: -30 },
       hitstun: 80,
       hitstop: 15,
-      hitbox: { width: 70, height: 55, offsetX: 0, offsetY: 0 },
+      hitbox: { width: 55, height: 55, offsetX: 40, offsetY: 0 }, // Offset for dual hitbox
       meterGain: 1,
     }),
 
     special: new AttackData({
-      // Spin release/finisher
+      // Spin release/finisher - hits both sides
       startupTime: 0,
       activeTime: 150,
       recoveryTime: 200,
@@ -107,7 +107,7 @@ export const FistsWeapon = new Weapon({
       knockback: { x: 350, y: -300 },
       hitstun: 400,
       hitstop: 80,
-      hitbox: { width: 90, height: 70, offsetX: 0, offsetY: 0 },
+      hitbox: { width: 70, height: 70, offsetX: 50, offsetY: 0 }, // Offset for dual hitbox
       launches: true,
       meterGain: 10,
     }),
