@@ -6,6 +6,7 @@ import { CombatManager } from '../systems/CombatManager.js';
 import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
 import { AudioManager } from '../systems/AudioManager.js';
+import { CorpseManager } from '../systems/CorpseManager.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
@@ -23,6 +24,7 @@ export class TestArenaScene extends BaseScene {
     super('TestArena');
     this.player = null;
     this.enemies = [];
+    this.enemyGroup = null;
     this.enemyProjectiles = [];
     this.currentBoss = null;
     this.ground = null;
@@ -32,6 +34,7 @@ export class TestArenaScene extends BaseScene {
     this.timeManager = null;
     this.effectsManager = null;
     this.audioManager = null;
+    this.corpseManager = null;
     this.hud = null;
     this.showCombatDebug = false;
   }
@@ -53,10 +56,28 @@ export class TestArenaScene extends BaseScene {
     // Create arena
     this.createArena();
 
+    // Create corpse manager
+    this.corpseManager = new CorpseManager(this, {
+      maxCorpses: 30,
+      cleanupMode: 'oldest',
+      decayEnabled: false,
+    });
+
+    // Corpse collisions with world geometry
+    this.physics.add.collider(this.corpseManager.corpseGroup, this.ground);
+    this.physics.add.collider(this.corpseManager.corpseGroup, this.platforms);
+
+    // Corpses can stack on each other
+    this.physics.add.collider(this.corpseManager.corpseGroup, this.corpseManager.corpseGroup);
+
+    // Create enemy group for collision handling
+    this.enemyGroup = this.physics.add.group();
+
     // Create player
     this.player = new Player(this, 300, 400);
     this.player.addCollider(this.ground);
     this.player.addCollider(this.platforms);
+    this.player.addCollider(this.corpseManager.corpseGroup);
 
     // Expose for console debugging
     window.player = this.player;
@@ -64,6 +85,9 @@ export class TestArenaScene extends BaseScene {
 
     // Spawn initial enemies
     this.spawnEnemies();
+
+    // Set up enemy-corpse collision (after enemies are spawned)
+    this.physics.add.collider(this.enemyGroup, this.corpseManager.corpseGroup);
 
     // Create debug HUD
     this.createDebugHUD();
@@ -113,11 +137,22 @@ export class TestArenaScene extends BaseScene {
         this.audioManager.playSFX(SOUNDS.ENEMY_DEATH);
       }
 
-      // Remove from array
+      // Remove from array and enemy group
       const index = this.enemies.indexOf(data.enemy);
       if (index > -1) {
         this.enemies.splice(index, 1);
       }
+      if (data.enemy.sprite && this.enemyGroup.contains(data.enemy.sprite)) {
+        this.enemyGroup.remove(data.enemy.sprite, true, true);
+      }
+    });
+
+    // Spawn corpse when enemy dies
+    this.events.on('enemy:died', (data) => {
+      this.corpseManager.spawn(data.x, data.y, data.enemyType, {
+        width: data.width,
+        height: data.height || 16,
+      });
     });
 
     // Boss events
@@ -163,7 +198,7 @@ export class TestArenaScene extends BaseScene {
 
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
-    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies, B to spawn boss');
+    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies, B to spawn boss, P to spawn corpse');
   }
 
   setupInputHandlers() {
@@ -206,6 +241,16 @@ export class TestArenaScene extends BaseScene {
         const muted = this.audioManager.toggleMute('master');
         console.log(`Audio ${muted ? 'muted' : 'unmuted'}`);
       }
+    });
+
+    // Spawn test corpse at player position
+    this.input.keyboard.on('keydown-P', () => {
+      const pos = this.player.getPosition();
+      this.corpseManager.spawn(pos.x, pos.y + 50, 'TEST', {
+        width: 24,
+        height: 16,
+      });
+      console.log(`Corpses: ${this.corpseManager.getCount()}/${this.corpseManager.config.maxCorpses}`);
     });
   }
 
@@ -272,6 +317,9 @@ export class TestArenaScene extends BaseScene {
       enemy.addCollider(this.ground);
       enemy.addCollider(this.platforms);
       enemy.setTarget(this.player);
+
+      // Add to enemy group for corpse collision
+      this.enemyGroup.add(enemy.sprite);
 
       if (this.showCombatDebug) {
         enemy.setCombatDebug(true);
@@ -354,6 +402,10 @@ export class TestArenaScene extends BaseScene {
       // Update combat manager
       this.combatManager.update(time, scaledDelta);
 
+      // Update corpse manager
+      this.corpseManager.update(time, scaledDelta);
+      this.corpseManager.setReferencePosition(this.player.sprite.x, this.player.sprite.y);
+
       // Check enemy projectiles
       this.updateEnemyProjectiles();
     }
@@ -417,6 +469,7 @@ export class TestArenaScene extends BaseScene {
       `Combo: ${hudStats.combo}`,
       `Kills: ${hudStats.kills}`,
       `Enemies: ${this.enemies.length}`,
+      `Corpses: ${this.corpseManager.getCount()}/${this.corpseManager.config.maxCorpses}`,
     ];
 
     // Add boss info if present
@@ -431,7 +484,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | M - Mute');
+    lines.push('R - Respawn | B - Boss | P - Corpse | M - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
@@ -465,6 +518,12 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemies = [];
 
+    // Clean up enemy group
+    if (this.enemyGroup) {
+      this.enemyGroup.destroy(true);
+      this.enemyGroup = null;
+    }
+
     // Clean up player
     if (this.player) {
       this.player.destroy();
@@ -489,6 +548,10 @@ export class TestArenaScene extends BaseScene {
     if (this.audioManager) {
       this.audioManager.destroy();
       this.audioManager = null;
+    }
+    if (this.corpseManager) {
+      this.corpseManager.destroy();
+      this.corpseManager = null;
     }
   }
 }

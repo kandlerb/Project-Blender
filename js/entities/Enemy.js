@@ -148,8 +148,9 @@ export class Enemy {
     this.scene = scene;
 
     // Merge config with defaults
-    const preset = ENEMY_PRESETS[config.type] || ENEMY_PRESETS.SWARMER;
-    this.config = { ...preset, ...config };
+    const enemyType = config.type || 'SWARMER';
+    const preset = ENEMY_PRESETS[enemyType] || ENEMY_PRESETS.SWARMER;
+    this.config = { type: enemyType, ...preset, ...config };
 
     // Store full stats for behavior-specific AI
     this.stats = { ...this.config };
@@ -1287,6 +1288,15 @@ class EnemyDeadState extends State {
   }
 
   enter(prevState, params) {
+    // Emit event for corpse spawning before fade
+    this.enemy.scene.events.emit('enemy:died', {
+      x: this.enemy.sprite.x,
+      y: this.enemy.sprite.y,
+      enemyType: this.enemy.config.type || 'SWARMER',
+      width: this.enemy.sprite.body.width,
+      height: this.enemy.sprite.body.height,
+    });
+
     this.enemy.sprite.setTint(0x666666);
     this.enemy.sprite.setAlpha(0.7);
     this.enemy.sprite.body.setVelocity(0, 0);
