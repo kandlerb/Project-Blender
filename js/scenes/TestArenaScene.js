@@ -71,7 +71,10 @@ export class TestArenaScene extends BaseScene {
     this.physics.add.collider(this.corpseManager.corpseGroup, this.corpseManager.corpseGroup);
 
     // Create enemy group for collision handling
-    this.enemyGroup = this.physics.add.group();
+    // runChildUpdate: false prevents group from interfering with enemy updates
+    this.enemyGroup = this.physics.add.group({
+      runChildUpdate: false,
+    });
 
     // Create player
     this.player = new Player(this, 300, 400);
@@ -246,7 +249,8 @@ export class TestArenaScene extends BaseScene {
     // Spawn test corpse at player position
     this.input.keyboard.on('keydown-P', () => {
       const pos = this.player.getPosition();
-      this.corpseManager.spawn(pos.x, pos.y + 50, 'TEST', {
+      // Spawn slightly above player so it falls
+      this.corpseManager.spawn(pos.x, pos.y - 20, 'TEST', {
         width: 24,
         height: 16,
       });
@@ -320,6 +324,10 @@ export class TestArenaScene extends BaseScene {
 
       // Add to enemy group for corpse collision
       this.enemyGroup.add(enemy.sprite);
+
+      // Re-apply enemy physics settings that group may have overwritten
+      enemy.sprite.body.setAllowGravity(true);
+      enemy.sprite.body.setCollideWorldBounds(true);
 
       if (this.showCombatDebug) {
         enemy.setCombatDebug(true);

@@ -46,8 +46,12 @@ export class CorpseManager {
     // Track all active corpses
     this.corpses = [];
 
-    // Create static group for collision handling
-    this.corpseGroup = scene.physics.add.staticGroup();
+    // Create dynamic group for collision handling
+    // Dynamic group allows gravity and corpse-corpse collision
+    this.corpseGroup = scene.physics.add.group({
+      collideWorldBounds: true,
+      allowGravity: true,
+    });
 
     // Reference position for farthest cleanup (usually player position)
     this.referenceX = 0;
@@ -99,9 +103,14 @@ export class CorpseManager {
     // Add to tracking array
     this.corpses.push(corpse);
 
-    // Add sprite to static group for collisions
-    // Note: We need to refresh the body after adding since it's a dynamic sprite
+    // Add sprite to group for collisions
     this.corpseGroup.add(corpse.sprite);
+
+    // Re-apply physics settings that group membership may have overwritten
+    corpse.sprite.body.setAllowGravity(true);
+    corpse.sprite.body.setBounce(0.1);
+    corpse.sprite.body.setDrag(1000, 0);
+    corpse.sprite.body.setMaxVelocity(200, 800);
 
     // Emit spawned event
     this.scene.events.emit('corpse:spawned', {
