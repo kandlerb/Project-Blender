@@ -485,7 +485,7 @@ export class TestArenaScene extends BaseScene {
 
   /**
    * Handle collision between enemy and corpse
-   * Called after collision resolution - handles destroy behavior for Brutes
+   * Called after collision resolution - freezes corpse when stood on, or destroys for Brutes
    * @param {Phaser.Physics.Arcade.Sprite} enemySprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
@@ -498,8 +498,21 @@ export class TestArenaScene extends BaseScene {
     // Brutes destroy corpses on contact
     if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
       this.destroyCorpseWithForce(enemy, corpse);
+      return;
     }
-    // Step-up positioning is handled in shouldEnemyCollideWithCorpse process callback
+
+    // For other enemies, freeze corpse if they're standing on it
+    const enemyBody = enemySprite.body;
+    const corpseBody = corpseSprite.body;
+
+    const enemyBottom = enemyBody.bottom;
+    const corpseTop = corpseBody.top;
+    const isStandingOn = enemyBottom >= corpseTop - 4 && enemyBottom <= corpseTop + 8;
+
+    if (isStandingOn) {
+      // Freeze corpse velocity so it acts as a stable platform
+      corpseBody.setVelocity(0, 0);
+    }
   }
 
   /**
@@ -575,7 +588,7 @@ export class TestArenaScene extends BaseScene {
     const force = enemy.corpseDestroyForce || 300;
 
     // Apply force to corpse (brief moment of movement before destroy)
-    corpse.sprite.body.setImmovable(false);
+    // Corpses are already movable, so we can directly set velocity
     corpse.sprite.body.setVelocity(direction * force, -150);
 
     // Visual feedback
@@ -645,18 +658,24 @@ export class TestArenaScene extends BaseScene {
 
   /**
    * Handle collision between player and corpse
-   * Called after collision resolution - handles edge cases
+   * Called after collision resolution - freezes corpse when stood on
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
   handlePlayerCorpseCollision(playerSprite, corpseSprite) {
-    // Most step-up logic is now in the process callback
-    // This handles any additional cases like being pushed by corpses
     const playerBody = playerSprite.body;
     const corpseBody = corpseSprite.body;
 
-    // If player is standing on this corpse, ensure they stay grounded
-    if (playerBody.bottom >= corpseBody.top - 2 && playerBody.bottom <= corpseBody.top + 8) {
+    // Check if player is standing on top of this corpse
+    const playerBottom = playerBody.bottom;
+    const corpseTop = corpseBody.top;
+    const isStandingOn = playerBottom >= corpseTop - 4 && playerBottom <= corpseTop + 8;
+
+    if (isStandingOn) {
+      // Freeze corpse velocity so it acts as a stable platform
+      corpseBody.setVelocity(0, 0);
+
+      // Ensure player stays grounded
       if (playerBody.velocity.y > 0) {
         playerBody.velocity.y = 0;
       }
