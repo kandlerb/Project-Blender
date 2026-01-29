@@ -2,6 +2,7 @@ import { StateMachine } from '../systems/StateMachine.js';
 import { createPlayerStates, PLAYER_STATES } from '../systems/PlayerStates.js';
 import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
+import { WeaponManager } from '../weapons/WeaponManager.js';
 
 /**
  * Player Entity
@@ -37,6 +38,9 @@ export class Player {
     this.stateMachine = new StateMachine(this, PLAYER_STATES.IDLE);
     this.stateMachine.addStates(createPlayerStates(this.stateMachine));
     this.stateMachine.start();
+
+    // Weapon system
+    this.weaponManager = new WeaponManager(this);
 
     // Combat boxes
     this.hurtbox = new CombatBox(scene, {
@@ -101,6 +105,9 @@ export class Player {
    */
   update(time, delta) {
     this.stateMachine.update(time, delta);
+
+    // Update weapon manager
+    this.weaponManager.update(delta);
 
     // Update facing direction based on sprite flip
     this.facingRight = !this.sprite.flipX;
@@ -260,6 +267,39 @@ export class Player {
   setCombatDebug(show) {
     this.hurtbox.setDebug(show);
     this.attackHitbox.setDebug(show);
+  }
+
+  /**
+   * Get current weapon's attack data
+   * @param {string} attackType
+   * @returns {AttackData|null}
+   */
+  getAttackData(attackType) {
+    return this.weaponManager.getAttack(attackType);
+  }
+
+  /**
+   * Get current weapon
+   * @returns {Weapon|null}
+   */
+  getCurrentWeapon() {
+    return this.weaponManager.equippedWeapon;
+  }
+
+  /**
+   * Unlock a new weapon
+   * @param {string} weaponId
+   */
+  unlockWeapon(weaponId) {
+    this.weaponManager.unlockWeapon(weaponId);
+  }
+
+  /**
+   * Start swapping to a different weapon
+   * @param {string} weaponId
+   */
+  swapWeapon(weaponId) {
+    this.weaponManager.startSwap(weaponId);
   }
 
   /**
