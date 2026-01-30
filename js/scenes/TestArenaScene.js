@@ -69,8 +69,14 @@ export class TestArenaScene extends BaseScene {
     // with pre-existing physics bodies
     this.corpseManager.setTerrain(this.ground, this.platforms);
 
-    // Corpses can stack on each other
-    this.physics.add.collider(this.corpseManager.corpseGroup, this.corpseManager.corpseGroup);
+    // Corpses can stack on each other - with callback to freeze stacked corpses
+    this.physics.add.collider(
+      this.corpseManager.corpseGroup,
+      this.corpseManager.corpseGroup,
+      this.handleCorpseCorpseCollision,
+      null,
+      this
+    );
 
     // Create enemy group for collision handling
     // runChildUpdate: false prevents group from interfering with enemy updates
@@ -654,6 +660,55 @@ export class TestArenaScene extends BaseScene {
 
     // Default: enable collision
     return true;
+  }
+
+  /**
+   * Handle collision between two corpses
+   * Freezes both corpses when one is resting on top of another to prevent bouncing
+   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite1
+   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite2
+   */
+  handleCorpseCorpseCollision(corpseSprite1, corpseSprite2) {
+    const body1 = corpseSprite1.body;
+    const body2 = corpseSprite2.body;
+
+    if (!body1 || !body2) return;
+
+    // Determine which corpse is on top (lower Y = higher on screen)
+    const corpse1OnTop = body1.bottom <= body2.top + 8;
+    const corpse2OnTop = body2.bottom <= body1.top + 8;
+
+    // Check horizontal overlap
+    const horizontalOverlap =
+      body1.right > body2.left && body1.left < body2.right;
+
+    if (!horizontalOverlap) return;
+
+    if (corpse1OnTop) {
+      // Corpse 1 is on top of Corpse 2
+      // Freeze the bottom corpse and stop both vertical velocities
+      body2.setVelocity(0, 0);
+      if (body1.velocity.y > 0) {
+        body1.setVelocityY(0);
+      }
+      // Make bottom corpse temporarily immovable for stability
+      body2.setImmovable(true);
+      // Mark for later reset
+      corpseSprite2.setData('wasImmovable', true);
+    } else if (corpse2OnTop) {
+      // Corpse 2 is on top of Corpse 1
+      body1.setVelocity(0, 0);
+      if (body2.velocity.y > 0) {
+        body2.setVelocityY(0);
+      }
+      // Make bottom corpse temporarily immovable for stability
+      body1.setImmovable(true);
+      corpseSprite1.setData('wasImmovable', true);
+    } else {
+      // Side-by-side collision or embedded - stop both horizontal velocities
+      body1.setVelocityX(0);
+      body2.setVelocityX(0);
+    }
   }
 
   /**
