@@ -659,55 +659,70 @@ export class TestArenaScene extends BaseScene {
 
   /**
    * Process callback for player-corpse collision
-   * Enables collision when player should land on or step onto corpse
+   * Enables smooth step-up onto corpse piles
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    * @returns {boolean} Whether to apply collision physics
    */
   shouldPlayerCollideWithCorpse(playerSprite, corpseSprite) {
+    const corpse = corpseSprite.getData('owner');
+
+    // Only collide with settled corpses (they have static platform bodies)
+    if (!corpse || corpse.state !== 'settled') {
+      return false;
+    }
+
     const playerBody = playerSprite.body;
     const corpseBody = corpseSprite.body;
 
+    // Corpse body is a thin platform at the top, so corpseBody.top is the walking surface
     const playerBottom = playerBody.bottom;
     const corpseTop = corpseBody.top;
     const heightDiff = playerBottom - corpseTop;
 
-    // Player falling and above the corpse - allow landing on it
-    const playerFalling = playerBody.velocity.y > 0;
-    const playerAbove = playerBottom <= corpseTop + 8; // Tolerance for landing
-
-    if (playerFalling && playerAbove) {
-      return true; // Allow landing on corpse
+    // Player is above or at the corpse top level - normal collision for standing/landing
+    if (playerBottom <= corpseTop + 4) {
+      return true;
     }
 
-    // Player moving horizontally and can step up - enable collision to land on top
-    const isMovingHorizontally = Math.abs(playerBody.velocity.x) > 10;
-    const canStepUp = heightDiff > -8 && heightDiff <= this.playerStepUpHeight;
+    // Player is below corpse top but within step-up range
+    // Assist by nudging player up onto the platform
+    const canStepUp = heightDiff > 0 && heightDiff <= this.playerStepUpHeight;
+    const isMoving = Math.abs(playerBody.velocity.x) > 5 || playerBody.velocity.y !== 0;
 
-    if (isMovingHorizontally && canStepUp) {
-      // Position player on top of the corpse for smooth step-up
-      // This happens before physics resolution, so we set the position directly
+    if (canStepUp && isMoving) {
+      // Smoothly step up: position player on top of corpse
       const targetY = corpseTop - playerBody.halfHeight;
 
-      // Only step up if we're not already above this corpse
-      if (playerSprite.y > targetY) {
-        playerSprite.y = targetY;
-        playerBody.y = targetY - playerBody.halfHeight;
-        // Small upward velocity to ensure we stay on top
-        if (playerBody.velocity.y >= 0) {
-          playerBody.velocity.y = -50;
+      if (playerSprite.y > targetY + 2) {
+        // Gradual step-up for smoother feel
+        const stepSpeed = 4;
+        playerSprite.y -= stepSpeed;
+
+        // If close enough, snap to final position
+        if (playerSprite.y <= targetY + stepSpeed) {
+          playerSprite.y = targetY;
+        }
+
+        // Neutralize downward velocity during step-up
+        if (playerBody.velocity.y > 0) {
+          playerBody.velocity.y = 0;
         }
       }
-      return true; // Enable collision to stand on corpse
+      return true;
     }
 
-    // Default: enable collision
+    // Player too far below - don't collide (prevents getting stuck on sides)
+    if (heightDiff > this.playerStepUpHeight) {
+      return false;
+    }
+
     return true;
   }
 
   /**
    * Handle collision between player and corpse
-   * Called after collision resolution - freezes corpse when stood on
+   * Called after collision resolution
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
@@ -718,16 +733,15 @@ export class TestArenaScene extends BaseScene {
     // Check if player is standing on top of this corpse
     const playerBottom = playerBody.bottom;
     const corpseTop = corpseBody.top;
-    const isStandingOn = playerBottom >= corpseTop - 4 && playerBottom <= corpseTop + 8;
+    const isStandingOn = playerBottom >= corpseTop - 4 && playerBottom <= corpseTop + 6;
 
-    if (isStandingOn) {
-      // Freeze corpse velocity so it acts as a stable platform
-      corpseBody.setVelocity(0, 0);
+    if (isStandingOn && playerBody.velocity.y >= 0) {
+      // Snap player to stand exactly on top for clean landing
+      playerSprite.y = corpseTop - playerBody.halfHeight;
+      playerBody.velocity.y = 0;
 
-      // Ensure player stays grounded
-      if (playerBody.velocity.y > 0) {
-        playerBody.velocity.y = 0;
-      }
+      // Mark player as touching ground (for jump detection)
+      playerBody.blocked.down = true;
     }
   }
 

@@ -349,7 +349,7 @@ export class Corpse {
 
   /**
    * Complete the settling process
-   * Destroys physics body and marks corpse as static
+   * Converts physics body to static platform for walkability
    */
   settle() {
     if (this.isSettled) return;
@@ -370,15 +370,24 @@ export class Corpse {
     // Move to background depth
     this.sprite.setDepth(CORPSE_CONFIG.SETTLED_DEPTH);
 
-    // Destroy physics body entirely - sprite becomes static visual
+    // Convert to static platform body for walking on
     if (this.sprite.body) {
-      // First stop all movement
+      // Stop all movement
       this.sprite.body.setVelocity(0, 0);
       this.sprite.body.setAllowGravity(false);
       this.sprite.body.setImmovable(true);
+      this.sprite.body.moves = false;
 
-      // Disable the body (keeps sprite but removes from physics simulation)
-      this.sprite.body.enable = false;
+      // Resize body to be a thin platform at the TOP of the corpse
+      // This allows player to walk ON the corpse, not through it
+      const platformHeight = 6;
+      const bodyWidth = this.config.width * 0.9;
+      const offsetX = (this.config.width - bodyWidth) / 2;
+      // Position platform at top of corpse visual
+      const offsetY = -this.config.height / 2 + platformHeight / 2;
+
+      this.sprite.body.setSize(bodyWidth, platformHeight);
+      this.sprite.body.setOffset(offsetX, offsetY);
     }
 
     // Clear snap data
