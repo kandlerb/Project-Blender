@@ -607,6 +607,19 @@ export class Boss {
   }
 
   /**
+   * Toggle combat debug visualization
+   * @param {boolean} show - Whether to show debug graphics
+   */
+  setCombatDebug(show) {
+    if (this.hurtbox) {
+      this.hurtbox.setDebug(show);
+    }
+    if (this.hitbox) {
+      this.hitbox.setDebug(show);
+    }
+  }
+
+  /**
    * Clean up
    */
   destroy() {
