@@ -18,3 +18,4 @@ export {
   AttackHeavyState,
   AttackAirState,
 } from './PlayerStates.js';
+export { CorpseGrid, GRID_CONFIG } from './CorpseGrid.js';

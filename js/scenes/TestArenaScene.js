@@ -54,29 +54,22 @@ export class TestArenaScene extends BaseScene {
     // Create HUD
     this.hud = new HUD(this);
 
-    // Create arena
+    // Create arena first (needed for platformLayer)
     this.createArena();
 
-    // Create corpse manager (no limit on corpses)
+    // Create corpse manager with platform layer for grid ground detection
     this.corpseManager = new CorpseManager(this, {
+      platformLayer: this.ground,
       maxCorpses: Infinity,
       cleanupMode: 'none',
       decayEnabled: false,
     });
 
-    // Set terrain for individual corpse colliders
-    // Individual colliders are more reliable than group-level colliders for sprites
-    // with pre-existing physics bodies
+    // Set terrain for corpse-platform collision during falling
     this.corpseManager.setTerrain(this.ground, this.platforms);
 
-    // Corpses can stack on each other - with callback to freeze stacked corpses
-    this.physics.add.collider(
-      this.corpseManager.corpseGroup,
-      this.corpseManager.corpseGroup,
-      this.handleCorpseCorpseCollision,
-      null,
-      this
-    );
+    // Note: Corpse-to-corpse collision is now handled by grid snapping
+    // No physics-based corpse stacking needed
 
     // Create enemy group for collision handling
     // runChildUpdate: false prevents group from interfering with enemy updates
@@ -226,7 +219,7 @@ export class TestArenaScene extends BaseScene {
 
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
-    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies, B to spawn boss, P to spawn corpse');
+    console.log('Press ` for physics debug, C for combat debug, G for grid debug, R to respawn enemies, B to spawn boss, P to spawn corpse');
   }
 
   setupInputHandlers() {
@@ -280,6 +273,12 @@ export class TestArenaScene extends BaseScene {
         height: 16,
       });
       console.log(`Corpses: ${this.corpseManager.getCount()}`);
+    });
+
+    // Toggle grid debug visualization
+    this.input.keyboard.on('keydown-G', () => {
+      const enabled = this.corpseManager.toggleGridDebug();
+      console.log(`Corpse grid debug: ${enabled ? 'ON' : 'OFF'}`);
     });
   }
 
@@ -663,55 +662,6 @@ export class TestArenaScene extends BaseScene {
   }
 
   /**
-   * Handle collision between two corpses
-   * Freezes both corpses when one is resting on top of another to prevent bouncing
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite1
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite2
-   */
-  handleCorpseCorpseCollision(corpseSprite1, corpseSprite2) {
-    const body1 = corpseSprite1.body;
-    const body2 = corpseSprite2.body;
-
-    if (!body1 || !body2) return;
-
-    // Determine which corpse is on top (lower Y = higher on screen)
-    const corpse1OnTop = body1.bottom <= body2.top + 8;
-    const corpse2OnTop = body2.bottom <= body1.top + 8;
-
-    // Check horizontal overlap
-    const horizontalOverlap =
-      body1.right > body2.left && body1.left < body2.right;
-
-    if (!horizontalOverlap) return;
-
-    if (corpse1OnTop) {
-      // Corpse 1 is on top of Corpse 2
-      // Freeze the bottom corpse and stop both vertical velocities
-      body2.setVelocity(0, 0);
-      if (body1.velocity.y > 0) {
-        body1.setVelocityY(0);
-      }
-      // Make bottom corpse temporarily immovable for stability
-      body2.setImmovable(true);
-      // Mark for later reset
-      corpseSprite2.setData('wasImmovable', true);
-    } else if (corpse2OnTop) {
-      // Corpse 2 is on top of Corpse 1
-      body1.setVelocity(0, 0);
-      if (body2.velocity.y > 0) {
-        body2.setVelocityY(0);
-      }
-      // Make bottom corpse temporarily immovable for stability
-      body1.setImmovable(true);
-      corpseSprite1.setData('wasImmovable', true);
-    } else {
-      // Side-by-side collision or embedded - stop both horizontal velocities
-      body1.setVelocityX(0);
-      body2.setVelocityX(0);
-    }
-  }
-
-  /**
    * Handle collision between player and corpse
    * Called after collision resolution - freezes corpse when stood on
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
@@ -741,6 +691,7 @@ export class TestArenaScene extends BaseScene {
     const pDebug = this.player.getDebugInfo();
     const timeDebug = this.timeManager.getDebugInfo();
     const hudStats = this.hud.getStats();
+    const corpseStats = this.corpseManager.getStats();
 
     const lines = [
       'PROJECT BLENDER - Test Arena',
@@ -752,7 +703,7 @@ export class TestArenaScene extends BaseScene {
       `Combo: ${hudStats.combo}`,
       `Kills: ${hudStats.kills}`,
       `Enemies: ${this.enemies.length}`,
-      `Corpses: ${this.corpseManager.getCount()}`,
+      `Corpses: ${corpseStats.total} (F:${corpseStats.falling} S:${corpseStats.snapping} D:${corpseStats.settled})`,
     ];
 
     // Add boss info if present
@@ -767,7 +718,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | P - Corpse | M - Mute');
+    lines.push('R - Respawn | B - Boss | P - Corpse | G - Grid | M - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }

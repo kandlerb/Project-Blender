@@ -1,14 +1,25 @@
 import { PHYSICS } from '../utils/physics.js';
 
 /**
- * Corpse settling constants (cellular automata style)
+ * Corpse state machine states
  */
-export const CORPSE_SETTLE = Object.freeze({
-  CHECK_INTERVAL: 200,      // ms between settling checks
-  MAX_STUCK_COUNT: 3,       // stuck checks before becoming settled
-  SLIDE_IMPULSE: 80,        // horizontal impulse when sliding off
-  GROUND_CHECK_OFFSET: 4,   // pixels below body to check for ground/corpse
-  SIDE_CHECK_DISTANCE: 12,  // pixels to the side to check for clearance
+export const CORPSE_STATE = Object.freeze({
+  FALLING: 'falling',    // Normal physics, checking for snap opportunity
+  SNAPPING: 'snapping',  // Lerping to grid position, physics disabled
+  SETTLED: 'settled',    // Static sprite, no updates needed
+});
+
+/**
+ * Corpse configuration for grid snapping
+ */
+export const CORPSE_CONFIG = Object.freeze({
+  SNAP_DURATION: 200,         // ms to lerp into position
+  SNAP_THRESHOLD_X: 15,       // How close horizontally to start snap
+  SNAP_THRESHOLD_Y: 40,       // How close vertically (more forgiving)
+  SETTLED_ALPHA: 0.7,
+  SETTLED_TINT: 0x333333,
+  FALLING_DEPTH: 10,          // Depth for falling corpses (render in front)
+  SETTLED_DEPTH: 5,           // Depth for settled corpses (render behind)
 });
 
 /**
@@ -19,19 +30,18 @@ export const CORPSE_DEFAULTS = Object.freeze({
   HEIGHT: 24,
   TINT: 0x444444,
   ALPHA: 0.8,
-  SETTLED_ALPHA: 0.6,
   DECAY: false,
   DECAY_TIME: 30000,
   DECAY_DURATION: 1000,
   // Physics settings
   MASS: 1,
-  DRAG_X: 350,          // High horizontal drag so they don't slide forever
-  BOUNCE: 0,            // Corpses don't bounce
+  DRAG_X: 350,
+  BOUNCE: 0,
 });
 
 /**
  * Corpse entity - represents a dead enemy's body persisting in the game world
- * Uses "sand physics" cellular automata settling to form natural piles
+ * Uses grid snapping to settle into staggered brick-pattern positions
  */
 export class Corpse {
   /**
@@ -40,6 +50,7 @@ export class Corpse {
    * @param {number} x - X position
    * @param {number} y - Y position
    * @param {object} config - Corpse configuration
+   * @param {CorpseGrid} config.grid - The grid system for settling positions
    * @param {string} [config.enemyType] - Which enemy type this was
    * @param {number} [config.width=20] - Corpse width
    * @param {number} [config.height=24] - Corpse height
@@ -49,6 +60,9 @@ export class Corpse {
    */
   constructor(scene, x, y, config = {}) {
     this.scene = scene;
+
+    // Grid reference for settling positions
+    this.grid = config.grid || null;
 
     // Store config with defaults
     this.config = {
@@ -63,10 +77,15 @@ export class Corpse {
     // Create physics sprite
     this.sprite = scene.physics.add.sprite(x, y, 'enemy_placeholder');
 
-    // Settling state (cellular automata)
+    // State machine
+    this.state = CORPSE_STATE.FALLING;
     this.isSettled = false;
-    this.stuckCount = 0;
-    this.lastSettleCheck = 0;
+
+    // Snapping state data
+    this.snapData = null;
+
+    // Grid cell this corpse occupies (set during snapping)
+    this.gridCell = null;
 
     // Configure physics body
     this.setupPhysics();
@@ -89,12 +108,7 @@ export class Corpse {
   }
 
   /**
-   * Configure physics body
-   * - Gravity: Uses PHYSICS.GRAVITY
-   * - Body size: ~20x24
-   * - Bounce: 0
-   * - Drag: High horizontal drag (350)
-   * - Mass: 1
+   * Configure physics body for falling state
    */
   setupPhysics() {
     const body = this.sprite.body;
@@ -145,290 +159,210 @@ export class Corpse {
 
     // Rotate slightly to look fallen
     this.sprite.setRotation(Math.PI / 2);
+
+    // Set initial depth (falling corpses render in front)
+    this.sprite.setDepth(CORPSE_CONFIG.FALLING_DEPTH);
   }
 
   /**
-   * Update method - handles settling logic
+   * Update method - handles state-based behavior
    * Called by CorpseManager each frame
    * @param {number} time - Current game time in ms
    * @param {number} delta - Time since last frame in ms
    */
   update(time, delta) {
     // Settled corpses skip all update logic
-    if (this.isSettled) return;
+    if (this.state === CORPSE_STATE.SETTLED) return;
 
-    // Check settling at interval
-    if (time - this.lastSettleCheck >= CORPSE_SETTLE.CHECK_INTERVAL) {
-      this.lastSettleCheck = time;
-      this.checkSettling();
+    switch (this.state) {
+      case CORPSE_STATE.FALLING:
+        this.updateFalling(time, delta);
+        break;
+
+      case CORPSE_STATE.SNAPPING:
+        this.updateSnapping(time, delta);
+        break;
     }
   }
 
   /**
-   * Cellular automata settling check
-   * 1. If not touching anything below -> do nothing (falling)
-   * 2. If touching GROUND below -> settled = true, become static
-   * 3. If touching CORPSE below:
-   *    a. Randomly pick direction (left or right)
-   *    b. Check if that direction is clear
-   *    c. If clear -> apply small horizontal impulse that direction
-   *    d. If blocked -> check opposite direction
-   *    e. If opposite clear -> apply impulse opposite direction
-   *    f. If both blocked -> increment stuck counter
-   *    g. After 3 stuck checks -> settled = true
+   * Update logic for FALLING state
+   * Normal physics, checking for snap opportunity each frame
+   * @param {number} time - Current game time
+   * @param {number} delta - Delta time in ms
    */
-  checkSettling() {
-    if (!this.sprite || !this.sprite.body) return;
-
-    const body = this.sprite.body;
-
-    // Check what's below us
-    const belowResult = this.checkBelow();
-
-    if (belowResult === 'none') {
-      // Not touching anything below - still falling, reset stuck count
-      this.stuckCount = 0;
+  updateFalling(time, delta) {
+    if (!this.grid) {
+      // No grid - fall back to simple ground check
+      this.checkSimpleSettling();
       return;
     }
 
-    if (belowResult === 'ground') {
-      // Touching ground - become settled
+    // Find a valid grid cell to snap to
+    const cell = this.grid.findSettlingCell(this.sprite.x, this.sprite.y);
+
+    if (cell && this.isCloseEnoughToSnap(cell)) {
+      this.startSnapping(cell);
+    }
+  }
+
+  /**
+   * Check if the corpse is close enough to a target cell to begin snapping
+   * @param {{ worldX: number, worldY: number }} cell - Target cell with world coordinates
+   * @returns {boolean}
+   */
+  isCloseEnoughToSnap(cell) {
+    const dx = Math.abs(this.sprite.x - cell.worldX);
+    const dy = Math.abs(this.sprite.y - cell.worldY);
+
+    // Must be within horizontal threshold
+    if (dx > CORPSE_CONFIG.SNAP_THRESHOLD_X) return false;
+
+    // Must be within vertical threshold AND moving downward or nearly stopped
+    // This prevents snapping while still moving upward
+    const body = this.sprite.body;
+    const isMovingDown = body.velocity.y >= -50;
+
+    // More forgiving vertical check - can be above or below target
+    if (dy > CORPSE_CONFIG.SNAP_THRESHOLD_Y) return false;
+
+    return isMovingDown;
+  }
+
+  /**
+   * Begin the snapping transition to a grid cell
+   * @param {{ col: number, row: number, worldX: number, worldY: number }} cell - Target cell
+   */
+  startSnapping(cell) {
+    // Claim the grid cell immediately to prevent other corpses from targeting it
+    this.grid.occupyCell(cell.col, cell.row, this);
+    this.gridCell = { col: cell.col, row: cell.row };
+
+    // Store snapping data
+    this.snapData = {
+      startX: this.sprite.x,
+      startY: this.sprite.y,
+      targetX: cell.worldX,
+      targetY: cell.worldY,
+      startTime: this.scene.time.now,
+      duration: CORPSE_CONFIG.SNAP_DURATION,
+    };
+
+    // Disable physics during snap
+    const body = this.sprite.body;
+    body.setVelocity(0, 0);
+    body.setAllowGravity(false);
+    body.setImmovable(true);
+
+    // Transition to snapping state
+    this.state = CORPSE_STATE.SNAPPING;
+
+    // Emit event
+    this.scene.events.emit('corpse:snapping', {
+      corpse: this,
+      cell,
+    });
+  }
+
+  /**
+   * Update logic for SNAPPING state
+   * Lerps sprite position toward target with easing
+   * @param {number} time - Current game time
+   * @param {number} delta - Delta time in ms
+   */
+  updateSnapping(time, delta) {
+    if (!this.snapData) {
+      // Something went wrong - settle immediately
       this.settle();
       return;
     }
 
-    if (belowResult === 'corpse') {
-      // Touching another corpse - try to slide off
-      this.trySlideOff();
-    }
-  }
+    const elapsed = this.scene.time.now - this.snapData.startTime;
+    const progress = Math.min(elapsed / this.snapData.duration, 1);
 
-  /**
-   * Check what's directly below the corpse
-   * @returns {'none' | 'ground' | 'corpse'} What's below
-   */
-  checkBelow() {
-    if (!this.sprite || !this.sprite.body) return 'none';
+    // Cubic ease out for natural deceleration
+    const eased = 1 - Math.pow(1 - progress, 3);
 
-    const body = this.sprite.body;
-    const checkY = body.bottom + CORPSE_SETTLE.GROUND_CHECK_OFFSET;
-    const centerX = body.center.x;
+    // Lerp position
+    this.sprite.x = Phaser.Math.Linear(
+      this.snapData.startX,
+      this.snapData.targetX,
+      eased
+    );
+    this.sprite.y = Phaser.Math.Linear(
+      this.snapData.startY,
+      this.snapData.targetY,
+      eased
+    );
 
-    // First check if on floor (world bounds or ground collision)
-    if (body.onFloor() || body.blocked.down) {
-      // Check if it's a corpse or ground by looking at what we're touching
-      // If velocity is near zero and blocked.down, likely on ground or stable surface
-      if (Math.abs(body.velocity.y) < 10) {
-        // Check for corpse collision specifically
-        const corpseBelow = this.findCorpseBelow();
-        if (corpseBelow) {
-          return 'corpse';
-        }
-        return 'ground';
-      }
-    }
+    // Alpha pulse during snapping (0.7 → 0.9) to mask the movement
+    const pulseProgress = Math.sin(progress * Math.PI);
+    const alpha = 0.7 + pulseProgress * 0.2;
+    this.sprite.setAlpha(alpha);
 
-    // Check terrain groups for ground contact
-    const manager = this.scene.corpseManager;
-    if (manager && manager.terrainGroups) {
-      for (const terrainGroup of manager.terrainGroups) {
-        if (!terrainGroup) continue;
-
-        const children = terrainGroup.getChildren();
-        for (const terrain of children) {
-          if (!terrain.body) continue;
-
-          const terrainBody = terrain.body;
-
-          // Check if we're horizontally aligned
-          const horizontalOverlap =
-            body.right > terrainBody.left && body.left < terrainBody.right;
-
-          if (!horizontalOverlap) continue;
-
-          // Check if terrain is directly below us
-          if (body.bottom >= terrainBody.top - CORPSE_SETTLE.GROUND_CHECK_OFFSET &&
-              body.bottom <= terrainBody.top + CORPSE_SETTLE.GROUND_CHECK_OFFSET) {
-            return 'ground';
-          }
-        }
-      }
-    }
-
-    // Check for corpse below
-    const corpseBelow = this.findCorpseBelow();
-    if (corpseBelow) {
-      return 'corpse';
-    }
-
-    return 'none';
-  }
-
-  /**
-   * Find a corpse directly below this one
-   * @returns {Corpse|null} The corpse below, or null
-   */
-  findCorpseBelow() {
-    const manager = this.scene.corpseManager;
-    if (!manager) return null;
-
-    const body = this.sprite.body;
-    const checkY = body.bottom + CORPSE_SETTLE.GROUND_CHECK_OFFSET;
-
-    for (const otherCorpse of manager.corpses) {
-      if (otherCorpse === this) continue;
-      if (!otherCorpse.sprite || !otherCorpse.sprite.body) continue;
-
-      const otherBody = otherCorpse.sprite.body;
-
-      // Check horizontal overlap
-      const horizontalOverlap =
-        body.right > otherBody.left && body.left < otherBody.right;
-
-      if (!horizontalOverlap) continue;
-
-      // Check if other corpse is directly below us
-      const verticalDistance = otherBody.top - body.bottom;
-      if (verticalDistance >= -CORPSE_SETTLE.GROUND_CHECK_OFFSET &&
-          verticalDistance <= CORPSE_SETTLE.GROUND_CHECK_OFFSET) {
-        return otherCorpse;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Try to slide off the corpse below
-   */
-  trySlideOff() {
-    const body = this.sprite.body;
-
-    // Randomly pick initial direction
-    let direction = Math.random() < 0.5 ? -1 : 1;
-
-    // Check if first direction is clear
-    if (this.isDirectionClear(direction)) {
-      this.applySlideImpulse(direction);
-      this.stuckCount = 0;
-      return;
-    }
-
-    // Try opposite direction
-    direction = -direction;
-    if (this.isDirectionClear(direction)) {
-      this.applySlideImpulse(direction);
-      this.stuckCount = 0;
-      return;
-    }
-
-    // Both directions blocked - increment stuck counter
-    this.stuckCount++;
-
-    if (this.stuckCount >= CORPSE_SETTLE.MAX_STUCK_COUNT) {
-      // Stuck for too long - settle in place
+    // Check if snap is complete
+    if (progress >= 1) {
       this.settle();
     }
   }
 
   /**
-   * Check if a direction is clear for sliding
-   * @param {number} direction - -1 for left, 1 for right
-   * @returns {boolean} Whether the direction is clear
+   * Fallback settling for when no grid is available
    */
-  isDirectionClear(direction) {
-    if (!this.sprite || !this.sprite.body) return false;
-
+  checkSimpleSettling() {
     const body = this.sprite.body;
-    const checkX = direction > 0
-      ? body.right + CORPSE_SETTLE.SIDE_CHECK_DISTANCE
-      : body.left - CORPSE_SETTLE.SIDE_CHECK_DISTANCE;
-    const checkY = body.center.y;
 
-    // Check against terrain
-    const manager = this.scene.corpseManager;
-    if (manager && manager.terrainGroups) {
-      for (const terrainGroup of manager.terrainGroups) {
-        if (!terrainGroup) continue;
-
-        const children = terrainGroup.getChildren();
-        for (const terrain of children) {
-          if (!terrain.body) continue;
-
-          const terrainBody = terrain.body;
-
-          // Check if the check point would be inside terrain
-          if (checkX >= terrainBody.left && checkX <= terrainBody.right &&
-              checkY >= terrainBody.top && checkY <= terrainBody.bottom) {
-            return false;
-          }
-        }
-      }
+    // Check if on floor and nearly stopped
+    if ((body.onFloor() || body.blocked.down) &&
+        Math.abs(body.velocity.y) < 10 &&
+        Math.abs(body.velocity.x) < 10) {
+      this.settle();
     }
-
-    // Check against other corpses
-    if (manager) {
-      for (const otherCorpse of manager.corpses) {
-        if (otherCorpse === this) continue;
-        if (!otherCorpse.sprite || !otherCorpse.sprite.body) continue;
-
-        const otherBody = otherCorpse.sprite.body;
-
-        // Check if the check point would be inside this corpse
-        if (checkX >= otherBody.left && checkX <= otherBody.right &&
-            checkY >= otherBody.top && checkY <= otherBody.bottom) {
-          return false;
-        }
-      }
-    }
-
-    // Check world bounds
-    const worldBounds = this.scene.physics.world.bounds;
-    if (checkX <= worldBounds.left || checkX >= worldBounds.right) {
-      return false;
-    }
-
-    return true;
   }
 
   /**
-   * Apply a horizontal sliding impulse
-   * @param {number} direction - -1 for left, 1 for right
-   */
-  applySlideImpulse(direction) {
-    if (!this.sprite || !this.sprite.body) return;
-
-    const body = this.sprite.body;
-    body.setVelocityX(direction * CORPSE_SETTLE.SLIDE_IMPULSE);
-  }
-
-  /**
-   * Settle the corpse - make it static and stop processing
+   * Complete the settling process
+   * Destroys physics body and marks corpse as static
    */
   settle() {
     if (this.isSettled) return;
 
     this.isSettled = true;
+    this.state = CORPSE_STATE.SETTLED;
 
-    if (!this.sprite || !this.sprite.body) return;
+    // Snap to exact target position if we have snap data
+    if (this.snapData) {
+      this.sprite.x = this.snapData.targetX;
+      this.sprite.y = this.snapData.targetY;
+    }
 
-    const body = this.sprite.body;
+    // Apply settled visuals
+    this.sprite.setAlpha(CORPSE_CONFIG.SETTLED_ALPHA);
+    this.sprite.setTint(CORPSE_CONFIG.SETTLED_TINT);
 
-    // Stop all movement
-    body.setVelocity(0, 0);
+    // Move to background depth
+    this.sprite.setDepth(CORPSE_CONFIG.SETTLED_DEPTH);
 
-    // Make static - disable gravity and make immovable
-    body.setAllowGravity(false);
-    body.setImmovable(true);
+    // Destroy physics body entirely - sprite becomes static visual
+    if (this.sprite.body) {
+      // First stop all movement
+      this.sprite.body.setVelocity(0, 0);
+      this.sprite.body.setAllowGravity(false);
+      this.sprite.body.setImmovable(true);
 
-    // Fade slightly more when settled
-    this.sprite.setAlpha(CORPSE_DEFAULTS.SETTLED_ALPHA);
+      // Disable the body (keeps sprite but removes from physics simulation)
+      this.sprite.body.enable = false;
+    }
+
+    // Clear snap data
+    this.snapData = null;
 
     // Emit settled event
     this.scene.events.emit('corpse:settled', {
       corpse: this,
       x: this.sprite.x,
       y: this.sprite.y,
+      gridCell: this.gridCell,
     });
   }
 
@@ -470,11 +404,19 @@ export class Corpse {
       this.decayTimer = null;
     }
 
+    // Clear grid cell if occupied
+    if (this.grid && this.gridCell) {
+      this.grid.clearCell(this.gridCell.col, this.gridCell.row);
+      this.gridCell = null;
+    }
+
     // Destroy the sprite
     if (this.sprite && this.sprite.active) {
       this.sprite.destroy();
     }
 
     this.sprite = null;
+    this.grid = null;
+    this.snapData = null;
   }
 }
