@@ -225,7 +225,7 @@ export class TestArenaScene extends BaseScene {
 
   setupInputHandlers() {
     // Physics debug toggle
-    this.input.keyboard.on('keydown-BACKQUOTE', () => {
+    this.input.keyboard.on('keydown-BACKTICK', () => {
       this.physics.world.drawDebug = !this.physics.world.drawDebug;
 
       if (this.physics.world.debugGraphic) {
