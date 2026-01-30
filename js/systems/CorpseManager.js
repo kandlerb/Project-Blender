@@ -61,8 +61,19 @@ export class CorpseManager {
     // Terrain references for individual corpse colliders
     this.terrainGroups = [];
 
+    // Grid for settling positions (set via setGrid)
+    this.grid = null;
+
     // Debug visualization state
     this.debugEnabled = false;
+  }
+
+  /**
+   * Set the grid for corpse settling positions
+   * @param {CorpseGrid} grid - The grid system for settling
+   */
+  setGrid(grid) {
+    this.grid = grid;
   }
 
   /**
@@ -109,6 +120,7 @@ export class CorpseManager {
       enemyType,
       decay: this.config.decayEnabled,
       decayTime: this.config.decayTime,
+      grid: this.grid, // Pass grid for settling positions
       ...additionalConfig,
     };
 
@@ -358,6 +370,12 @@ export class CorpseManager {
     for (const corpse of this.corpses) {
       if (!corpse.sprite?.body || !corpse.sprite.active) continue;
 
+      // Skip settled or snapping corpses (they use grid system, not physics)
+      if (corpse.isSettled || corpse.state !== 'falling') continue;
+
+      // Skip disabled bodies
+      if (!corpse.sprite.body.enable) continue;
+
       // Check if this corpse was marked as immovable due to stacking
       if (!corpse.sprite.getData('wasImmovable')) continue;
 
@@ -408,6 +426,12 @@ export class CorpseManager {
 
     for (const corpse of sortedCorpses) {
       if (!corpse.sprite?.body || !corpse.sprite.active) continue;
+
+      // Skip settled or snapping corpses (they use grid system)
+      if (corpse.isSettled || corpse.state !== 'falling') continue;
+
+      // Skip disabled bodies
+      if (!corpse.sprite.body.enable) continue;
 
       const body = corpse.sprite.body;
 
@@ -513,9 +537,15 @@ export class CorpseManager {
       if (!corpse.sprite?.body || !corpse.sprite.active) continue;
       if (processed.has(corpse)) continue;
 
+      // Skip settled or snapping corpses (they use grid system)
+      if (corpse.isSettled || corpse.state !== 'falling') continue;
+
+      // Skip disabled bodies
+      if (!corpse.sprite.body.enable) continue;
+
       const body = corpse.sprite.body;
 
-      // Skip corpses that are settled
+      // Skip corpses that are settled (not moving significantly)
       const isSettled =
         Math.abs(body.velocity.x) < 25 && Math.abs(body.velocity.y) < 25;
       if (isSettled) continue;
