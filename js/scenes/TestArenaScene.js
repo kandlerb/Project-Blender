@@ -100,6 +100,10 @@ export class TestArenaScene extends BaseScene {
     // Spawn initial enemies
     this.spawnEnemies();
 
+    // Set up enemy-enemy collision (solid collision between all enemies)
+    // Mass-based physics: heavier enemies push lighter ones
+    this.physics.add.collider(this.enemyGroup, this.enemyGroup);
+
     // Set up enemy-corpse collision (after enemies are spawned)
     // Process callback prevents physics from moving corpses - only step-up/destroy logic applies
     this.physics.add.collider(

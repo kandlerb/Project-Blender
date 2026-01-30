@@ -47,6 +47,9 @@ export const ENEMY_PRESETS = Object.freeze({
     behavior: 'swarmer',
     corpseInteraction: 'climb',
     stepUpHeight: 32,
+    mass: 1,
+    canClimbEnemies: true,
+    climbCooldown: 300,
   },
   /**
    * BRUTE - Slow tanky enemy
@@ -67,6 +70,8 @@ export const ENEMY_PRESETS = Object.freeze({
     behavior: 'brute',
     corpseInteraction: 'destroy',
     corpseDestroyForce: 300,
+    mass: 5,
+    canClimbEnemies: false,
   },
   /**
    * LUNGER - Telegraphed charge attack
@@ -90,6 +95,8 @@ export const ENEMY_PRESETS = Object.freeze({
     chargeDuration: 400,
     corpseInteraction: 'climb',
     stepUpHeight: 32,
+    mass: 3,
+    canClimbEnemies: false,
   },
   /**
    * SHIELD_BEARER - Blocks frontal attacks
@@ -113,6 +120,8 @@ export const ENEMY_PRESETS = Object.freeze({
     guardBreakThreshold: 30,
     corpseInteraction: 'climb',
     stepUpHeight: 32,
+    mass: 3,
+    canClimbEnemies: false,
   },
   /**
    * LOBBER - Ranged projectile attacker
@@ -136,6 +145,8 @@ export const ENEMY_PRESETS = Object.freeze({
     projectileArc: 0.5,
     corpseInteraction: 'climb',
     stepUpHeight: 32,
+    mass: 2,
+    canClimbEnemies: false,
   },
   /**
    * DETONATOR - Suicide bomber
@@ -159,6 +170,8 @@ export const ENEMY_PRESETS = Object.freeze({
     chainReaction: true,
     corpseInteraction: 'climb',
     stepUpHeight: 32,
+    mass: 1,
+    canClimbEnemies: false,
   },
 });
 
@@ -196,6 +209,14 @@ export class Enemy {
     this.corpseInteraction = this.config.corpseInteraction || 'block';
     this.stepUpHeight = this.config.stepUpHeight || 0;
     this.corpseDestroyForce = this.config.corpseDestroyForce || 0;
+
+    // Mass for physics (affects push behavior in enemy-enemy collisions)
+    this.mass = this.config.mass || 2;
+
+    // Enemy climbing (only Swarmers can climb over other enemies)
+    this.canClimbEnemies = this.config.canClimbEnemies || false;
+    this.climbCooldown = this.config.climbCooldown || 300;
+    this.lastClimbTime = 0;
 
     // Patrol
     this.patrolDirection = 1;
@@ -259,6 +280,9 @@ export class Enemy {
 
     body.setSize(20, 24);
     body.setOffset(4, 4);
+
+    // Set mass for enemy-enemy collision physics (heavier enemies push lighter ones)
+    body.mass = this.mass;
   }
 
   setupCombatBoxes() {
@@ -372,6 +396,94 @@ export class Enemy {
    */
   stop() {
     this.sprite.setVelocityX(0);
+  }
+
+  /**
+   * Check if blocked by another enemy while trying to move
+   * Only returns true for enemies that can climb (Swarmers)
+   * @returns {boolean}
+   */
+  isBlockedByEnemy() {
+    // Only climbing-capable enemies check for blocks
+    if (!this.canClimbEnemies) return false;
+
+    const body = this.sprite.body;
+
+    // Must be on ground (blocked.down or touching.down)
+    if (!body.blocked.down && !body.touching.down) return false;
+
+    // Must have horizontal velocity (actively trying to move)
+    const velocityX = body.velocity.x;
+    if (Math.abs(velocityX) < 10) return false;
+
+    // Get movement direction
+    const moveDirection = velocityX > 0 ? 1 : -1;
+
+    // Check for adjacent enemies in movement direction
+    const checkDistance = 8; // pixels ahead to check
+    const myBounds = this.sprite.getBounds();
+
+    // Get scene's enemies array
+    const enemies = this.scene.enemies || [];
+
+    for (const other of enemies) {
+      if (other === this || !other.isAlive) continue;
+
+      const otherBounds = other.sprite.getBounds();
+
+      // Check vertical overlap (enemies must be roughly on same level)
+      const verticalOverlap = myBounds.bottom > otherBounds.top + 4 &&
+                              myBounds.top < otherBounds.bottom - 4;
+      if (!verticalOverlap) continue;
+
+      // Check horizontal adjacency in movement direction
+      if (moveDirection > 0) {
+        // Moving right - check if other enemy is to our right within checkDistance
+        const gap = otherBounds.left - myBounds.right;
+        if (gap >= -4 && gap <= checkDistance) {
+          return true;
+        }
+      } else {
+        // Moving left - check if other enemy is to our left within checkDistance
+        const gap = myBounds.left - otherBounds.right;
+        if (gap >= -4 && gap <= checkDistance) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Attempt to climb over a blocking enemy
+   * Applies small upward velocity if off cooldown
+   * @param {number} time - Current game time
+   */
+  attemptClimb(time) {
+    // Check cooldown
+    if (time - this.lastClimbTime < this.climbCooldown) return;
+
+    // Set cooldown
+    this.lastClimbTime = time;
+
+    // Apply upward velocity (60% of player jump force, roughly 200-250)
+    const climbVelocity = -220;
+    this.sprite.body.setVelocityY(climbVelocity);
+
+    // Emit climb event
+    this.scene.events.emit('enemy:climb', { enemy: this });
+
+    // Debug flash yellow when combat debug is enabled
+    if (this.scene.showCombatDebug) {
+      const originalTint = this.stats.color || 0xffffff;
+      this.sprite.setTint(0xffff00);
+      this.scene.time.delayedCall(100, () => {
+        if (this.sprite && this.sprite.active && this.isAlive) {
+          this.sprite.setTint(originalTint);
+        }
+      });
+    }
   }
 
   /**
@@ -1275,6 +1387,11 @@ class EnemyChaseState extends State {
       // Move toward target
       const direction = this.enemy.getDirectionToTarget();
       this.enemy.move(direction, this.enemy.chaseSpeed);
+
+      // Swarmers attempt to climb over blocking enemies
+      if (this.enemy.canClimbEnemies && this.enemy.isBlockedByEnemy()) {
+        this.enemy.attemptClimb(time);
+      }
     } else {
       // Lost sight of target
       this.loseTargetTime += delta;
