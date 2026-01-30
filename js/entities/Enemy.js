@@ -278,8 +278,20 @@ export class Enemy {
     body.setMaxVelocityY(PHYSICS.TERMINAL_VELOCITY);
     body.setDrag(300, 0);
 
-    body.setSize(20, 24);
-    body.setOffset(4, 4);
+    // Use config-based sizing - body slightly smaller than sprite for forgiving collisions
+    const bodyWidth = Math.max(20, this.stats.width - 4);
+    const bodyHeight = Math.max(24, this.stats.height - 4);
+    const offsetX = Math.floor((this.stats.width - bodyWidth) / 2);
+    const offsetY = Math.floor((this.stats.height - bodyHeight) / 2);
+
+    body.setSize(bodyWidth, bodyHeight);
+    body.setOffset(offsetX, offsetY);
+
+    // Scale sprite to match config dimensions
+    // Enemy placeholder is 28x28, scale to match target size
+    const scaleX = this.stats.width / 28;
+    const scaleY = this.stats.height / 28;
+    this.sprite.setScale(scaleX, scaleY);
 
     // Set mass for enemy-enemy collision physics (heavier enemies push lighter ones)
     body.mass = this.mass;

@@ -158,10 +158,16 @@ export class PreloadScene extends Phaser.Scene {
     groundGfx.generateTexture('ground_placeholder', 32, 32);
     groundGfx.destroy();
 
-    // Enemy placeholder (28x28 red square)
+    // Enemy placeholder (28x28 with 2px border for visual distinction)
+    // Uses white fill with gray border - tinting will color the fill
+    // and make the border appear ~30% darker
     const enemyGfx = this.make.graphics({ x: 0, y: 0, add: false });
-    enemyGfx.fillStyle(0xff4444, 1);
+    // Border (darker gray that becomes visible after tinting)
+    enemyGfx.fillStyle(0x888888, 1);
     enemyGfx.fillRect(0, 0, 28, 28);
+    // Inner fill (white, will be tinted to enemy color)
+    enemyGfx.fillStyle(0xffffff, 1);
+    enemyGfx.fillRect(2, 2, 24, 24);
     enemyGfx.generateTexture('enemy_placeholder', 28, 28);
     enemyGfx.destroy();
 
