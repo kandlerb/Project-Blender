@@ -278,8 +278,55 @@ export class CorpseManager {
       }
     }
 
-    // Fix any corpses that have clipped into terrain
+    // Reset immovable state for corpses that no longer have anything on top
+    this.resetImmovableCorpses();
+
+    // Fix any corpses that have clipped into terrain or other corpses
     this.fixTerrainClipping();
+    this.fixCorpseCorpseOverlap();
+  }
+
+  /**
+   * Reset immovable state for corpses that were temporarily made immovable
+   * but no longer have anything stacked on top of them
+   */
+  resetImmovableCorpses() {
+    for (const corpse of this.corpses) {
+      if (!corpse.sprite?.body || !corpse.sprite.active) continue;
+
+      // Check if this corpse was marked as immovable due to stacking
+      if (!corpse.sprite.getData('wasImmovable')) continue;
+
+      const body = corpse.sprite.body;
+
+      // Check if any other corpse is still on top of this one
+      let hasCorpseOnTop = false;
+      for (const otherCorpse of this.corpses) {
+        if (otherCorpse === corpse) continue;
+        if (!otherCorpse.sprite?.body || !otherCorpse.sprite.active) continue;
+
+        const otherBody = otherCorpse.sprite.body;
+
+        // Check horizontal overlap
+        const horizontalOverlap =
+          body.right > otherBody.left && body.left < otherBody.right;
+
+        // Check if other corpse is on top (within tolerance)
+        const isOnTop =
+          otherBody.bottom >= body.top - 4 && otherBody.bottom <= body.top + 8;
+
+        if (horizontalOverlap && isOnTop) {
+          hasCorpseOnTop = true;
+          break;
+        }
+      }
+
+      // If nothing is on top, reset to movable
+      if (!hasCorpseOnTop) {
+        body.setImmovable(false);
+        corpse.sprite.setData('wasImmovable', false);
+      }
+    }
   }
 
   /**
@@ -301,8 +348,9 @@ export class CorpseManager {
       const body = corpse.sprite.body;
 
       // Skip corpses that are settled (not moving significantly)
+      // Use higher threshold (25) to account for collision jitter from stacking
       const isSettled =
-        Math.abs(body.velocity.x) < 5 && Math.abs(body.velocity.y) < 5;
+        Math.abs(body.velocity.x) < 25 && Math.abs(body.velocity.y) < 25;
       if (isSettled) continue;
 
       let maxOverlap = 0;
@@ -377,6 +425,76 @@ export class CorpseManager {
 
       if (wasOnTop) {
         this.pushCorpseUp(otherCorpse, amount);
+      }
+    }
+  }
+
+  /**
+   * Check for and fix corpses that have clipped into other corpses
+   * Separates overlapping corpses by pushing the upper one up
+   */
+  fixCorpseCorpseOverlap() {
+    if (this.corpses.length < 2) return;
+
+    // Sort corpses by Y position (bottom to top) so we fix lower ones first
+    const sortedCorpses = [...this.corpses].sort((a, b) => {
+      if (!a.sprite?.body || !b.sprite?.body) return 0;
+      return b.sprite.body.bottom - a.sprite.body.bottom;
+    });
+
+    // Track which corpses we've already processed to avoid double-corrections
+    const processed = new Set();
+
+    for (const corpse of sortedCorpses) {
+      if (!corpse.sprite?.body || !corpse.sprite.active) continue;
+      if (processed.has(corpse)) continue;
+
+      const body = corpse.sprite.body;
+
+      // Skip corpses that are settled
+      const isSettled =
+        Math.abs(body.velocity.x) < 25 && Math.abs(body.velocity.y) < 25;
+      if (isSettled) continue;
+
+      // Check against all other corpses
+      for (const otherCorpse of this.corpses) {
+        if (otherCorpse === corpse) continue;
+        if (!otherCorpse.sprite?.body || !otherCorpse.sprite.active) continue;
+
+        const otherBody = otherCorpse.sprite.body;
+
+        // Check if there's horizontal overlap
+        const horizontalOverlap =
+          body.right > otherBody.left && body.left < otherBody.right;
+
+        if (!horizontalOverlap) continue;
+
+        // Check if corpse is embedded in the other corpse (from above)
+        // We only fix the case where this corpse's bottom is inside the other corpse
+        if (body.bottom > otherBody.top && body.top < otherBody.bottom) {
+          // This corpse is overlapping with otherCorpse
+
+          // Determine which one is on top (the one with higher center Y is lower on screen)
+          const thisCenter = body.y;
+          const otherCenter = otherBody.y;
+
+          if (thisCenter < otherCenter) {
+            // This corpse is above the other - it should be pushed up
+            const overlap = body.bottom - otherBody.top;
+            if (overlap > 0 && overlap < body.height) {
+              // Push this corpse up to sit on top of the other
+              corpse.sprite.y -= overlap;
+              body.reset(corpse.sprite.x, corpse.sprite.y);
+
+              // Stop downward velocity
+              if (body.velocity.y > 0) {
+                body.setVelocityY(0);
+              }
+
+              processed.add(corpse);
+            }
+          }
+        }
       }
     }
   }
