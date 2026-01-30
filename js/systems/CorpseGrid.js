@@ -290,7 +290,7 @@ export class CorpseGrid {
 
   /**
    * Find the best valid cell for a falling corpse near position (x, y)
-   * Searches downward and sideways to find a cell with support
+   * Searches downward first, then upward if spawned inside a pile, then nearest
    * @param {number} worldX - World X position
    * @param {number} worldY - World Y position
    * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
@@ -299,16 +299,37 @@ export class CorpseGrid {
     // Convert to grid coordinates
     const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
 
-    // Search parameters
-    const maxSearchRows = 100; // How far down to search
-    const maxSearchCols = 10; // How far sideways to search
+    // FIRST: Try to find a cell at or below current position
+    const cellBelow = this.findCellDownward(startCol, startRow);
+    if (cellBelow) return cellBelow;
 
+    // SECOND: If spawned inside a pile, search UPWARD for the top
+    const cellAbove = this.findCellUpward(startCol, startRow);
+    if (cellAbove) return cellAbove;
+
+    // THIRD: Search in all directions for nearest valid cell
+    const cellNearby = this.findNearestValidCell(worldX, worldY);
+    if (cellNearby) return cellNearby;
+
+    // No valid position found
+    return null;
+  }
+
+  /**
+   * Search downward and sideways from a position to find a valid cell
+   * @param {number} startCol - Starting column
+   * @param {number} startRow - Starting row
+   * @param {number} maxRows - Maximum rows to search down (default 100)
+   * @param {number} maxCols - Maximum columns to search sideways (default 10)
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findCellDownward(startCol, startRow, maxRows = 100, maxCols = 10) {
     // Start from current position and search downward
-    for (let rowOffset = 0; rowOffset < maxSearchRows; rowOffset++) {
+    for (let rowOffset = 0; rowOffset < maxRows; rowOffset++) {
       const row = startRow + rowOffset;
 
       // Search horizontally, starting from center and expanding outward
-      for (let colOffset = 0; colOffset <= maxSearchCols; colOffset++) {
+      for (let colOffset = 0; colOffset <= maxCols; colOffset++) {
         // Try both left and right at each offset
         const colsToTry = colOffset === 0 ? [startCol] : [startCol - colOffset, startCol + colOffset];
 
@@ -332,7 +353,6 @@ export class CorpseGrid {
       }
     }
 
-    // No valid position found (shouldn't happen normally)
     return null;
   }
 
@@ -392,6 +412,92 @@ export class CorpseGrid {
 
     // Fall back to basic settling
     return basicCell;
+  }
+
+  /**
+   * Search upward from a position to find a valid cell at the top of a pile
+   * Used when a corpse spawns inside an existing pile
+   * @param {number} col - Starting column
+   * @param {number} row - Starting row
+   * @param {number} maxRows - Maximum rows to search upward (default 50)
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findCellUpward(col, row, maxRows = 50) {
+    const minRow = Math.max(0, row - maxRows);
+
+    // Scan upward from current position
+    for (let checkRow = row - 1; checkRow >= minRow; checkRow--) {
+      // Check this cell directly above
+      if (!this.isOccupied(col, checkRow) && this.hasSupport(col, checkRow)) {
+        const worldPos = this.gridToWorld(col, checkRow);
+        return {
+          col,
+          row: checkRow,
+          worldX: worldPos.x,
+          worldY: worldPos.y,
+        };
+      }
+
+      // Check adjacent columns at this height
+      for (const offset of [-1, 1]) {
+        const checkCol = col + offset;
+        if (!this.isOccupied(checkCol, checkRow) && this.hasSupport(checkCol, checkRow)) {
+          const worldPos = this.gridToWorld(checkCol, checkRow);
+          return {
+            col: checkCol,
+            row: checkRow,
+            worldX: worldPos.x,
+            worldY: worldPos.y,
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Find the nearest valid cell in any direction
+   * Last resort search that expands outward in a spiral pattern
+   * @param {number} worldX - World X position
+   * @param {number} worldY - World Y position
+   * @param {number} maxDistance - Maximum search distance in cells (default 20)
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findNearestValidCell(worldX, worldY, maxDistance = 20) {
+    const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
+
+    // Spiral outward from center, checking cells in expanding rings
+    for (let distance = 1; distance <= maxDistance; distance++) {
+      // Check all cells at this distance (ring around center)
+      for (let rowOffset = -distance; rowOffset <= distance; rowOffset++) {
+        for (let colOffset = -distance; colOffset <= distance; colOffset++) {
+          // Only check cells on the edge of this ring
+          if (Math.abs(rowOffset) !== distance && Math.abs(colOffset) !== distance) {
+            continue;
+          }
+
+          const checkCol = startCol + colOffset;
+          const checkRow = startRow + rowOffset;
+
+          // Skip if occupied
+          if (this.isOccupied(checkCol, checkRow)) continue;
+
+          // Check if has support
+          if (this.hasSupport(checkCol, checkRow)) {
+            const worldPos = this.gridToWorld(checkCol, checkRow);
+            return {
+              col: checkCol,
+              row: checkRow,
+              worldX: worldPos.x,
+              worldY: worldPos.y,
+            };
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   /**

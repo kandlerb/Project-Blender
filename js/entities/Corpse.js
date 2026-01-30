@@ -20,6 +20,7 @@ export const CORPSE_CONFIG = Object.freeze({
   SETTLED_TINT: 0x333333,
   FALLING_DEPTH: 10,          // Depth for falling corpses (render in front)
   SETTLED_DEPTH: 5,           // Depth for settled corpses (render behind)
+  FALL_TIMEOUT: 2000,         // ms before forcing cell search as safety valve
 });
 
 /**
@@ -83,6 +84,9 @@ export class Corpse {
 
     // Snapping state data
     this.snapData = null;
+
+    // Fall time tracking for safety valve
+    this.fallTime = 0;
 
     // Grid cell this corpse occupies (set during snapping)
     this.gridCell = null;
@@ -192,6 +196,9 @@ export class Corpse {
    * @param {number} delta - Delta time in ms
    */
   updateFalling(time, delta) {
+    // Track how long we've been falling
+    this.fallTime += delta;
+
     if (!this.grid) {
       // No grid - fall back to simple ground check
       this.checkSimpleSettling();
@@ -203,6 +210,21 @@ export class Corpse {
 
     if (cell && this.isCloseEnoughToSnap(cell)) {
       this.startSnapping(cell);
+      return;
+    }
+
+    // Safety valve: if falling for too long, force find ANY valid cell
+    if (this.fallTime > CORPSE_CONFIG.FALL_TIMEOUT) {
+      const anyCell = this.grid.findNearestValidCell(this.sprite.x, this.sprite.y);
+      if (anyCell) {
+        // Teleport near it and start snapping immediately
+        this.sprite.setPosition(anyCell.worldX, anyCell.worldY - 30);
+        this.startSnapping(anyCell);
+      } else {
+        // Absolute fallback: destroy this corpse to prevent visual glitches
+        console.warn('Corpse could not find valid cell after timeout, destroying');
+        this.destroy();
+      }
     }
   }
 
