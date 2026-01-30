@@ -464,8 +464,23 @@ export class Enemy {
    * @returns {boolean}
    */
   canSeeTarget() {
-    if (!this.target || !this.target.isAlive) return false;
-    return this.getDistanceToTarget() <= this.detectionRange;
+    if (!this.target) {
+      // Debug: Log missing target periodically
+      if (Math.random() < 0.005) {
+        console.log(`[${this.config.type}] canSeeTarget: No target assigned!`);
+      }
+      return false;
+    }
+    if (!this.target.isAlive) {
+      return false;
+    }
+    const distance = this.getDistanceToTarget();
+    const inRange = distance <= this.detectionRange;
+    // Debug: Log detection periodically
+    if (Math.random() < 0.005) {
+      console.log(`[${this.config.type}] canSeeTarget: dist=${distance.toFixed(0)}, range=${this.detectionRange}, inRange=${inRange}`);
+    }
+    return inRange;
   }
 
   /**
@@ -1599,6 +1614,30 @@ export class Enemy {
     }
 
     return info;
+  }
+
+  /**
+   * Debug AI state - dumps all relevant info to console
+   */
+  debugAI() {
+    console.log(`=== ${this.config.type} DEBUG ===`);
+    console.log('Position:', this.sprite.x.toFixed(0), this.sprite.y.toFixed(0));
+    console.log('Target:', this.target ? 'SET' : 'NULL');
+    if (this.target) {
+      const targetSprite = this.target.sprite || this.target;
+      console.log('Target position:', targetSprite?.x?.toFixed(0), targetSprite?.y?.toFixed(0));
+      console.log('Target alive:', this.target.isAlive);
+      console.log('Distance to target:', this.getDistanceToTarget().toFixed(0));
+    }
+    console.log('Detection range:', this.detectionRange);
+    console.log('Can see target:', this.canSeeTarget());
+    console.log('Current state:', this.stateMachine.getCurrentStateName());
+    console.log('State machine states:', Array.from(this.stateMachine.states.keys()));
+    if (this.config.type === 'SWARMER') {
+      console.log('Is in pack:', this.isInPack());
+      console.log('Pack count:', this.getPackCount());
+    }
+    console.log('============================');
   }
 
   destroy() {

@@ -220,7 +220,7 @@ export class TestArenaScene extends BaseScene {
 
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
-    console.log('Debug: ` physics, C combat, G grid, R respawn, B boss, 8 corpse, 9 dump, 0 mute');
+    console.log('Debug: ` physics, C combat, G grid, I ai-debug, R respawn, B boss, 8 corpse, 9 dump, 0 mute');
   }
 
   setupInputHandlers() {
@@ -336,6 +336,21 @@ export class TestArenaScene extends BaseScene {
       }
 
       console.log('');
+    });
+
+    // Debug AI state dump (I key)
+    this.input.keyboard.on('keydown-I', () => {
+      console.log('\n=== ALL ENEMIES AI DEBUG ===');
+      console.log(`Total enemies: ${this.enemies.length}`);
+      for (const enemy of this.enemies) {
+        if (enemy.debugAI) {
+          enemy.debugAI();
+        }
+      }
+      if (this.currentBoss && this.currentBoss.isAlive) {
+        console.log('Boss is active');
+      }
+      console.log('=============================\n');
     });
   }
 
@@ -899,7 +914,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | 8 - Corpse | G - Grid | 0 - Mute');
+    lines.push('R - Respawn | B - Boss | I - AI Debug | G - Grid | 0 - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
