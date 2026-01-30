@@ -262,21 +262,34 @@ export class CorpseGrid {
    * @returns {boolean}
    */
   hasSupport(col, row) {
+    // DEBUG: Log support check
+    const debugLog = [];
+    debugLog.push(`hasSupport(${col}, ${row}):`);
+
     // First check for ground collision directly below this cell
-    if (this.isGroundBelow(col, row)) {
+    const groundBelow = this.isGroundBelow(col, row);
+    debugLog.push(`  groundBelow=${groundBelow}`);
+    if (groundBelow) {
+      console.log(debugLog.join('\n') + ' -> TRUE (ground)');
       return true;
     }
 
     // Get the two support cells based on row parity
     const supportCells = this.getSupportCells(col, row);
+    debugLog.push(`  supportCells=[${supportCells.map(c => `(${c.col},${c.row})`).join(', ')}]`);
 
     // Has support if EITHER support cell is occupied OR is at ground level
     for (const cell of supportCells) {
-      if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
+      const occupied = this.isOccupied(cell.col, cell.row);
+      const groundAt = this.isGroundAt(cell.col, cell.row);
+      debugLog.push(`    (${cell.col},${cell.row}): occupied=${occupied}, groundAt=${groundAt}`);
+      if (occupied || groundAt) {
+        console.log(debugLog.join('\n') + ' -> TRUE (support cell)');
         return true; // ONE support is enough!
       }
     }
 
+    console.log(debugLog.join('\n') + ' -> FALSE');
     return false;
   }
 
@@ -287,9 +300,50 @@ export class CorpseGrid {
    * @param {*} corpseData - Data to associate with this cell (e.g., corpse reference)
    */
   occupyCell(col, row, corpseData) {
+    const wasOccupied = this.occupiedCells.has(this.getCellKey(col, row));
     this.occupiedCells.set(this.getCellKey(col, row), corpseData);
     // Mark row for platform body rebuild
     this.markRowDirty(row);
+
+    // DEBUG: Log cell occupation
+    console.log(`\n>>> occupyCell(${col}, ${row}) - ${wasOccupied ? 'OVERWRITE!' : 'new'} - total occupied: ${this.occupiedCells.size}`);
+    this.debugPrintOccupiedCells();
+  }
+
+  /**
+   * DEBUG: Print all occupied cells as ASCII grid
+   */
+  debugPrintOccupiedCells() {
+    if (this.occupiedCells.size === 0) {
+      console.log('  [no occupied cells]');
+      return;
+    }
+
+    // Find bounds
+    let minCol = Infinity, maxCol = -Infinity;
+    let minRow = Infinity, maxRow = -Infinity;
+    for (const key of this.occupiedCells.keys()) {
+      const { col, row } = this.parseCellKey(key);
+      minCol = Math.min(minCol, col);
+      maxCol = Math.max(maxCol, col);
+      minRow = Math.min(minRow, row);
+      maxRow = Math.max(maxRow, row);
+    }
+
+    // Print grid
+    console.log(`  Occupied cells (cols ${minCol}-${maxCol}, rows ${minRow}-${maxRow}):`);
+    for (let row = minRow; row <= maxRow; row++) {
+      let line = `  row ${row.toString().padStart(2)}: `;
+      for (let col = minCol; col <= maxCol; col++) {
+        if (this.isOccupied(col, row)) {
+          line += '[X]';
+        } else {
+          line += ' . ';
+        }
+      }
+      line += `  (${row % 2 === 0 ? 'even' : 'odd '})`;
+      console.log(line);
+    }
   }
 
   /**
@@ -314,19 +368,33 @@ export class CorpseGrid {
     // Convert to grid coordinates
     const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
 
+    console.log(`\n=== findSettlingCell(${worldX.toFixed(0)}, ${worldY.toFixed(0)}) ===`);
+    console.log(`  Grid start: (${startCol}, ${startRow})`);
+    console.log(`  Currently occupied cells: ${this.occupiedCells.size}`);
+
     // FIRST: Try to find a cell at or below current position
     const cellBelow = this.findCellDownward(startCol, startRow);
-    if (cellBelow) return cellBelow;
+    if (cellBelow) {
+      console.log(`  RESULT: findCellDownward -> (${cellBelow.col}, ${cellBelow.row}) = world (${cellBelow.worldX.toFixed(0)}, ${cellBelow.worldY.toFixed(0)})`);
+      return cellBelow;
+    }
 
     // SECOND: If spawned inside a pile, search UPWARD for the top
     const cellAbove = this.findCellUpward(startCol, startRow);
-    if (cellAbove) return cellAbove;
+    if (cellAbove) {
+      console.log(`  RESULT: findCellUpward -> (${cellAbove.col}, ${cellAbove.row}) = world (${cellAbove.worldX.toFixed(0)}, ${cellAbove.worldY.toFixed(0)})`);
+      return cellAbove;
+    }
 
     // THIRD: Search in all directions for nearest valid cell
     const cellNearby = this.findNearestValidCell(worldX, worldY);
-    if (cellNearby) return cellNearby;
+    if (cellNearby) {
+      console.log(`  RESULT: findNearestValidCell -> (${cellNearby.col}, ${cellNearby.row}) = world (${cellNearby.worldX.toFixed(0)}, ${cellNearby.worldY.toFixed(0)})`);
+      return cellNearby;
+    }
 
     // No valid position found
+    console.log(`  RESULT: null (no valid cell found)`);
     return null;
   }
 
@@ -339,6 +407,10 @@ export class CorpseGrid {
    * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
    */
   findCellDownward(startCol, startRow, maxRows = 100, maxCols = 10) {
+    // DEBUG: Track search stats
+    let cellsChecked = 0;
+    let firstRowWithSupport = null;
+
     // Start from current position and search downward
     for (let rowOffset = 0; rowOffset < maxRows; rowOffset++) {
       const row = startRow + rowOffset;
@@ -349,13 +421,19 @@ export class CorpseGrid {
         const colsToTry = colOffset === 0 ? [startCol] : [startCol - colOffset, startCol + colOffset];
 
         for (const col of colsToTry) {
+          cellsChecked++;
+
           // Skip if already occupied
           if (this.isOccupied(col, row)) {
+            console.log(`  [search] (${col}, ${row}): OCCUPIED - skip`);
             continue;
           }
 
           // Check if this cell has support
           if (this.hasSupport(col, row)) {
+            if (firstRowWithSupport === null) firstRowWithSupport = row;
+            console.log(`  [search] (${col}, ${row}): has support - FOUND after ${cellsChecked} checks`);
+            console.log(`    First row with any support: ${firstRowWithSupport}`);
             const worldPos = this.gridToWorld(col, row);
             return {
               col,
@@ -368,6 +446,7 @@ export class CorpseGrid {
       }
     }
 
+    console.log(`  [search] No valid cell found after ${cellsChecked} checks`);
     return null;
   }
 
