@@ -254,7 +254,10 @@ Base boss class features:
 | R | Spawn additional enemies (additive) |
 | B | Spawn boss |
 | T | Test damage on player |
-| M | Toggle mute |
+| G | Toggle corpse grid debug visualization |
+| 8 | Spawn test corpse at player position |
+| 9 | Dump grid state to console |
+| 0 | Toggle mute |
 
 ## Development Guidelines
 

@@ -219,7 +219,7 @@ export class TestArenaScene extends BaseScene {
 
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
-    console.log('Press ` for physics debug, C for combat debug, G for grid debug, R to respawn enemies, B to spawn boss, P to spawn corpse');
+    console.log('Debug: ` physics, C combat, G grid, R respawn, B boss, 8 corpse, 9 dump, 0 mute');
   }
 
   setupInputHandlers() {
@@ -256,16 +256,16 @@ export class TestArenaScene extends BaseScene {
       this.spawnBoss();
     });
 
-    // Mute audio toggle
-    this.input.keyboard.on('keydown-M', () => {
+    // Mute audio toggle (0 key - avoids conflict with M=MAP gameplay key)
+    this.input.keyboard.on('keydown-ZERO', () => {
       if (this.audioManager) {
         const muted = this.audioManager.toggleMute('master');
         console.log(`Audio ${muted ? 'muted' : 'unmuted'}`);
       }
     });
 
-    // Spawn test corpse at player position
-    this.input.keyboard.on('keydown-P', () => {
+    // Spawn test corpse at player position (8 key - avoids conflict with P=PAUSE gameplay key)
+    this.input.keyboard.on('keydown-EIGHT', () => {
       const pos = this.player.getPosition();
       // Spawn slightly above player so it falls
       this.corpseManager.spawn(pos.x, pos.y - 20, 'TEST', {
@@ -281,8 +281,8 @@ export class TestArenaScene extends BaseScene {
       console.log(`Corpse grid debug: ${enabled ? 'ON' : 'OFF'}`);
     });
 
-    // Dump grid state and compare with actual corpse positions
-    this.input.keyboard.on('keydown-D', () => {
+    // Dump grid state and compare with actual corpse positions (9 key - avoids conflict with D=MOVE_RIGHT gameplay key)
+    this.input.keyboard.on('keydown-NINE', () => {
       console.log('\n' + '='.repeat(50));
       console.log('DEBUG DUMP: Grid State vs Actual Corpse Positions');
       console.log('='.repeat(50));
@@ -773,7 +773,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | P - Corpse | G - Grid | M - Mute');
+    lines.push('R - Respawn | B - Boss | 8 - Corpse | G - Grid | 0 - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
