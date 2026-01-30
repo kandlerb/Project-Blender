@@ -100,6 +100,7 @@ export const ENEMY_PRESETS = Object.freeze({
     mass: 1,
     canClimbEnemies: true,
     climbCooldown: 300,
+    climbHopVelocity: -600,  // Doubled for better climbing height
   },
   /**
    * BRUTE - Slow tanky enemy
@@ -689,21 +690,53 @@ export class Enemy {
   }
 
   /**
+   * Check if there's clearance above to climb
+   * Returns false if another enemy is directly above this one
+   * @returns {boolean}
+   */
+  hasClearanceAbove() {
+    const checkDistance = 40; // How far above to check (roughly swarmer height + buffer)
+    const enemies = this.scene.enemies || [];
+
+    for (const enemy of enemies) {
+      if (enemy === this) continue;
+      if (!enemy.isAlive) continue;
+
+      // Check if enemy is directly above
+      const dx = Math.abs(enemy.sprite.x - this.sprite.x);
+      const dy = this.sprite.y - enemy.sprite.y; // Positive if enemy is above
+
+      // Enemy is above if:
+      // - Horizontally close (within ~20px)
+      // - Vertically above (dy > 0)
+      // - Not too far above (dy < checkDistance)
+      if (dx < 20 && dy > 0 && dy < checkDistance) {
+        return false; // Something is above, don't jump
+      }
+    }
+
+    return true; // Clear to jump
+  }
+
+  /**
    * Attempt to climb over a blocking enemy
    * Applies small upward velocity if off cooldown
    * @param {number} time - Current game time
    */
   attemptClimb(time) {
     // Check cooldown
-    if (time - this.lastClimbTime < this.climbCooldown) return;
+    if (time - this.lastClimbTime < this.climbCooldown) return false;
+
+    // Check if there's clearance above (don't jump into another swarmer)
+    if (!this.hasClearanceAbove()) {
+      return false;
+    }
 
     // Set cooldown
     this.lastClimbTime = time;
 
-    // Apply upward velocity - needs to clear enemy height (32px for swarmers)
-    // With gravity 2400, need v = sqrt(2 * g * h) = sqrt(2 * 2400 * 32) ≈ 392
-    // Using -350 as a balance between clearing height and not looking floaty
-    const climbVelocity = -350;
+    // Apply upward velocity from config (doubled for better climbing height)
+    const climbVelocity = this.config.climbHopVelocity || -600;
     this.sprite.body.setVelocityY(climbVelocity);
 
     // Emit climb event
@@ -719,6 +752,8 @@ export class Enemy {
         }
       });
     }
+
+    return true;
   }
 
   /**
