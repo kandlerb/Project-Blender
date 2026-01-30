@@ -219,7 +219,7 @@ export class TestArenaScene extends BaseScene {
 
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
-    console.log('Press ` for physics debug, C for combat debug, R to respawn enemies, B to spawn boss, P to spawn corpse');
+    console.log('Press ` for physics debug, C for combat debug, G for grid debug, R to respawn enemies, B to spawn boss, P to spawn corpse');
   }
 
   setupInputHandlers() {
@@ -273,6 +273,12 @@ export class TestArenaScene extends BaseScene {
         height: 16,
       });
       console.log(`Corpses: ${this.corpseManager.getCount()}`);
+    });
+
+    // Toggle grid debug visualization
+    this.input.keyboard.on('keydown-G', () => {
+      const enabled = this.corpseManager.toggleGridDebug();
+      console.log(`Corpse grid debug: ${enabled ? 'ON' : 'OFF'}`);
     });
   }
 
@@ -712,7 +718,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | P - Corpse | M - Mute');
+    lines.push('R - Respawn | B - Boss | P - Corpse | G - Grid | M - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }

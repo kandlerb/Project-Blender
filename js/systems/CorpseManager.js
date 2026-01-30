@@ -391,6 +391,11 @@ export class CorpseManager {
     if (this.debugEnabled) {
       this.updateDebugVisualization();
     }
+
+    // Draw grid debug (only if grid debug is enabled)
+    if (this.grid.debugEnabled) {
+      this.drawDebug();
+    }
   }
 
   /**
@@ -448,23 +453,45 @@ export class CorpseManager {
   }
 
   /**
-   * Draw debug visualization for the grid
-   * Call this from scene's update or render if debug is enabled
+   * Toggle grid debug visualization
+   * @returns {boolean} New debug state
    */
-  debugDrawGrid() {
-    if (!this.debugGraphics) return;
+  toggleGridDebug() {
+    const newState = !this.grid.debugEnabled;
+    this.grid.setDebug(newState);
 
-    this.debugGraphics.clear();
+    // Also enable corpse state debug when grid debug is on
+    this.setDebug(newState);
 
-    // Get camera bounds for visible area
-    const camera = this.scene.cameras.main;
-    const viewMinX = camera.scrollX;
-    const viewMaxX = camera.scrollX + camera.width;
-    const viewMinY = camera.scrollY;
-    const viewMaxY = camera.scrollY + camera.height;
+    return newState;
+  }
 
-    // Draw grid using CorpseGrid's debug method
-    this.grid.debugDraw(this.debugGraphics, viewMinX, viewMaxX, viewMinY, viewMaxY);
+  /**
+   * Draw debug visualization for the grid and snapping corpses
+   * Call this from scene's update if debug is enabled
+   */
+  drawDebug() {
+    // Draw grid debug
+    this.grid.drawDebug();
+
+    // Draw snap indicators for snapping corpses
+    if (this.grid.debugEnabled && this.grid.debugGraphics) {
+      for (const corpse of this.corpses) {
+        if (corpse.state === CORPSE_STATE.SNAPPING && corpse.snapData) {
+          const elapsed = this.scene.time.now - corpse.snapData.startTime;
+          const progress = Math.min(elapsed / corpse.snapData.duration, 1);
+
+          this.grid.drawSnapIndicator(
+            this.grid.debugGraphics,
+            corpse.sprite.x,
+            corpse.sprite.y,
+            corpse.snapData.targetX,
+            corpse.snapData.targetY,
+            progress
+          );
+        }
+      }
+    }
   }
 
   /**

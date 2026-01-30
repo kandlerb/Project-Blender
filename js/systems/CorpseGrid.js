@@ -31,6 +31,29 @@ export class CorpseGrid {
     this.cellWidth = GRID_CONFIG.CELL_WIDTH;
     this.cellHeight = GRID_CONFIG.CELL_HEIGHT;
     this.rowOffset = GRID_CONFIG.ROW_OFFSET;
+
+    // Debug visualization
+    this.debugEnabled = false;
+    this.debugGraphics = null;
+  }
+
+  /**
+   * Enable or disable debug visualization
+   * @param {boolean} enabled - Whether to show debug overlay
+   */
+  setDebug(enabled) {
+    this.debugEnabled = enabled;
+
+    if (enabled) {
+      if (!this.debugGraphics) {
+        this.debugGraphics = this.scene.add.graphics();
+        this.debugGraphics.setDepth(999);
+      }
+    } else {
+      if (this.debugGraphics) {
+        this.debugGraphics.clear();
+      }
+    }
   }
 
   /**
@@ -403,6 +426,22 @@ export class CorpseGrid {
   }
 
   /**
+   * Draw debug visualization using internal graphics
+   * Call this each frame when debug is enabled
+   */
+  drawDebug() {
+    if (!this.debugEnabled || !this.debugGraphics) return;
+
+    const camera = this.scene.cameras.main;
+    const viewMinX = camera.scrollX;
+    const viewMaxX = camera.scrollX + camera.width;
+    const viewMinY = camera.scrollY;
+    const viewMaxY = camera.scrollY + camera.height;
+
+    this.debugDraw(this.debugGraphics, viewMinX, viewMaxX, viewMinY, viewMaxY);
+  }
+
+  /**
    * Debug visualization - draw the grid and occupied cells
    * @param {Phaser.GameObjects.Graphics} graphics - Graphics object to draw with
    * @param {number} viewMinX - Minimum X of view area
@@ -411,40 +450,114 @@ export class CorpseGrid {
    * @param {number} viewMaxY - Maximum Y of view area
    */
   debugDraw(graphics, viewMinX, viewMaxX, viewMinY, viewMaxY) {
+    graphics.clear();
+
     // Convert view bounds to grid cells
     const { col: minCol, row: minRow } = this.worldToGrid(viewMinX, viewMinY);
     const { col: maxCol, row: maxRow } = this.worldToGrid(viewMaxX, viewMaxY);
 
-    graphics.lineStyle(1, 0x444444, 0.3);
-
-    // Draw grid lines
+    // Draw grid cells with different colors for even/odd rows
     for (let row = minRow - 1; row <= maxRow + 1; row++) {
-      for (let col = minCol - 1; col <= maxCol + 1; col++) {
+      const isOddRow = row % 2 === 1;
+
+      for (let col = minCol - 2; col <= maxCol + 2; col++) {
         const { x, y } = this.gridToWorld(col, row);
         const halfW = this.cellWidth / 2;
         const halfH = this.cellHeight / 2;
 
+        // Different outline color for even/odd rows to show stagger
+        if (isOddRow) {
+          graphics.lineStyle(1, 0x00aaff, 0.4); // Blue for odd (staggered)
+        } else {
+          graphics.lineStyle(1, 0x888888, 0.3); // Gray for even
+        }
+
         // Draw cell outline
         graphics.strokeRect(x - halfW, y - halfH, this.cellWidth, this.cellHeight);
+
+        // Draw stagger offset marker on odd rows (small triangle at left edge)
+        if (isOddRow && col === minCol - 1) {
+          graphics.fillStyle(0x00aaff, 0.5);
+          const offsetX = this.cellWidth * this.rowOffset;
+          graphics.fillTriangle(
+            x - halfW, y - 4,
+            x - halfW, y + 4,
+            x - halfW + 8, y
+          );
+        }
       }
     }
 
-    // Draw occupied cells
-    graphics.fillStyle(0x00ff00, 0.3);
+    // Draw occupied cells with red fill
+    graphics.fillStyle(0xff4444, 0.5);
     for (const key of this.occupiedCells.keys()) {
       const { col, row } = this.parseCellKey(key);
       const { x, y } = this.gridToWorld(col, row);
       const halfW = this.cellWidth / 2;
       const halfH = this.cellHeight / 2;
 
-      graphics.fillRect(x - halfW, y - halfH, this.cellWidth, this.cellHeight);
+      graphics.fillRect(x - halfW + 1, y - halfH + 1, this.cellWidth - 2, this.cellHeight - 2);
+
+      // Draw cell coordinates
+      graphics.lineStyle(1, 0xffffff, 0.8);
+      // Small dot in center
+      graphics.fillStyle(0xffffff, 0.8);
+      graphics.fillCircle(x, y, 2);
     }
+
+    // Draw legend in top-left
+    const legendX = viewMinX + 10;
+    const legendY = viewMinY + 60;
+
+    graphics.fillStyle(0x000000, 0.7);
+    graphics.fillRect(legendX, legendY, 140, 50);
+
+    graphics.lineStyle(1, 0x888888, 0.8);
+    graphics.strokeRect(legendX + 5, legendY + 5, 12, 10);
+    graphics.lineStyle(1, 0x00aaff, 0.8);
+    graphics.strokeRect(legendX + 5, legendY + 20, 12, 10);
+    graphics.fillStyle(0xff4444, 0.8);
+    graphics.fillRect(legendX + 5, legendY + 35, 12, 10);
+  }
+
+  /**
+   * Draw a snap indicator from corpse position to target cell
+   * @param {Phaser.GameObjects.Graphics} graphics - Graphics object
+   * @param {number} fromX - Current X position
+   * @param {number} fromY - Current Y position
+   * @param {number} toX - Target X position
+   * @param {number} toY - Target Y position
+   * @param {number} progress - Snap progress 0-1
+   */
+  drawSnapIndicator(graphics, fromX, fromY, toX, toY, progress) {
+    // Draw line from current to target
+    graphics.lineStyle(2, 0xffff00, 0.8);
+    graphics.beginPath();
+    graphics.moveTo(fromX, fromY);
+    graphics.lineTo(toX, toY);
+    graphics.strokePath();
+
+    // Draw target cell outline
+    const halfW = this.cellWidth / 2;
+    const halfH = this.cellHeight / 2;
+    graphics.lineStyle(2, 0xffff00, 0.6);
+    graphics.strokeRect(toX - halfW, toY - halfH, this.cellWidth, this.cellHeight);
+
+    // Draw progress arc around target
+    graphics.lineStyle(3, 0x00ff00, 0.8);
+    graphics.beginPath();
+    graphics.arc(toX, toY, 12, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+    graphics.strokePath();
   }
 
   /**
    * Clean up resources
    */
   destroy() {
+    if (this.debugGraphics) {
+      this.debugGraphics.destroy();
+      this.debugGraphics = null;
+    }
     this.occupiedCells.clear();
     this.platformLayer = null;
     this.scene = null;
