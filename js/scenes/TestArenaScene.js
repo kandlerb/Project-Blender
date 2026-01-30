@@ -337,6 +337,18 @@ export class TestArenaScene extends BaseScene {
 
       console.log('');
     });
+
+    // AI debug dump (I key)
+    this.input.keyboard.on('keydown-I', () => {
+      console.log('--- ENEMY AI DEBUG ---');
+      for (const enemy of this.enemies) {
+        enemy.debugAI();
+      }
+      if (this.currentBoss && this.currentBoss.isAlive) {
+        console.log(`[BOSS] HP: ${this.currentBoss.health}/${this.currentBoss.maxHealth}`);
+      }
+      console.log('----------------------');
+    });
   }
 
   /**
@@ -899,7 +911,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | 8 - Corpse | G - Grid | 0 - Mute');
+    lines.push('R - Respawn | B - Boss | I - AI Debug | G - Grid | 0 - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
