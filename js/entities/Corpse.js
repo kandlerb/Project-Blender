@@ -16,8 +16,8 @@ export const CORPSE_CONFIG = Object.freeze({
   SNAP_DURATION: 200,         // ms to lerp into position
   SNAP_THRESHOLD_X: 15,       // How close horizontally to start snap
   SNAP_THRESHOLD_Y: 40,       // How close vertically (more forgiving)
-  SETTLED_ALPHA: 0.7,
-  SETTLED_TINT: 0x333333,
+  SETTLED_ALPHA: 1.0,         // Fully opaque when settled (no ghostly transparency)
+  SETTLED_TINT: 0x666666,     // Darkened but visible "dead" appearance
   FALLING_DEPTH: 10,          // Depth for falling corpses (render in front)
   SETTLED_DEPTH: 5,           // Depth for settled corpses (render behind)
   FALL_TIMEOUT: 2000,         // ms before forcing cell search as safety valve
@@ -65,9 +65,8 @@ export class Corpse {
   constructor(scene, x, y, config = {}) {
     this.scene = scene;
 
-    // DEBUG: Unique ID for logging
+    // Unique ID for tracking
     this.id = ++corpseIdCounter;
-    console.log(`\n*** Corpse #${this.id} CREATED at (${x.toFixed(0)}, ${y.toFixed(0)}) ***`);
 
     // Grid reference for settling positions
     this.grid = config.grid || null;
@@ -263,12 +262,6 @@ export class Corpse {
    * @param {{ col: number, row: number, worldX: number, worldY: number }} cell - Target cell
    */
   startSnapping(cell) {
-    // DEBUG: Log state transition
-    const oldState = this.state;
-    console.log(`\n### Corpse #${this.id}: ${oldState} -> SNAPPING at (${this.sprite.x.toFixed(0)}, ${this.sprite.y.toFixed(0)})`);
-    console.log(`    Target cell: (${cell.col}, ${cell.row}) = world (${cell.worldX.toFixed(0)}, ${cell.worldY.toFixed(0)})`);
-    console.log(`    Distance: dx=${Math.abs(this.sprite.x - cell.worldX).toFixed(1)}, dy=${Math.abs(this.sprite.y - cell.worldY).toFixed(1)}`);
-
     // Claim the grid cell immediately to prevent other corpses from targeting it
     this.grid.occupyCell(cell.col, cell.row, this);
     this.gridCell = { col: cell.col, row: cell.row };
@@ -330,9 +323,8 @@ export class Corpse {
       eased
     );
 
-    // Alpha pulse during snapping (0.7 → 0.9) to mask the movement
-    const pulseProgress = Math.sin(progress * Math.PI);
-    const alpha = 0.7 + pulseProgress * 0.2;
+    // Fade to full opacity during snapping (0.8 → 1.0)
+    const alpha = 0.8 + progress * 0.2;
     this.sprite.setAlpha(alpha);
 
     // Check if snap is complete
@@ -357,16 +349,10 @@ export class Corpse {
 
   /**
    * Complete the settling process
-   * Destroys physics body and marks corpse as static
+   * Converts physics body to static platform for walkability
    */
   settle() {
     if (this.isSettled) return;
-
-    // DEBUG: Log state transition
-    console.log(`\n### Corpse #${this.id}: SNAPPING -> SETTLED at (${this.sprite.x.toFixed(0)}, ${this.sprite.y.toFixed(0)})`);
-    if (this.gridCell) {
-      console.log(`    Final cell: (${this.gridCell.col}, ${this.gridCell.row})`);
-    }
 
     this.isSettled = true;
     this.state = CORPSE_STATE.SETTLED;
@@ -384,15 +370,24 @@ export class Corpse {
     // Move to background depth
     this.sprite.setDepth(CORPSE_CONFIG.SETTLED_DEPTH);
 
-    // Destroy physics body entirely - sprite becomes static visual
+    // Convert to static platform body for walking on
     if (this.sprite.body) {
-      // First stop all movement
+      // Stop all movement
       this.sprite.body.setVelocity(0, 0);
       this.sprite.body.setAllowGravity(false);
       this.sprite.body.setImmovable(true);
+      this.sprite.body.moves = false;
 
-      // Disable the body (keeps sprite but removes from physics simulation)
-      this.sprite.body.enable = false;
+      // Resize body to be a thin platform at the TOP of the corpse
+      // This allows player to walk ON the corpse, not through it
+      const platformHeight = 6;
+      const bodyWidth = this.config.width * 0.9;
+      const offsetX = (this.config.width - bodyWidth) / 2;
+      // Position platform at top of corpse visual
+      const offsetY = -this.config.height / 2 + platformHeight / 2;
+
+      this.sprite.body.setSize(bodyWidth, platformHeight);
+      this.sprite.body.setOffset(offsetX, offsetY);
     }
 
     // Clear snap data

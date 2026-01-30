@@ -257,39 +257,33 @@ export class CorpseGrid {
    * 1. The row below is ground (tilemap collision)
    * 2. At least ONE of the two supporting cells below is occupied OR is ground
    *
+   * IMPORTANT: Returns false if the cell itself overlaps with ground (prevents clipping)
+   *
    * @param {number} col - Column index
    * @param {number} row - Row index
    * @returns {boolean}
    */
   hasSupport(col, row) {
-    // DEBUG: Log support check
-    const debugLog = [];
-    debugLog.push(`hasSupport(${col}, ${row}):`);
+    // Don't settle in cells that overlap with ground (prevents clipping)
+    if (this.isGroundAt(col, row)) {
+      return false;
+    }
 
-    // First check for ground collision directly below this cell
-    const groundBelow = this.isGroundBelow(col, row);
-    debugLog.push(`  groundBelow=${groundBelow}`);
-    if (groundBelow) {
-      console.log(debugLog.join('\n') + ' -> TRUE (ground)');
+    // Check for ground collision directly below this cell
+    if (this.isGroundBelow(col, row)) {
       return true;
     }
 
     // Get the two support cells based on row parity
     const supportCells = this.getSupportCells(col, row);
-    debugLog.push(`  supportCells=[${supportCells.map(c => `(${c.col},${c.row})`).join(', ')}]`);
 
     // Has support if EITHER support cell is occupied OR is at ground level
     for (const cell of supportCells) {
-      const occupied = this.isOccupied(cell.col, cell.row);
-      const groundAt = this.isGroundAt(cell.col, cell.row);
-      debugLog.push(`    (${cell.col},${cell.row}): occupied=${occupied}, groundAt=${groundAt}`);
-      if (occupied || groundAt) {
-        console.log(debugLog.join('\n') + ' -> TRUE (support cell)');
-        return true; // ONE support is enough!
+      if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
+        return true;
       }
     }
 
-    console.log(debugLog.join('\n') + ' -> FALSE');
     return false;
   }
 
@@ -300,14 +294,9 @@ export class CorpseGrid {
    * @param {*} corpseData - Data to associate with this cell (e.g., corpse reference)
    */
   occupyCell(col, row, corpseData) {
-    const wasOccupied = this.occupiedCells.has(this.getCellKey(col, row));
     this.occupiedCells.set(this.getCellKey(col, row), corpseData);
     // Mark row for platform body rebuild
     this.markRowDirty(row);
-
-    // DEBUG: Log cell occupation
-    console.log(`\n>>> occupyCell(${col}, ${row}) - ${wasOccupied ? 'OVERWRITE!' : 'new'} - total occupied: ${this.occupiedCells.size}`);
-    this.debugPrintOccupiedCells();
   }
 
   /**
@@ -452,34 +441,16 @@ export class CorpseGrid {
     // Convert to grid coordinates
     const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
 
-    console.log(`\n=== findSettlingCell(${worldX.toFixed(0)}, ${worldY.toFixed(0)}) ===`);
-    console.log(`  Grid start: (${startCol}, ${startRow})`);
-    console.log(`  Currently occupied cells: ${this.occupiedCells.size}`);
-
-    // FIRST: Try to find a cell at or below current position
+    // Try to find a cell at or below current position
     const cellBelow = this.findCellDownward(startCol, startRow);
-    if (cellBelow) {
-      console.log(`  RESULT: findCellDownward -> (${cellBelow.col}, ${cellBelow.row}) = world (${cellBelow.worldX.toFixed(0)}, ${cellBelow.worldY.toFixed(0)})`);
-      return cellBelow;
-    }
+    if (cellBelow) return cellBelow;
 
-    // SECOND: If spawned inside a pile, search UPWARD for the top
+    // If spawned inside a pile, search UPWARD for the top
     const cellAbove = this.findCellUpward(startCol, startRow);
-    if (cellAbove) {
-      console.log(`  RESULT: findCellUpward -> (${cellAbove.col}, ${cellAbove.row}) = world (${cellAbove.worldX.toFixed(0)}, ${cellAbove.worldY.toFixed(0)})`);
-      return cellAbove;
-    }
+    if (cellAbove) return cellAbove;
 
-    // THIRD: Search in all directions for nearest valid cell
-    const cellNearby = this.findNearestValidCell(worldX, worldY);
-    if (cellNearby) {
-      console.log(`  RESULT: findNearestValidCell -> (${cellNearby.col}, ${cellNearby.row}) = world (${cellNearby.worldX.toFixed(0)}, ${cellNearby.worldY.toFixed(0)})`);
-      return cellNearby;
-    }
-
-    // No valid position found
-    console.log(`  RESULT: null (no valid cell found)`);
-    return null;
+    // Search in all directions for nearest valid cell
+    return this.findNearestValidCell(worldX, worldY);
   }
 
   /**
@@ -491,10 +462,6 @@ export class CorpseGrid {
    * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
    */
   findCellDownward(startCol, startRow, maxRows = 100, maxCols = 10) {
-    // DEBUG: Track search stats
-    let cellsChecked = 0;
-    let firstRowWithSupport = null;
-
     // Start from current position and search downward
     for (let rowOffset = 0; rowOffset < maxRows; rowOffset++) {
       const row = startRow + rowOffset;
@@ -505,19 +472,11 @@ export class CorpseGrid {
         const colsToTry = colOffset === 0 ? [startCol] : [startCol - colOffset, startCol + colOffset];
 
         for (const col of colsToTry) {
-          cellsChecked++;
-
           // Skip if already occupied
-          if (this.isOccupied(col, row)) {
-            console.log(`  [search] (${col}, ${row}): OCCUPIED - skip`);
-            continue;
-          }
+          if (this.isOccupied(col, row)) continue;
 
           // Check if this cell has support
           if (this.hasSupport(col, row)) {
-            if (firstRowWithSupport === null) firstRowWithSupport = row;
-            console.log(`  [search] (${col}, ${row}): has support - FOUND after ${cellsChecked} checks`);
-            console.log(`    First row with any support: ${firstRowWithSupport}`);
             const worldPos = this.gridToWorld(col, row);
             return {
               col,
@@ -530,7 +489,6 @@ export class CorpseGrid {
       }
     }
 
-    console.log(`  [search] No valid cell found after ${cellsChecked} checks`);
     return null;
   }
 

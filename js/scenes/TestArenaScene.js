@@ -281,59 +281,48 @@ export class TestArenaScene extends BaseScene {
       console.log(`Corpse grid debug: ${enabled ? 'ON' : 'OFF'}`);
     });
 
-    // Dump grid state and compare with actual corpse positions (9 key - avoids conflict with D=MOVE_RIGHT gameplay key)
+    // Dump grid state (9 key - avoids conflict with D=MOVE_RIGHT gameplay key)
     this.input.keyboard.on('keydown-NINE', () => {
-      console.log('\n' + '='.repeat(50));
-      console.log('DEBUG DUMP: Grid State vs Actual Corpse Positions');
-      console.log('='.repeat(50));
-
-      // Dump grid state
       const grid = this.corpseManager.grid;
-      if (grid) {
-        grid.dumpGridState();
-      }
-
-      // List actual corpse positions and compare
-      console.log('\n--- Actual Corpse Positions vs Claimed Cells ---');
       const corpses = this.corpseManager.corpses || [];
-      let mismatches = 0;
+
+      // Count states and mismatches
+      let settled = 0, falling = 0, snapping = 0, mismatches = 0;
+      const mismatchDetails = [];
 
       for (const corpse of corpses) {
         if (!corpse.sprite || !corpse.sprite.active) continue;
 
-        const actualX = corpse.sprite.x;
-        const actualY = corpse.sprite.y;
-        const actualGridPos = grid ? grid.worldToGrid(actualX, actualY) : { col: '?', row: '?' };
-        const claimedCell = corpse.gridCell;
-        const expectedWorldPos = claimedCell && grid ? grid.gridToWorld(claimedCell.col, claimedCell.row) : null;
+        if (corpse.state === 'settled') settled++;
+        else if (corpse.state === 'falling') falling++;
+        else if (corpse.state === 'snapping') snapping++;
 
-        const posMatch = claimedCell &&
-          actualGridPos.col === claimedCell.col &&
-          actualGridPos.row === claimedCell.row;
-
-        const worldDist = expectedWorldPos ?
-          Math.sqrt(Math.pow(actualX - expectedWorldPos.x, 2) + Math.pow(actualY - expectedWorldPos.y, 2)) : 0;
-
-        const status = corpse.state === 'settled' ? '✓' : '~';
-        const matchStatus = posMatch ? '  ' : '⚠️';
-
-        console.log(`${status} Corpse #${corpse.id}: state=${corpse.state}`);
-        console.log(`    Actual world: (${actualX.toFixed(1)}, ${actualY.toFixed(1)})`);
-        console.log(`    Actual grid:  (${actualGridPos.col}, ${actualGridPos.row})`);
-        console.log(`    Claimed cell: ${claimedCell ? `(${claimedCell.col}, ${claimedCell.row})` : 'NONE'}`);
-        if (expectedWorldPos) {
-          console.log(`    Expected pos: (${expectedWorldPos.x.toFixed(1)}, ${expectedWorldPos.y.toFixed(1)})`);
-          console.log(`    Distance:     ${worldDist.toFixed(1)} px ${matchStatus}`);
+        // Check for position mismatches (only for settled corpses)
+        if (corpse.state === 'settled' && corpse.gridCell && grid) {
+          const actualGridPos = grid.worldToGrid(corpse.sprite.x, corpse.sprite.y);
+          if (actualGridPos.col !== corpse.gridCell.col || actualGridPos.row !== corpse.gridCell.row) {
+            mismatches++;
+            mismatchDetails.push(`  #${corpse.id}: at (${actualGridPos.col},${actualGridPos.row}) claimed (${corpse.gridCell.col},${corpse.gridCell.row})`);
+          }
         }
-        if (!posMatch && claimedCell) {
-          console.log(`    ${matchStatus} MISMATCH: sprite at grid (${actualGridPos.col}, ${actualGridPos.row}) but claimed (${claimedCell.col}, ${claimedCell.row})`);
-          mismatches++;
-        }
-        console.log('');
       }
 
-      console.log(`Total corpses: ${corpses.length}, Mismatches: ${mismatches}`);
-      console.log('='.repeat(50) + '\n');
+      // Compact output
+      console.log(`\n=== Corpse Grid Dump ===`);
+      console.log(`Corpses: ${corpses.length} (settled:${settled} falling:${falling} snapping:${snapping})`);
+      console.log(`Grid cells: ${grid ? grid.getOccupiedCount() : 0}`);
+
+      if (mismatches > 0) {
+        console.log(`⚠️ MISMATCHES: ${mismatches}`);
+        mismatchDetails.forEach(d => console.log(d));
+      }
+
+      // Print compact ASCII grid
+      if (grid && grid.getOccupiedCount() > 0) {
+        grid.debugPrintOccupiedCells();
+      }
+
+      console.log('');
     });
   }
 
@@ -545,7 +534,7 @@ export class TestArenaScene extends BaseScene {
 
   /**
    * Handle collision between enemy and corpse
-   * Called after collision resolution - freezes corpse when stood on, or destroys for Brutes
+   * Called after collision resolution
    * @param {Phaser.Physics.Arcade.Sprite} enemySprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
@@ -553,7 +542,7 @@ export class TestArenaScene extends BaseScene {
     const enemy = enemySprite.getData('owner');
     const corpse = corpseSprite.getData('owner');
 
-    if (!enemy || !corpse) return;
+    if (!enemy || !corpse || corpse.state !== 'settled') return;
 
     // Brutes destroy corpses on contact
     if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
@@ -561,17 +550,21 @@ export class TestArenaScene extends BaseScene {
       return;
     }
 
-    // For other enemies, freeze corpse if they're standing on it
+    // For climbing/blocking enemies, handle standing on corpse
     const enemyBody = enemySprite.body;
     const corpseBody = corpseSprite.body;
 
     const enemyBottom = enemyBody.bottom;
     const corpseTop = corpseBody.top;
-    const isStandingOn = enemyBottom >= corpseTop - 4 && enemyBottom <= corpseTop + 8;
+    const isStandingOn = enemyBottom >= corpseTop - 4 && enemyBottom <= corpseTop + 6;
 
-    if (isStandingOn) {
-      // Freeze corpse velocity so it acts as a stable platform
-      corpseBody.setVelocity(0, 0);
+    if (isStandingOn && enemyBody.velocity.y >= 0) {
+      // Snap enemy to stand on top of corpse
+      enemySprite.y = corpseTop - enemyBody.halfHeight;
+      enemyBody.velocity.y = 0;
+
+      // Mark enemy as grounded for AI/movement purposes
+      enemyBody.blocked.down = true;
     }
   }
 
@@ -584,56 +577,74 @@ export class TestArenaScene extends BaseScene {
    */
   shouldEnemyCollideWithCorpse(enemySprite, corpseSprite) {
     const enemy = enemySprite.getData('owner');
+    const corpse = corpseSprite.getData('owner');
+
+    // Only collide with settled corpses (they have static platform bodies)
+    if (!corpse || corpse.state !== 'settled') {
+      return false;
+    }
+
     if (!enemy) return true;
 
-    // Brutes need collision to detect and destroy corpses
-    if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
-      return true;
-    }
-
-    // Blocking enemies are blocked by corpses
-    if (enemy.corpseInteraction === CORPSE_INTERACTION.BLOCK) {
-      return true;
-    }
-
-    // Climbing enemies: check if they should land on or step over
     const enemyBody = enemySprite.body;
     const corpseBody = corpseSprite.body;
-
     const enemyBottom = enemyBody.bottom;
     const corpseTop = corpseBody.top;
     const heightDiff = enemyBottom - corpseTop;
 
-    // Enemy falling and above corpse - allow landing on it
-    const enemyFalling = enemyBody.velocity.y > 0;
-    const enemyAbove = enemyBottom <= corpseTop + 8;
-
-    if (enemyFalling && enemyAbove) {
-      return true; // Allow landing on corpse
+    // Brutes destroy corpses on contact
+    if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
+      return true; // Collision triggers destruction in handler
     }
 
-    // Enemy moving horizontally and can step up - position on top
-    const isMovingHorizontally = Math.abs(enemyBody.velocity.x) > 10;
-    const stepUpHeight = enemy.stepUpHeight || 32;
-    const canStepUp = heightDiff > -8 && heightDiff <= stepUpHeight;
+    // Blocking enemies are fully blocked by corpses
+    if (enemy.corpseInteraction === CORPSE_INTERACTION.BLOCK) {
+      // Don't collide if too far below (prevents getting stuck on sides)
+      if (heightDiff > 16) {
+        return false;
+      }
+      return true;
+    }
 
-    if (isMovingHorizontally && canStepUp) {
-      // Position enemy on top of the corpse for smooth step-up
+    // Climbing enemies (CORPSE_INTERACTION.CLIMB)
+    const stepUpHeight = enemy.stepUpHeight || 32;
+
+    // Enemy is above or at corpse top - normal collision for standing/landing
+    if (enemyBottom <= corpseTop + 4) {
+      return true;
+    }
+
+    // Enemy below corpse top but within step-up range - assist step-up
+    const canStepUp = heightDiff > 0 && heightDiff <= stepUpHeight;
+    const isMoving = Math.abs(enemyBody.velocity.x) > 5 || enemyBody.velocity.y !== 0;
+
+    if (canStepUp && isMoving) {
+      // Smoothly step up onto corpse
       const targetY = corpseTop - enemyBody.halfHeight;
 
-      // Only step up if we're not already above this corpse
-      if (enemySprite.y > targetY) {
-        enemySprite.y = targetY;
-        enemyBody.y = targetY - enemyBody.halfHeight;
-        // Small upward velocity to ensure they stay on top
-        if (enemyBody.velocity.y >= 0) {
-          enemyBody.velocity.y = -50;
+      if (enemySprite.y > targetY + 2) {
+        // Gradual step-up for smoother movement
+        const stepSpeed = 3;
+        enemySprite.y -= stepSpeed;
+
+        // Snap to final position when close
+        if (enemySprite.y <= targetY + stepSpeed) {
+          enemySprite.y = targetY;
+        }
+
+        // Neutralize downward velocity during step-up
+        if (enemyBody.velocity.y > 0) {
+          enemyBody.velocity.y = 0;
         }
       }
-      return true; // Enable collision to stand on corpse
+      return true;
     }
 
-    // Default: enable collision
+    // Enemy too far below - don't collide (prevents getting stuck on sides)
+    if (heightDiff > stepUpHeight) {
+      return false;
+    }
+
     return true;
   }
 
@@ -643,19 +654,32 @@ export class TestArenaScene extends BaseScene {
    * @param {Object} corpse - The corpse being destroyed
    */
   destroyCorpseWithForce(enemy, corpse) {
+    // Prevent double-destruction
+    if (corpse._beingDestroyed) return;
+    corpse._beingDestroyed = true;
+
     // Determine knockback direction (away from enemy)
     const direction = corpse.sprite.x > enemy.sprite.x ? 1 : -1;
     const force = enemy.corpseDestroyForce || 300;
 
-    // Apply force to corpse (brief moment of movement before destroy)
-    // Corpses are already movable, so we can directly set velocity
-    corpse.sprite.body.setVelocity(direction * force, -150);
+    // Re-enable corpse body as dynamic for knockback effect
+    if (corpse.sprite.body) {
+      corpse.sprite.body.enable = true;
+      corpse.sprite.body.moves = true;
+      corpse.sprite.body.setImmovable(false);
+      corpse.sprite.body.setAllowGravity(true);
+      // Restore full body size for flying effect
+      corpse.sprite.body.setSize(corpse.config.width, corpse.config.height);
+      corpse.sprite.body.setOffset(0, 0);
+      // Apply knockback force
+      corpse.sprite.body.setVelocity(direction * force, -200);
+    }
 
-    // Visual feedback
+    // Visual feedback - flash red
     corpse.sprite.setTint(0xff4444);
 
     // Destroy after brief delay (shows the knockback)
-    this.time.delayedCall(150, () => {
+    this.time.delayedCall(200, () => {
       // Emit particles at corpse position if EffectsManager exists
       if (this.effectsManager) {
         this.effectsManager.createImpact(
@@ -670,55 +694,70 @@ export class TestArenaScene extends BaseScene {
 
   /**
    * Process callback for player-corpse collision
-   * Enables collision when player should land on or step onto corpse
+   * Enables smooth step-up onto corpse piles
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    * @returns {boolean} Whether to apply collision physics
    */
   shouldPlayerCollideWithCorpse(playerSprite, corpseSprite) {
+    const corpse = corpseSprite.getData('owner');
+
+    // Only collide with settled corpses (they have static platform bodies)
+    if (!corpse || corpse.state !== 'settled') {
+      return false;
+    }
+
     const playerBody = playerSprite.body;
     const corpseBody = corpseSprite.body;
 
+    // Corpse body is a thin platform at the top, so corpseBody.top is the walking surface
     const playerBottom = playerBody.bottom;
     const corpseTop = corpseBody.top;
     const heightDiff = playerBottom - corpseTop;
 
-    // Player falling and above the corpse - allow landing on it
-    const playerFalling = playerBody.velocity.y > 0;
-    const playerAbove = playerBottom <= corpseTop + 8; // Tolerance for landing
-
-    if (playerFalling && playerAbove) {
-      return true; // Allow landing on corpse
+    // Player is above or at the corpse top level - normal collision for standing/landing
+    if (playerBottom <= corpseTop + 4) {
+      return true;
     }
 
-    // Player moving horizontally and can step up - enable collision to land on top
-    const isMovingHorizontally = Math.abs(playerBody.velocity.x) > 10;
-    const canStepUp = heightDiff > -8 && heightDiff <= this.playerStepUpHeight;
+    // Player is below corpse top but within step-up range
+    // Assist by nudging player up onto the platform
+    const canStepUp = heightDiff > 0 && heightDiff <= this.playerStepUpHeight;
+    const isMoving = Math.abs(playerBody.velocity.x) > 5 || playerBody.velocity.y !== 0;
 
-    if (isMovingHorizontally && canStepUp) {
-      // Position player on top of the corpse for smooth step-up
-      // This happens before physics resolution, so we set the position directly
+    if (canStepUp && isMoving) {
+      // Smoothly step up: position player on top of corpse
       const targetY = corpseTop - playerBody.halfHeight;
 
-      // Only step up if we're not already above this corpse
-      if (playerSprite.y > targetY) {
-        playerSprite.y = targetY;
-        playerBody.y = targetY - playerBody.halfHeight;
-        // Small upward velocity to ensure we stay on top
-        if (playerBody.velocity.y >= 0) {
-          playerBody.velocity.y = -50;
+      if (playerSprite.y > targetY + 2) {
+        // Gradual step-up for smoother feel
+        const stepSpeed = 4;
+        playerSprite.y -= stepSpeed;
+
+        // If close enough, snap to final position
+        if (playerSprite.y <= targetY + stepSpeed) {
+          playerSprite.y = targetY;
+        }
+
+        // Neutralize downward velocity during step-up
+        if (playerBody.velocity.y > 0) {
+          playerBody.velocity.y = 0;
         }
       }
-      return true; // Enable collision to stand on corpse
+      return true;
     }
 
-    // Default: enable collision
+    // Player too far below - don't collide (prevents getting stuck on sides)
+    if (heightDiff > this.playerStepUpHeight) {
+      return false;
+    }
+
     return true;
   }
 
   /**
    * Handle collision between player and corpse
-   * Called after collision resolution - freezes corpse when stood on
+   * Called after collision resolution
    * @param {Phaser.Physics.Arcade.Sprite} playerSprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
@@ -729,16 +768,15 @@ export class TestArenaScene extends BaseScene {
     // Check if player is standing on top of this corpse
     const playerBottom = playerBody.bottom;
     const corpseTop = corpseBody.top;
-    const isStandingOn = playerBottom >= corpseTop - 4 && playerBottom <= corpseTop + 8;
+    const isStandingOn = playerBottom >= corpseTop - 4 && playerBottom <= corpseTop + 6;
 
-    if (isStandingOn) {
-      // Freeze corpse velocity so it acts as a stable platform
-      corpseBody.setVelocity(0, 0);
+    if (isStandingOn && playerBody.velocity.y >= 0) {
+      // Snap player to stand exactly on top for clean landing
+      playerSprite.y = corpseTop - playerBody.halfHeight;
+      playerBody.velocity.y = 0;
 
-      // Ensure player stays grounded
-      if (playerBody.velocity.y > 0) {
-        playerBody.velocity.y = 0;
-      }
+      // Mark player as touching ground (for jump detection)
+      playerBody.blocked.down = true;
     }
   }
 
