@@ -64,6 +64,12 @@ export class CorpseManager {
     // platformLayer is used for ground detection
     this.grid = new CorpseGrid(scene, config.platformLayer || null);
 
+    // Track active colliders with corpse platform bodies
+    this.platformColliders = [];
+
+    // Setup platform body collision callbacks
+    this.setupPlatformCallbacks();
+
     // Reference position for farthest cleanup (usually player position)
     this.referenceX = 0;
     this.referenceY = 0;
@@ -84,6 +90,111 @@ export class CorpseManager {
     if (!this.grid.platformLayer && groups.length > 0) {
       this.grid.platformLayer = groups[0];
     }
+  }
+
+  /**
+   * Setup callbacks for when platform bodies are created/destroyed
+   * This enables player and enemies to walk on corpse piles
+   */
+  setupPlatformCallbacks() {
+    // Called when a new platform body is created
+    this.grid.onPlatformCreated = (platformBody) => {
+      // Add collider with player if available
+      if (this.scene.player && this.scene.player.sprite) {
+        const collider = this.scene.physics.add.collider(
+          this.scene.player.sprite,
+          platformBody
+        );
+        this.platformColliders.push({
+          collider,
+          platform: platformBody,
+          target: this.scene.player.sprite,
+        });
+      }
+
+      // Add colliders with all existing enemies
+      if (this.scene.enemies) {
+        for (const enemy of this.scene.enemies) {
+          if (enemy.sprite && enemy.sprite.active) {
+            const collider = this.scene.physics.add.collider(
+              enemy.sprite,
+              platformBody
+            );
+            this.platformColliders.push({
+              collider,
+              platform: platformBody,
+              target: enemy.sprite,
+            });
+          }
+        }
+      }
+
+      // Add collider with falling corpses
+      const collider = this.scene.physics.add.collider(
+        this.corpseGroup,
+        platformBody
+      );
+      this.platformColliders.push({
+        collider,
+        platform: platformBody,
+        target: this.corpseGroup,
+      });
+    };
+
+    // Called when a platform body is destroyed
+    this.grid.onPlatformDestroyed = (platformBody) => {
+      // Remove all colliders associated with this platform
+      this.platformColliders = this.platformColliders.filter((entry) => {
+        if (entry.platform === platformBody) {
+          if (entry.collider) {
+            entry.collider.destroy();
+          }
+          return false;
+        }
+        return true;
+      });
+    };
+  }
+
+  /**
+   * Add platform colliders for a newly spawned enemy
+   * Call this when a new enemy is added to the scene
+   * @param {Enemy} enemy - The enemy to add colliders for
+   */
+  addEnemyPlatformColliders(enemy) {
+    if (!enemy.sprite || !enemy.sprite.active) return;
+
+    // Add collider with each existing platform body
+    for (const [key, platform] of this.grid.platformBodies) {
+      const collider = this.scene.physics.add.collider(
+        enemy.sprite,
+        platform.body
+      );
+      this.platformColliders.push({
+        collider,
+        platform: platform.body,
+        target: enemy.sprite,
+      });
+    }
+  }
+
+  /**
+   * Remove platform colliders for an enemy that is being destroyed
+   * Call this when an enemy is removed from the scene
+   * @param {Enemy} enemy - The enemy to remove colliders for
+   */
+  removeEnemyPlatformColliders(enemy) {
+    if (!enemy.sprite) return;
+
+    this.platformColliders = this.platformColliders.filter((entry) => {
+      if (entry.target === enemy.sprite) {
+        if (entry.collider) {
+          entry.collider.destroy();
+        }
+        return false;
+      }
+      return true;
+    });
   }
 
   /**
@@ -387,6 +498,10 @@ export class CorpseManager {
       }
     }
 
+    // Rebuild any platform bodies for rows that changed
+    // This creates/updates the collision surfaces for corpse piles
+    this.grid.rebuildDirtyPlatforms();
+
     // Update debug visualization if enabled
     if (this.debugEnabled) {
       this.updateDebugVisualization();
@@ -537,6 +652,14 @@ export class CorpseManager {
       this.debugGraphics.destroy();
       this.debugGraphics = null;
     }
+
+    // Clean up platform colliders
+    for (const entry of this.platformColliders) {
+      if (entry.collider) {
+        entry.collider.destroy();
+      }
+    }
+    this.platformColliders = [];
 
     this.corpseGroup.destroy(true);
     this.grid.destroy();

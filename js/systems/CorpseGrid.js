@@ -32,6 +32,17 @@ export class CorpseGrid {
     this.cellHeight = GRID_CONFIG.CELL_HEIGHT;
     this.rowOffset = GRID_CONFIG.ROW_OFFSET;
 
+    // Platform bodies for walkable corpse surfaces
+    // Map<"row-startCol-endCol", { body, row, startCol, endCol }>
+    this.platformBodies = new Map();
+
+    // Callback when platform bodies are created (set by CorpseManager)
+    this.onPlatformCreated = null;
+    this.onPlatformDestroyed = null;
+
+    // Track which rows need platform rebuilds (batched updates)
+    this.dirtyRows = new Set();
+
     // Debug visualization
     this.debugEnabled = false;
     this.debugGraphics = null;
@@ -277,6 +288,8 @@ export class CorpseGrid {
    */
   occupyCell(col, row, corpseData) {
     this.occupiedCells.set(this.getCellKey(col, row), corpseData);
+    // Mark row for platform body rebuild
+    this.markRowDirty(row);
   }
 
   /**
@@ -286,6 +299,8 @@ export class CorpseGrid {
    */
   clearCell(col, row) {
     this.occupiedCells.delete(this.getCellKey(col, row));
+    // Mark row for platform body rebuild
+    this.markRowDirty(row);
   }
 
   /**
@@ -526,6 +541,174 @@ export class CorpseGrid {
     return true; // Both support cells have support
   }
 
+  // ========================================
+  // Platform Body Management
+  // ========================================
+
+  /**
+   * Mark a row as needing platform body rebuild
+   * @param {number} row - Row index to mark dirty
+   */
+  markRowDirty(row) {
+    this.dirtyRows.add(row);
+  }
+
+  /**
+   * Process all dirty rows and rebuild their platform bodies
+   * Call this once per frame after corpse updates
+   */
+  rebuildDirtyPlatforms() {
+    for (const row of this.dirtyRows) {
+      this.rebuildPlatformForRow(row);
+    }
+    this.dirtyRows.clear();
+  }
+
+  /**
+   * Rebuild platform bodies for a specific row
+   * Destroys existing platforms and creates new ones based on current occupied cells
+   * @param {number} row - Row index to rebuild
+   */
+  rebuildPlatformForRow(row) {
+    // Destroy existing platform bodies for this row
+    for (const [key, platform] of this.platformBodies) {
+      if (platform.row === row) {
+        if (this.onPlatformDestroyed) {
+          this.onPlatformDestroyed(platform.body);
+        }
+        platform.body.destroy();
+        this.platformBodies.delete(key);
+      }
+    }
+
+    // Find all horizontal runs of occupied cells in this row
+    const runs = this.findHorizontalRuns(row);
+
+    // Create a platform body for each run
+    for (const run of runs) {
+      this.createPlatformBody(row, run.startCol, run.endCol);
+    }
+  }
+
+  /**
+   * Find contiguous horizontal runs of occupied cells in a row
+   * @param {number} row - Row index to scan
+   * @returns {Array<{ startCol: number, endCol: number }>}
+   */
+  findHorizontalRuns(row) {
+    const runs = [];
+
+    // Get bounds of occupied cells to limit search
+    const bounds = this.getRowBounds(row);
+    if (!bounds) return runs;
+
+    let currentRun = null;
+
+    for (let col = bounds.minCol; col <= bounds.maxCol; col++) {
+      if (this.isOccupied(col, row)) {
+        if (!currentRun) {
+          currentRun = { startCol: col, endCol: col };
+        } else {
+          currentRun.endCol = col;
+        }
+      } else {
+        if (currentRun) {
+          runs.push(currentRun);
+          currentRun = null;
+        }
+      }
+    }
+
+    // Don't forget the last run
+    if (currentRun) {
+      runs.push(currentRun);
+    }
+
+    return runs;
+  }
+
+  /**
+   * Get the column bounds for occupied cells in a specific row
+   * @param {number} row - Row index
+   * @returns {{ minCol: number, maxCol: number } | null}
+   */
+  getRowBounds(row) {
+    let minCol = Infinity;
+    let maxCol = -Infinity;
+    let found = false;
+
+    for (const key of this.occupiedCells.keys()) {
+      const parsed = this.parseCellKey(key);
+      if (parsed.row === row) {
+        minCol = Math.min(minCol, parsed.col);
+        maxCol = Math.max(maxCol, parsed.col);
+        found = true;
+      }
+    }
+
+    return found ? { minCol, maxCol } : null;
+  }
+
+  /**
+   * Create a static platform body spanning a horizontal run of corpses
+   * @param {number} row - Row index
+   * @param {number} startCol - Starting column
+   * @param {number} endCol - Ending column
+   */
+  createPlatformBody(row, startCol, endCol) {
+    // Calculate world position for top of this row of corpses
+    const startWorld = this.gridToWorld(startCol, row);
+    const endWorld = this.gridToWorld(endCol, row);
+
+    const width = (endCol - startCol + 1) * this.cellWidth;
+    const height = 8; // Thin collision surface on top of corpses
+
+    // Center X between start and end cells
+    const x = (startWorld.x + endWorld.x) / 2;
+    // Position at top of corpse cells
+    const y = startWorld.y - (this.cellHeight / 2) + 2;
+
+    // Create static body (using a rectangle sprite with no texture)
+    const platform = this.scene.add.rectangle(x, y, width, height);
+    platform.setVisible(false); // Invisible - just for collision
+    this.scene.physics.add.existing(platform, true); // true = static body
+
+    // Store reference
+    const key = `${row}-${startCol}-${endCol}`;
+    this.platformBodies.set(key, {
+      body: platform,
+      row,
+      startCol,
+      endCol,
+    });
+
+    // Notify callback for collision setup
+    if (this.onPlatformCreated) {
+      this.onPlatformCreated(platform);
+    }
+  }
+
+  /**
+   * Get all platform bodies
+   * @returns {Map} Map of platform bodies
+   */
+  getPlatformBodies() {
+    return this.platformBodies;
+  }
+
+  /**
+   * Destroy all platform bodies
+   */
+  clearPlatformBodies() {
+    for (const [key, platform] of this.platformBodies) {
+      if (this.onPlatformDestroyed) {
+        this.onPlatformDestroyed(platform.body);
+      }
+      platform.body.destroy();
+    }
+    this.platformBodies.clear();
+  }
+
   /**
    * Get all occupied cells in a region
    * @param {number} minCol - Minimum column
@@ -561,6 +744,8 @@ export class CorpseGrid {
    */
   clearAll() {
     this.occupiedCells.clear();
+    this.clearPlatformBodies();
+    this.dirtyRows.clear();
   }
 
   /**
@@ -671,12 +856,31 @@ export class CorpseGrid {
       graphics.fillCircle(x, y, 2);
     }
 
+    // Draw platform bodies (cyan rectangles showing collision surfaces)
+    graphics.lineStyle(2, 0x00ffff, 0.8);
+    for (const [key, platform] of this.platformBodies) {
+      const body = platform.body.body || platform.body;
+      if (body && body.position) {
+        // For static bodies, position is the center
+        const x = body.position.x;
+        const y = body.position.y;
+        const width = body.width;
+        const height = body.height;
+        graphics.strokeRect(x, y, width, height);
+      } else if (platform.body.x !== undefined) {
+        // Fallback for rectangle game objects
+        const x = platform.body.x - platform.body.width / 2;
+        const y = platform.body.y - platform.body.height / 2;
+        graphics.strokeRect(x, y, platform.body.width, platform.body.height);
+      }
+    }
+
     // Draw legend in top-left
     const legendX = viewMinX + 10;
     const legendY = viewMinY + 60;
 
     graphics.fillStyle(0x000000, 0.7);
-    graphics.fillRect(legendX, legendY, 140, 50);
+    graphics.fillRect(legendX, legendY, 140, 65);
 
     graphics.lineStyle(1, 0x888888, 0.8);
     graphics.strokeRect(legendX + 5, legendY + 5, 12, 10);
@@ -684,6 +888,8 @@ export class CorpseGrid {
     graphics.strokeRect(legendX + 5, legendY + 20, 12, 10);
     graphics.fillStyle(0xff4444, 0.8);
     graphics.fillRect(legendX + 5, legendY + 35, 12, 10);
+    graphics.lineStyle(2, 0x00ffff, 0.8);
+    graphics.strokeRect(legendX + 5, legendY + 50, 12, 6);
   }
 
   /**
@@ -724,8 +930,15 @@ export class CorpseGrid {
       this.debugGraphics.destroy();
       this.debugGraphics = null;
     }
+
+    // Clean up platform bodies
+    this.clearPlatformBodies();
+    this.dirtyRows.clear();
+
     this.occupiedCells.clear();
     this.platformLayer = null;
+    this.onPlatformCreated = null;
+    this.onPlatformDestroyed = null;
     this.scene = null;
   }
 }
