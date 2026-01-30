@@ -534,7 +534,7 @@ export class TestArenaScene extends BaseScene {
 
   /**
    * Handle collision between enemy and corpse
-   * Called after collision resolution - freezes corpse when stood on, or destroys for Brutes
+   * Called after collision resolution
    * @param {Phaser.Physics.Arcade.Sprite} enemySprite
    * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
    */
@@ -542,7 +542,7 @@ export class TestArenaScene extends BaseScene {
     const enemy = enemySprite.getData('owner');
     const corpse = corpseSprite.getData('owner');
 
-    if (!enemy || !corpse) return;
+    if (!enemy || !corpse || corpse.state !== 'settled') return;
 
     // Brutes destroy corpses on contact
     if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
@@ -550,17 +550,21 @@ export class TestArenaScene extends BaseScene {
       return;
     }
 
-    // For other enemies, freeze corpse if they're standing on it
+    // For climbing/blocking enemies, handle standing on corpse
     const enemyBody = enemySprite.body;
     const corpseBody = corpseSprite.body;
 
     const enemyBottom = enemyBody.bottom;
     const corpseTop = corpseBody.top;
-    const isStandingOn = enemyBottom >= corpseTop - 4 && enemyBottom <= corpseTop + 8;
+    const isStandingOn = enemyBottom >= corpseTop - 4 && enemyBottom <= corpseTop + 6;
 
-    if (isStandingOn) {
-      // Freeze corpse velocity so it acts as a stable platform
-      corpseBody.setVelocity(0, 0);
+    if (isStandingOn && enemyBody.velocity.y >= 0) {
+      // Snap enemy to stand on top of corpse
+      enemySprite.y = corpseTop - enemyBody.halfHeight;
+      enemyBody.velocity.y = 0;
+
+      // Mark enemy as grounded for AI/movement purposes
+      enemyBody.blocked.down = true;
     }
   }
 
@@ -573,56 +577,74 @@ export class TestArenaScene extends BaseScene {
    */
   shouldEnemyCollideWithCorpse(enemySprite, corpseSprite) {
     const enemy = enemySprite.getData('owner');
+    const corpse = corpseSprite.getData('owner');
+
+    // Only collide with settled corpses (they have static platform bodies)
+    if (!corpse || corpse.state !== 'settled') {
+      return false;
+    }
+
     if (!enemy) return true;
 
-    // Brutes need collision to detect and destroy corpses
-    if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
-      return true;
-    }
-
-    // Blocking enemies are blocked by corpses
-    if (enemy.corpseInteraction === CORPSE_INTERACTION.BLOCK) {
-      return true;
-    }
-
-    // Climbing enemies: check if they should land on or step over
     const enemyBody = enemySprite.body;
     const corpseBody = corpseSprite.body;
-
     const enemyBottom = enemyBody.bottom;
     const corpseTop = corpseBody.top;
     const heightDiff = enemyBottom - corpseTop;
 
-    // Enemy falling and above corpse - allow landing on it
-    const enemyFalling = enemyBody.velocity.y > 0;
-    const enemyAbove = enemyBottom <= corpseTop + 8;
-
-    if (enemyFalling && enemyAbove) {
-      return true; // Allow landing on corpse
+    // Brutes destroy corpses on contact
+    if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
+      return true; // Collision triggers destruction in handler
     }
 
-    // Enemy moving horizontally and can step up - position on top
-    const isMovingHorizontally = Math.abs(enemyBody.velocity.x) > 10;
-    const stepUpHeight = enemy.stepUpHeight || 32;
-    const canStepUp = heightDiff > -8 && heightDiff <= stepUpHeight;
+    // Blocking enemies are fully blocked by corpses
+    if (enemy.corpseInteraction === CORPSE_INTERACTION.BLOCK) {
+      // Don't collide if too far below (prevents getting stuck on sides)
+      if (heightDiff > 16) {
+        return false;
+      }
+      return true;
+    }
 
-    if (isMovingHorizontally && canStepUp) {
-      // Position enemy on top of the corpse for smooth step-up
+    // Climbing enemies (CORPSE_INTERACTION.CLIMB)
+    const stepUpHeight = enemy.stepUpHeight || 32;
+
+    // Enemy is above or at corpse top - normal collision for standing/landing
+    if (enemyBottom <= corpseTop + 4) {
+      return true;
+    }
+
+    // Enemy below corpse top but within step-up range - assist step-up
+    const canStepUp = heightDiff > 0 && heightDiff <= stepUpHeight;
+    const isMoving = Math.abs(enemyBody.velocity.x) > 5 || enemyBody.velocity.y !== 0;
+
+    if (canStepUp && isMoving) {
+      // Smoothly step up onto corpse
       const targetY = corpseTop - enemyBody.halfHeight;
 
-      // Only step up if we're not already above this corpse
-      if (enemySprite.y > targetY) {
-        enemySprite.y = targetY;
-        enemyBody.y = targetY - enemyBody.halfHeight;
-        // Small upward velocity to ensure they stay on top
-        if (enemyBody.velocity.y >= 0) {
-          enemyBody.velocity.y = -50;
+      if (enemySprite.y > targetY + 2) {
+        // Gradual step-up for smoother movement
+        const stepSpeed = 3;
+        enemySprite.y -= stepSpeed;
+
+        // Snap to final position when close
+        if (enemySprite.y <= targetY + stepSpeed) {
+          enemySprite.y = targetY;
+        }
+
+        // Neutralize downward velocity during step-up
+        if (enemyBody.velocity.y > 0) {
+          enemyBody.velocity.y = 0;
         }
       }
-      return true; // Enable collision to stand on corpse
+      return true;
     }
 
-    // Default: enable collision
+    // Enemy too far below - don't collide (prevents getting stuck on sides)
+    if (heightDiff > stepUpHeight) {
+      return false;
+    }
+
     return true;
   }
 
@@ -632,19 +654,32 @@ export class TestArenaScene extends BaseScene {
    * @param {Object} corpse - The corpse being destroyed
    */
   destroyCorpseWithForce(enemy, corpse) {
+    // Prevent double-destruction
+    if (corpse._beingDestroyed) return;
+    corpse._beingDestroyed = true;
+
     // Determine knockback direction (away from enemy)
     const direction = corpse.sprite.x > enemy.sprite.x ? 1 : -1;
     const force = enemy.corpseDestroyForce || 300;
 
-    // Apply force to corpse (brief moment of movement before destroy)
-    // Corpses are already movable, so we can directly set velocity
-    corpse.sprite.body.setVelocity(direction * force, -150);
+    // Re-enable corpse body as dynamic for knockback effect
+    if (corpse.sprite.body) {
+      corpse.sprite.body.enable = true;
+      corpse.sprite.body.moves = true;
+      corpse.sprite.body.setImmovable(false);
+      corpse.sprite.body.setAllowGravity(true);
+      // Restore full body size for flying effect
+      corpse.sprite.body.setSize(corpse.config.width, corpse.config.height);
+      corpse.sprite.body.setOffset(0, 0);
+      // Apply knockback force
+      corpse.sprite.body.setVelocity(direction * force, -200);
+    }
 
-    // Visual feedback
+    // Visual feedback - flash red
     corpse.sprite.setTint(0xff4444);
 
     // Destroy after brief delay (shows the knockback)
-    this.time.delayedCall(150, () => {
+    this.time.delayedCall(200, () => {
       // Emit particles at corpse position if EffectsManager exists
       if (this.effectsManager) {
         this.effectsManager.createImpact(
