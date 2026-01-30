@@ -338,8 +338,8 @@ export class TestArenaScene extends BaseScene {
       console.log('');
     });
 
-    // AI debug dump (I key)
-    this.input.keyboard.on('keydown-I', () => {
+    // AI debug dump (7 key)
+    this.input.keyboard.on('keydown-SEVEN', () => {
       console.log('--- ENEMY AI DEBUG ---');
       for (const enemy of this.enemies) {
         enemy.debugAI();
@@ -911,7 +911,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | I - AI Debug | G - Grid | 0 - Mute');
+    lines.push('R - Respawn | B - Boss | 7 - AI Debug | G - Grid | 0 - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
