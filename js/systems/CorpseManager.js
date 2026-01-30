@@ -14,7 +14,7 @@ export const CLEANUP_MODE = Object.freeze({
  * Default configuration for CorpseManager
  */
 export const CORPSE_MANAGER_DEFAULTS = Object.freeze({
-  MAX_CORPSES: 30,
+  MAX_CORPSES: 50,
   CLEANUP_MODE: CLEANUP_MODE.OLDEST,
   DECAY_ENABLED: false,
   DECAY_TIME: 30000,
@@ -120,14 +120,14 @@ export class CorpseManager {
 
     // Re-apply physics settings that group membership may have overwritten
     // World gravity is 0, so we must set per-body gravity
-    // Corpses are movable with high mass for natural stacking
+    // Corpses are movable and settle using sand physics algorithm
     corpse.sprite.body.setImmovable(false);
     corpse.sprite.body.setMass(CORPSE_DEFAULTS.MASS);
     corpse.sprite.body.setAllowGravity(true);
     corpse.sprite.body.setGravityY(PHYSICS.GRAVITY);
-    corpse.sprite.body.setBounce(0);
-    corpse.sprite.body.setDrag(CORPSE_DEFAULTS.DRAG_X, CORPSE_DEFAULTS.DRAG_Y);
-    corpse.sprite.body.setMaxVelocity(200, 800);
+    corpse.sprite.body.setBounce(CORPSE_DEFAULTS.BOUNCE);
+    corpse.sprite.body.setDrag(CORPSE_DEFAULTS.DRAG_X, 0);
+    corpse.sprite.body.setMaxVelocityY(PHYSICS.TERMINAL_VELOCITY);
 
     // Set up individual terrain colliders for this corpse
     // Group-level colliders don't reliably apply to sprites with pre-existing physics bodies
@@ -275,6 +275,14 @@ export class CorpseManager {
       const corpse = this.corpses[i];
       if (!corpse.sprite || !corpse.sprite.active) {
         this.corpses.splice(i, 1);
+      }
+    }
+
+    // Update each corpse (handles settling logic)
+    // Settled corpses skip their update internally for performance
+    for (const corpse of this.corpses) {
+      if (corpse.sprite && corpse.sprite.active) {
+        corpse.update(time, delta);
       }
     }
 
