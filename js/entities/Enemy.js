@@ -1412,7 +1412,7 @@ class EnemyDeadState extends State {
   }
 
   enter(prevState, params) {
-    // Emit event for corpse spawning before fade
+    // Emit event for corpse spawning - corpse system handles visual persistence
     this.enemy.scene.events.emit('enemy:died', {
       x: this.enemy.sprite.x,
       y: this.enemy.sprite.y,
@@ -1421,21 +1421,8 @@ class EnemyDeadState extends State {
       height: this.enemy.sprite.body.height,
     });
 
-    this.enemy.sprite.setTint(0x666666);
-    this.enemy.sprite.setAlpha(0.7);
-    this.enemy.sprite.body.setVelocity(0, 0);
-    this.enemy.sprite.body.setAllowGravity(false);
-
-    this.enemy.scene.tweens.add({
-      targets: this.enemy.sprite,
-      alpha: 0,
-      y: this.enemy.sprite.y - 20,
-      duration: 500,
-      ease: 'Power2',
-      onComplete: () => {
-        this.enemy.destroy();
-      },
-    });
+    // Immediately destroy the enemy - corpse replaces the visual
+    this.enemy.destroy();
   }
 
   update(time, delta) {
