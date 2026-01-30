@@ -378,16 +378,39 @@ export class Corpse {
       this.sprite.body.setImmovable(true);
       this.sprite.body.moves = false;
 
-      // Resize body to be a thin platform at the TOP of the corpse
-      // This allows player to walk ON the corpse, not through it
-      const platformHeight = 6;
-      const bodyWidth = this.config.width * 0.9;
-      const offsetX = (this.config.width - bodyWidth) / 2;
-      // Position platform at top of corpse visual
-      const offsetY = -this.config.height / 2 + platformHeight / 2;
+      // The sprite is rotated 90 degrees, so:
+      // - Visual width = config.height (original height becomes visual width)
+      // - Visual height = config.width (original width becomes visual height)
+      const visualWidth = this.config.height;
+      const visualHeight = this.config.width;
 
-      this.sprite.body.setSize(bodyWidth, platformHeight);
+      // Create a thin platform body at the TOP of the visual corpse
+      const platformHeight = 4; // Very thin platform surface
+      const platformWidth = visualWidth * 0.85; // Slightly narrower than visual
+
+      this.sprite.body.setSize(platformWidth, platformHeight);
+
+      // Calculate offset to position platform at visual top and centered horizontally
+      // Body offset is relative to the unrotated sprite's top-left corner
+      // For origin (0.5, 0.5): body top-left = sprite.position - sprite.dimensions/2 + offset
+
+      // Horizontal: center the narrower body within the unrotated sprite width
+      const offsetX = (this.config.width - platformWidth) / 2;
+
+      // Vertical: position body at visual top
+      // Body top = sprite.y - config.height/2 + offset.y
+      // Visual top = sprite.y - visualHeight/2 = sprite.y - config.width/2
+      // For body top = visual top: offset.y = config.height/2 - config.width/2
+      const offsetY = (this.config.height - this.config.width) / 2;
+
       this.sprite.body.setOffset(offsetX, offsetY);
+
+      // One-way platform: entities can pass through from below and sides
+      // but stand ON from above - prevents getting stuck inside piles
+      this.sprite.body.checkCollision.up = true;
+      this.sprite.body.checkCollision.down = false;
+      this.sprite.body.checkCollision.left = false;
+      this.sprite.body.checkCollision.right = false;
     }
 
     // Clear snap data
