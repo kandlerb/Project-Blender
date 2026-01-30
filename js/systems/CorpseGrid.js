@@ -32,6 +32,17 @@ export class CorpseGrid {
     this.cellHeight = GRID_CONFIG.CELL_HEIGHT;
     this.rowOffset = GRID_CONFIG.ROW_OFFSET;
 
+    // Platform bodies for walkable corpse surfaces
+    // Map<"row-startCol-endCol", { body, row, startCol, endCol }>
+    this.platformBodies = new Map();
+
+    // Callback when platform bodies are created (set by CorpseManager)
+    this.onPlatformCreated = null;
+    this.onPlatformDestroyed = null;
+
+    // Track which rows need platform rebuilds (batched updates)
+    this.dirtyRows = new Set();
+
     // Debug visualization
     this.debugEnabled = false;
     this.debugGraphics = null;
@@ -129,6 +140,34 @@ export class CorpseGrid {
   }
 
   /**
+   * Get the two support cells for a given cell based on row parity
+   * In a staggered brick pattern:
+   * - Even rows: support comes from (col-1, row+1) and (col, row+1)
+   * - Odd rows: support comes from (col, row+1) and (col+1, row+1)
+   *
+   * @param {number} col - Column index
+   * @param {number} row - Row index
+   * @returns {Array<{ col: number, row: number }>}
+   */
+  getSupportCells(col, row) {
+    const rowBelow = row + 1;
+
+    if (row % 2 === 0) {
+      // Even row: support comes from (col-1, row+1) and (col, row+1)
+      return [
+        { col: col - 1, row: rowBelow },
+        { col: col, row: rowBelow },
+      ];
+    } else {
+      // Odd row: support comes from (col, row+1) and (col+1, row+1)
+      return [
+        { col: col, row: rowBelow },
+        { col: col + 1, row: rowBelow },
+      ];
+    }
+  }
+
+  /**
    * Get the corpse data stored in a cell
    * @param {number} col - Column index
    * @param {number} row - Row index
@@ -176,41 +215,69 @@ export class CorpseGrid {
   }
 
   /**
+   * Check if a specific cell position overlaps with solid ground
+   * Unlike isGroundBelow, this checks the cell itself, not the cell below it
+   * @param {number} col - Column index
+   * @param {number} row - Row index
+   * @returns {boolean}
+   */
+  isGroundAt(col, row) {
+    if (!this.platformLayer) return false;
+
+    // Get the world position of this cell
+    const cellPos = this.gridToWorld(col, row);
+
+    // Check if this position intersects with any platform tiles
+    const children = this.platformLayer.getChildren();
+    for (const tile of children) {
+      if (!tile.body) continue;
+
+      const body = tile.body;
+
+      // Check if the cell position overlaps with this tile
+      const cellLeft = cellPos.x - this.cellWidth * 0.4;
+      const cellRight = cellPos.x + this.cellWidth * 0.4;
+      const cellTop = cellPos.y - this.cellHeight * 0.4;
+      const cellBottom = cellPos.y + this.cellHeight * 0.4;
+
+      const horizontalOverlap = cellRight > body.left && cellLeft < body.right;
+      const verticalOverlap = cellBottom > body.top && cellTop < body.bottom;
+
+      if (horizontalOverlap && verticalOverlap) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Check if a cell has support (ground below OR occupied cell(s) below)
-   * For staggered grid, "below" depends on row parity:
-   * - Even rows: check cell directly below (col, row+1)
-   * - Odd rows: check two cells below (col, row+1) and (col+1, row+1)
+   * A cell has support if ANY of these conditions are true:
+   * 1. The row below is ground (tilemap collision)
+   * 2. At least ONE of the two supporting cells below is occupied OR is ground
    *
    * @param {number} col - Column index
    * @param {number} row - Row index
    * @returns {boolean}
    */
   hasSupport(col, row) {
-    // First check for ground collision at this position
+    // First check for ground collision directly below this cell
     if (this.isGroundBelow(col, row)) {
       return true;
     }
 
-    // Check for supporting cells based on row parity
-    if (row % 2 === 0) {
-      // Even row: sits on top of odd row below
-      // In brick pattern, even rows are supported by two cells in odd row below
-      // Check (col-1, row+1) and (col, row+1) in the staggered pattern
-      const supportLeft = this.isOccupied(col - 1, row + 1);
-      const supportRight = this.isOccupied(col, row + 1);
+    // Get the two support cells based on row parity
+    const supportCells = this.getSupportCells(col, row);
 
-      // Need at least one support, but ideally both for stability
-      // For now, require at least one
-      return supportLeft || supportRight;
-    } else {
-      // Odd row: sits on top of even row below
-      // In brick pattern, odd rows are supported by two cells in even row below
-      // Check (col, row+1) and (col+1, row+1) in the staggered pattern
-      const supportLeft = this.isOccupied(col, row + 1);
-      const supportRight = this.isOccupied(col + 1, row + 1);
-
-      return supportLeft || supportRight;
+    // Has support if EITHER support cell is occupied OR is at ground level
+    for (const cell of supportCells) {
+      if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
+        return true; // ONE support is enough!
+      }
     }
+
+    return false;
   }
 
   /**
@@ -221,6 +288,8 @@ export class CorpseGrid {
    */
   occupyCell(col, row, corpseData) {
     this.occupiedCells.set(this.getCellKey(col, row), corpseData);
+    // Mark row for platform body rebuild
+    this.markRowDirty(row);
   }
 
   /**
@@ -230,11 +299,13 @@ export class CorpseGrid {
    */
   clearCell(col, row) {
     this.occupiedCells.delete(this.getCellKey(col, row));
+    // Mark row for platform body rebuild
+    this.markRowDirty(row);
   }
 
   /**
    * Find the best valid cell for a falling corpse near position (x, y)
-   * Searches downward and sideways to find a cell with support
+   * Searches downward first, then upward if spawned inside a pile, then nearest
    * @param {number} worldX - World X position
    * @param {number} worldY - World Y position
    * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
@@ -243,16 +314,37 @@ export class CorpseGrid {
     // Convert to grid coordinates
     const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
 
-    // Search parameters
-    const maxSearchRows = 100; // How far down to search
-    const maxSearchCols = 10; // How far sideways to search
+    // FIRST: Try to find a cell at or below current position
+    const cellBelow = this.findCellDownward(startCol, startRow);
+    if (cellBelow) return cellBelow;
 
+    // SECOND: If spawned inside a pile, search UPWARD for the top
+    const cellAbove = this.findCellUpward(startCol, startRow);
+    if (cellAbove) return cellAbove;
+
+    // THIRD: Search in all directions for nearest valid cell
+    const cellNearby = this.findNearestValidCell(worldX, worldY);
+    if (cellNearby) return cellNearby;
+
+    // No valid position found
+    return null;
+  }
+
+  /**
+   * Search downward and sideways from a position to find a valid cell
+   * @param {number} startCol - Starting column
+   * @param {number} startRow - Starting row
+   * @param {number} maxRows - Maximum rows to search down (default 100)
+   * @param {number} maxCols - Maximum columns to search sideways (default 10)
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findCellDownward(startCol, startRow, maxRows = 100, maxCols = 10) {
     // Start from current position and search downward
-    for (let rowOffset = 0; rowOffset < maxSearchRows; rowOffset++) {
+    for (let rowOffset = 0; rowOffset < maxRows; rowOffset++) {
       const row = startRow + rowOffset;
 
       // Search horizontally, starting from center and expanding outward
-      for (let colOffset = 0; colOffset <= maxSearchCols; colOffset++) {
+      for (let colOffset = 0; colOffset <= maxCols; colOffset++) {
         // Try both left and right at each offset
         const colsToTry = colOffset === 0 ? [startCol] : [startCol - colOffset, startCol + colOffset];
 
@@ -276,7 +368,6 @@ export class CorpseGrid {
       }
     }
 
-    // No valid position found (shouldn't happen normally)
     return null;
   }
 
@@ -339,25 +430,283 @@ export class CorpseGrid {
   }
 
   /**
-   * Check if a cell has dual support (both supporting cells occupied)
+   * Search upward from a position to find a valid cell at the top of a pile
+   * Used when a corpse spawns inside an existing pile
+   * @param {number} col - Starting column
+   * @param {number} row - Starting row
+   * @param {number} maxRows - Maximum rows to search upward (default 50)
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findCellUpward(col, row, maxRows = 50) {
+    const minRow = Math.max(0, row - maxRows);
+
+    // Scan upward from current position
+    for (let checkRow = row - 1; checkRow >= minRow; checkRow--) {
+      // Check this cell directly above
+      if (!this.isOccupied(col, checkRow) && this.hasSupport(col, checkRow)) {
+        const worldPos = this.gridToWorld(col, checkRow);
+        return {
+          col,
+          row: checkRow,
+          worldX: worldPos.x,
+          worldY: worldPos.y,
+        };
+      }
+
+      // Check adjacent columns at this height
+      for (const offset of [-1, 1]) {
+        const checkCol = col + offset;
+        if (!this.isOccupied(checkCol, checkRow) && this.hasSupport(checkCol, checkRow)) {
+          const worldPos = this.gridToWorld(checkCol, checkRow);
+          return {
+            col: checkCol,
+            row: checkRow,
+            worldX: worldPos.x,
+            worldY: worldPos.y,
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Find the nearest valid cell in any direction
+   * Last resort search that expands outward in a spiral pattern
+   * @param {number} worldX - World X position
+   * @param {number} worldY - World Y position
+   * @param {number} maxDistance - Maximum search distance in cells (default 20)
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findNearestValidCell(worldX, worldY, maxDistance = 20) {
+    const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
+
+    // Spiral outward from center, checking cells in expanding rings
+    for (let distance = 1; distance <= maxDistance; distance++) {
+      // Check all cells at this distance (ring around center)
+      for (let rowOffset = -distance; rowOffset <= distance; rowOffset++) {
+        for (let colOffset = -distance; colOffset <= distance; colOffset++) {
+          // Only check cells on the edge of this ring
+          if (Math.abs(rowOffset) !== distance && Math.abs(colOffset) !== distance) {
+            continue;
+          }
+
+          const checkCol = startCol + colOffset;
+          const checkRow = startRow + rowOffset;
+
+          // Skip if occupied
+          if (this.isOccupied(checkCol, checkRow)) continue;
+
+          // Check if has support
+          if (this.hasSupport(checkCol, checkRow)) {
+            const worldPos = this.gridToWorld(checkCol, checkRow);
+            return {
+              col: checkCol,
+              row: checkRow,
+              worldX: worldPos.x,
+              worldY: worldPos.y,
+            };
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if a cell has dual support (both supporting cells occupied or on ground)
    * This creates more stable pyramid formations
    * @param {number} col - Column index
    * @param {number} row - Row index
    * @returns {boolean}
    */
   hasDualSupport(col, row) {
-    // Ground always counts as dual support
+    // Ground directly below always counts as dual support
     if (this.isGroundBelow(col, row)) {
       return true;
     }
 
-    if (row % 2 === 0) {
-      // Even row needs both (col-1, row+1) and (col, row+1)
-      return this.isOccupied(col - 1, row + 1) && this.isOccupied(col, row + 1);
-    } else {
-      // Odd row needs both (col, row+1) and (col+1, row+1)
-      return this.isOccupied(col, row + 1) && this.isOccupied(col + 1, row + 1);
+    // Get support cells and check if BOTH have support (occupied or ground)
+    const supportCells = this.getSupportCells(col, row);
+
+    for (const cell of supportCells) {
+      const hasSupport = this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row);
+      if (!hasSupport) {
+        return false; // Missing support on one side
+      }
     }
+
+    return true; // Both support cells have support
+  }
+
+  // ========================================
+  // Platform Body Management
+  // ========================================
+
+  /**
+   * Mark a row as needing platform body rebuild
+   * @param {number} row - Row index to mark dirty
+   */
+  markRowDirty(row) {
+    this.dirtyRows.add(row);
+  }
+
+  /**
+   * Process all dirty rows and rebuild their platform bodies
+   * Call this once per frame after corpse updates
+   */
+  rebuildDirtyPlatforms() {
+    for (const row of this.dirtyRows) {
+      this.rebuildPlatformForRow(row);
+    }
+    this.dirtyRows.clear();
+  }
+
+  /**
+   * Rebuild platform bodies for a specific row
+   * Destroys existing platforms and creates new ones based on current occupied cells
+   * @param {number} row - Row index to rebuild
+   */
+  rebuildPlatformForRow(row) {
+    // Destroy existing platform bodies for this row
+    for (const [key, platform] of this.platformBodies) {
+      if (platform.row === row) {
+        if (this.onPlatformDestroyed) {
+          this.onPlatformDestroyed(platform.body);
+        }
+        platform.body.destroy();
+        this.platformBodies.delete(key);
+      }
+    }
+
+    // Find all horizontal runs of occupied cells in this row
+    const runs = this.findHorizontalRuns(row);
+
+    // Create a platform body for each run
+    for (const run of runs) {
+      this.createPlatformBody(row, run.startCol, run.endCol);
+    }
+  }
+
+  /**
+   * Find contiguous horizontal runs of occupied cells in a row
+   * @param {number} row - Row index to scan
+   * @returns {Array<{ startCol: number, endCol: number }>}
+   */
+  findHorizontalRuns(row) {
+    const runs = [];
+
+    // Get bounds of occupied cells to limit search
+    const bounds = this.getRowBounds(row);
+    if (!bounds) return runs;
+
+    let currentRun = null;
+
+    for (let col = bounds.minCol; col <= bounds.maxCol; col++) {
+      if (this.isOccupied(col, row)) {
+        if (!currentRun) {
+          currentRun = { startCol: col, endCol: col };
+        } else {
+          currentRun.endCol = col;
+        }
+      } else {
+        if (currentRun) {
+          runs.push(currentRun);
+          currentRun = null;
+        }
+      }
+    }
+
+    // Don't forget the last run
+    if (currentRun) {
+      runs.push(currentRun);
+    }
+
+    return runs;
+  }
+
+  /**
+   * Get the column bounds for occupied cells in a specific row
+   * @param {number} row - Row index
+   * @returns {{ minCol: number, maxCol: number } | null}
+   */
+  getRowBounds(row) {
+    let minCol = Infinity;
+    let maxCol = -Infinity;
+    let found = false;
+
+    for (const key of this.occupiedCells.keys()) {
+      const parsed = this.parseCellKey(key);
+      if (parsed.row === row) {
+        minCol = Math.min(minCol, parsed.col);
+        maxCol = Math.max(maxCol, parsed.col);
+        found = true;
+      }
+    }
+
+    return found ? { minCol, maxCol } : null;
+  }
+
+  /**
+   * Create a static platform body spanning a horizontal run of corpses
+   * @param {number} row - Row index
+   * @param {number} startCol - Starting column
+   * @param {number} endCol - Ending column
+   */
+  createPlatformBody(row, startCol, endCol) {
+    // Calculate world position for top of this row of corpses
+    const startWorld = this.gridToWorld(startCol, row);
+    const endWorld = this.gridToWorld(endCol, row);
+
+    const width = (endCol - startCol + 1) * this.cellWidth;
+    const height = 8; // Thin collision surface on top of corpses
+
+    // Center X between start and end cells
+    const x = (startWorld.x + endWorld.x) / 2;
+    // Position at top of corpse cells
+    const y = startWorld.y - (this.cellHeight / 2) + 2;
+
+    // Create static body (using a rectangle sprite with no texture)
+    const platform = this.scene.add.rectangle(x, y, width, height);
+    platform.setVisible(false); // Invisible - just for collision
+    this.scene.physics.add.existing(platform, true); // true = static body
+
+    // Store reference
+    const key = `${row}-${startCol}-${endCol}`;
+    this.platformBodies.set(key, {
+      body: platform,
+      row,
+      startCol,
+      endCol,
+    });
+
+    // Notify callback for collision setup
+    if (this.onPlatformCreated) {
+      this.onPlatformCreated(platform);
+    }
+  }
+
+  /**
+   * Get all platform bodies
+   * @returns {Map} Map of platform bodies
+   */
+  getPlatformBodies() {
+    return this.platformBodies;
+  }
+
+  /**
+   * Destroy all platform bodies
+   */
+  clearPlatformBodies() {
+    for (const [key, platform] of this.platformBodies) {
+      if (this.onPlatformDestroyed) {
+        this.onPlatformDestroyed(platform.body);
+      }
+      platform.body.destroy();
+    }
+    this.platformBodies.clear();
   }
 
   /**
@@ -395,6 +744,8 @@ export class CorpseGrid {
    */
   clearAll() {
     this.occupiedCells.clear();
+    this.clearPlatformBodies();
+    this.dirtyRows.clear();
   }
 
   /**
@@ -505,12 +856,31 @@ export class CorpseGrid {
       graphics.fillCircle(x, y, 2);
     }
 
+    // Draw platform bodies (cyan rectangles showing collision surfaces)
+    graphics.lineStyle(2, 0x00ffff, 0.8);
+    for (const [key, platform] of this.platformBodies) {
+      const body = platform.body.body || platform.body;
+      if (body && body.position) {
+        // For static bodies, position is the center
+        const x = body.position.x;
+        const y = body.position.y;
+        const width = body.width;
+        const height = body.height;
+        graphics.strokeRect(x, y, width, height);
+      } else if (platform.body.x !== undefined) {
+        // Fallback for rectangle game objects
+        const x = platform.body.x - platform.body.width / 2;
+        const y = platform.body.y - platform.body.height / 2;
+        graphics.strokeRect(x, y, platform.body.width, platform.body.height);
+      }
+    }
+
     // Draw legend in top-left
     const legendX = viewMinX + 10;
     const legendY = viewMinY + 60;
 
     graphics.fillStyle(0x000000, 0.7);
-    graphics.fillRect(legendX, legendY, 140, 50);
+    graphics.fillRect(legendX, legendY, 140, 65);
 
     graphics.lineStyle(1, 0x888888, 0.8);
     graphics.strokeRect(legendX + 5, legendY + 5, 12, 10);
@@ -518,6 +888,8 @@ export class CorpseGrid {
     graphics.strokeRect(legendX + 5, legendY + 20, 12, 10);
     graphics.fillStyle(0xff4444, 0.8);
     graphics.fillRect(legendX + 5, legendY + 35, 12, 10);
+    graphics.lineStyle(2, 0x00ffff, 0.8);
+    graphics.strokeRect(legendX + 5, legendY + 50, 12, 6);
   }
 
   /**
@@ -558,8 +930,15 @@ export class CorpseGrid {
       this.debugGraphics.destroy();
       this.debugGraphics = null;
     }
+
+    // Clean up platform bodies
+    this.clearPlatformBodies();
+    this.dirtyRows.clear();
+
     this.occupiedCells.clear();
     this.platformLayer = null;
+    this.onPlatformCreated = null;
+    this.onPlatformDestroyed = null;
     this.scene = null;
   }
 }
