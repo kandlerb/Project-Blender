@@ -257,6 +257,8 @@ export class CorpseGrid {
    * 1. The row below is ground (tilemap collision)
    * 2. At least ONE of the two supporting cells below is occupied OR is ground
    *
+   * IMPORTANT: Returns false if the cell itself overlaps with ground (prevents clipping)
+   *
    * @param {number} col - Column index
    * @param {number} row - Row index
    * @returns {boolean}
@@ -265,6 +267,14 @@ export class CorpseGrid {
     // DEBUG: Log support check
     const debugLog = [];
     debugLog.push(`hasSupport(${col}, ${row}):`);
+
+    // CRITICAL: Don't settle in cells that overlap with ground (prevents clipping)
+    const groundAtCell = this.isGroundAt(col, row);
+    debugLog.push(`  groundAtCell=${groundAtCell}`);
+    if (groundAtCell) {
+      console.log(debugLog.join('\n') + ' -> FALSE (cell overlaps ground)');
+      return false;
+    }
 
     // First check for ground collision directly below this cell
     const groundBelow = this.isGroundBelow(col, row);

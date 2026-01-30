@@ -16,8 +16,8 @@ export const CORPSE_CONFIG = Object.freeze({
   SNAP_DURATION: 200,         // ms to lerp into position
   SNAP_THRESHOLD_X: 15,       // How close horizontally to start snap
   SNAP_THRESHOLD_Y: 40,       // How close vertically (more forgiving)
-  SETTLED_ALPHA: 0.7,
-  SETTLED_TINT: 0x333333,
+  SETTLED_ALPHA: 1.0,         // Fully opaque when settled (no ghostly transparency)
+  SETTLED_TINT: 0x666666,     // Darkened but visible "dead" appearance
   FALLING_DEPTH: 10,          // Depth for falling corpses (render in front)
   SETTLED_DEPTH: 5,           // Depth for settled corpses (render behind)
   FALL_TIMEOUT: 2000,         // ms before forcing cell search as safety valve
@@ -330,9 +330,8 @@ export class Corpse {
       eased
     );
 
-    // Alpha pulse during snapping (0.7 → 0.9) to mask the movement
-    const pulseProgress = Math.sin(progress * Math.PI);
-    const alpha = 0.7 + pulseProgress * 0.2;
+    // Fade to full opacity during snapping (0.8 → 1.0)
+    const alpha = 0.8 + progress * 0.2;
     this.sprite.setAlpha(alpha);
 
     // Check if snap is complete
