@@ -32,6 +32,7 @@ export class Player {
     // Health system (basic for now)
     this.maxHealth = 100;
     this.health = this.maxHealth;
+    this.isAlive = true;
     this.isInvulnerable = false;
 
     // Combat stats (will expand later)
@@ -276,6 +277,7 @@ export class Player {
    * Handle player death
    */
   die() {
+    this.isAlive = false;
     this.scene.events.emit('player:died', { player: this });
     // TODO: Death state, respawn logic
   }
