@@ -1601,6 +1601,28 @@ export class Enemy {
     return info;
   }
 
+  /**
+   * Debug AI state - logs comprehensive info to console
+   */
+  debugAI() {
+    const type = this.config.type;
+    const pos = `(${this.sprite.x.toFixed(0)}, ${this.sprite.y.toFixed(0)})`;
+    const state = this.stateMachine.getCurrentStateName();
+    const hasTarget = this.target ? 'SET' : 'NULL';
+    const distance = this.target ? this.getDistanceToTarget().toFixed(0) : 'N/A';
+    const canSee = this.canSeeTarget();
+    const detRange = this.detectionRange;
+
+    let line = `[${type}] pos=${pos} state=${state} target=${hasTarget}`;
+    line += ` dist=${distance} range=${detRange} canSee=${canSee}`;
+
+    if (type === 'SWARMER') {
+      line += ` pack=${this.getPackCount()} inPack=${this.isInPack()}`;
+    }
+
+    console.log(line);
+  }
+
   destroy() {
     if (this.scene.combatManager) {
       this.scene.combatManager.unregister(this.hurtbox);
