@@ -14,7 +14,7 @@ export const CLEANUP_MODE = Object.freeze({
  * Default configuration for CorpseManager
  */
 export const CORPSE_MANAGER_DEFAULTS = Object.freeze({
-  MAX_CORPSES: 30,
+  MAX_CORPSES: 50,
   CLEANUP_MODE: CLEANUP_MODE.OLDEST,
   DECAY_ENABLED: false,
   DECAY_TIME: 30000,
@@ -28,7 +28,7 @@ export class CorpseManager {
   /**
    * @param {Phaser.Scene} scene - The scene this manager belongs to
    * @param {object} config - Manager configuration
-   * @param {number} [config.maxCorpses=30] - Maximum corpses allowed
+   * @param {number} [config.maxCorpses=50] - Maximum corpses allowed
    * @param {string} [config.cleanupMode='oldest'] - How to remove corpses at limit ('oldest' | 'farthest' | 'none')
    * @param {boolean} [config.decayEnabled=false] - Whether corpses auto-decay
    * @param {number} [config.decayTime=30000] - Milliseconds before decay if enabled
@@ -60,6 +60,9 @@ export class CorpseManager {
 
     // Terrain references for individual corpse colliders
     this.terrainGroups = [];
+
+    // Debug visualization state
+    this.debugEnabled = false;
   }
 
   /**
@@ -120,20 +123,28 @@ export class CorpseManager {
 
     // Re-apply physics settings that group membership may have overwritten
     // World gravity is 0, so we must set per-body gravity
-    // Corpses are movable with high mass for natural stacking
+    // Corpses are movable and settle using sand physics algorithm
     corpse.sprite.body.setImmovable(false);
     corpse.sprite.body.setMass(CORPSE_DEFAULTS.MASS);
     corpse.sprite.body.setAllowGravity(true);
     corpse.sprite.body.setGravityY(PHYSICS.GRAVITY);
-    corpse.sprite.body.setBounce(0);
-    corpse.sprite.body.setDrag(CORPSE_DEFAULTS.DRAG_X, CORPSE_DEFAULTS.DRAG_Y);
-    corpse.sprite.body.setMaxVelocity(200, 800);
+    corpse.sprite.body.setBounce(CORPSE_DEFAULTS.BOUNCE);
+    corpse.sprite.body.setDrag(CORPSE_DEFAULTS.DRAG_X, 0);
+    corpse.sprite.body.setMaxVelocityY(PHYSICS.TERMINAL_VELOCITY);
 
     // Set up individual terrain colliders for this corpse
     // Group-level colliders don't reliably apply to sprites with pre-existing physics bodies
     for (const terrain of this.terrainGroups) {
       corpse.addCollider(terrain);
     }
+
+    // Apply debug visualization if enabled
+    if (this.debugEnabled) {
+      corpse.sprite.setTint(0xff8800); // Orange = unsettled
+    }
+
+    // Spawn effect - brief flash and particles if EffectsManager available
+    this.createSpawnEffect(x, y);
 
     // Emit spawned event
     this.scene.events.emit('corpse:spawned', {
@@ -145,6 +156,41 @@ export class CorpseManager {
     });
 
     return corpse;
+  }
+
+  /**
+   * Create a visual spawn effect at the given position
+   * @param {number} x - X position
+   * @param {number} y - Y position
+   */
+  createSpawnEffect(x, y) {
+    // Use EffectsManager if available
+    if (this.scene.effectsManager) {
+      // Small dust cloud effect
+      this.scene.effectsManager.dustCloud(x, y, 3, 0);
+    } else {
+      // Fallback: simple particle burst using scene directly
+      const particles = [];
+      for (let i = 0; i < 4; i++) {
+        const angle = (i / 4) * Math.PI * 2 + Math.random() * 0.5;
+        const speed = 30 + Math.random() * 20;
+        const particle = this.scene.add.circle(x, y, 3, 0x666666, 0.6);
+
+        // Simple tween animation
+        this.scene.tweens.add({
+          targets: particle,
+          x: x + Math.cos(angle) * speed,
+          y: y + Math.sin(angle) * speed - 10, // Slight upward drift
+          alpha: 0,
+          scale: 0.5,
+          duration: 300,
+          ease: 'Power2',
+          onComplete: () => particle.destroy(),
+        });
+
+        particles.push(particle);
+      }
+    }
   }
 
   /**
@@ -176,12 +222,22 @@ export class CorpseManager {
   }
 
   /**
-   * Remove the oldest corpse (first in array)
+   * Remove the oldest corpse, prioritizing settled corpses first
+   * This is less disruptive as settled corpses are no longer moving
    * @returns {Corpse|null} The removed corpse, or null if none exist
    */
   removeOldest() {
     if (this.corpses.length === 0) return null;
 
+    // First, try to find the oldest SETTLED corpse (least disruptive)
+    for (const corpse of this.corpses) {
+      if (corpse.isSettled) {
+        this.remove(corpse);
+        return corpse;
+      }
+    }
+
+    // If all corpses are unsettled, remove the oldest one anyway
     const oldest = this.corpses[0];
     this.remove(oldest);
     return oldest;
@@ -275,6 +331,14 @@ export class CorpseManager {
       const corpse = this.corpses[i];
       if (!corpse.sprite || !corpse.sprite.active) {
         this.corpses.splice(i, 1);
+      }
+    }
+
+    // Update each corpse (handles settling logic)
+    // Settled corpses skip their update internally for performance
+    for (const corpse of this.corpses) {
+      if (corpse.sprite && corpse.sprite.active) {
+        corpse.update(time, delta);
       }
     }
 
@@ -497,6 +561,55 @@ export class CorpseManager {
         }
       }
     }
+  }
+
+  /**
+   * Toggle debug visualization for all corpses
+   * Shows physics bodies and settled state
+   * @param {boolean} show - Whether to show debug visualization
+   */
+  setDebug(show) {
+    this.debugEnabled = show;
+
+    for (const corpse of this.corpses) {
+      if (!corpse.sprite || !corpse.sprite.active) continue;
+
+      if (show) {
+        // Show debug tint based on settled state
+        if (corpse.isSettled) {
+          corpse.sprite.setTint(0x00ff00); // Green = settled
+        } else {
+          corpse.sprite.setTint(0xff8800); // Orange = unsettled
+        }
+      } else {
+        // Restore normal tint
+        corpse.sprite.setTint(corpse.config.tint || CORPSE_DEFAULTS.TINT);
+      }
+    }
+  }
+
+  /**
+   * Get statistics about corpse states
+   * @returns {object} Stats object with counts
+   */
+  getStats() {
+    let settled = 0;
+    let unsettled = 0;
+
+    for (const corpse of this.corpses) {
+      if (corpse.isSettled) {
+        settled++;
+      } else {
+        unsettled++;
+      }
+    }
+
+    return {
+      total: this.corpses.length,
+      settled,
+      unsettled,
+      max: this.config.maxCorpses,
+    };
   }
 
   /**
