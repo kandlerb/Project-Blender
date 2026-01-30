@@ -245,6 +245,10 @@ export class TestArenaScene extends BaseScene {
       for (const enemy of this.enemies) {
         enemy.setCombatDebug(this.showCombatDebug);
       }
+      // Include boss in combat debug toggle
+      if (this.currentBoss && this.currentBoss.setCombatDebug) {
+        this.currentBoss.setCombatDebug(this.showCombatDebug);
+      }
       console.log(`Combat debug: ${this.showCombatDebug}`);
     });
 
@@ -365,6 +369,21 @@ export class TestArenaScene extends BaseScene {
     this.currentBoss = new TonfaWarden(this, 800, 450);
     this.currentBoss.addCollider(this.ground);
     this.currentBoss.addCollider(this.platforms);
+
+    // Add boss to enemy group for collision with player, other enemies, and corpses
+    if (this.currentBoss.sprite && this.enemyGroup) {
+      this.enemyGroup.add(this.currentBoss.sprite);
+
+      // Re-apply physics settings that group may have overwritten
+      this.currentBoss.sprite.body.setAllowGravity(true);
+      this.currentBoss.sprite.body.setGravityY(PHYSICS.GRAVITY);
+      this.currentBoss.sprite.body.setCollideWorldBounds(true);
+    }
+
+    // Apply combat debug if currently enabled
+    if (this.showCombatDebug && this.currentBoss.setCombatDebug) {
+      this.currentBoss.setCombatDebug(true);
+    }
 
     console.log('Boss spawned: The Tonfa Warden');
     console.log('Tip: Attack during blue circle = parried! Bait the defensive stance.');
