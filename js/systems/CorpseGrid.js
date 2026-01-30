@@ -347,6 +347,90 @@ export class CorpseGrid {
   }
 
   /**
+   * DEBUG: Dump comprehensive grid state with support visualization
+   * Shows occupied cells, cells with support, and empty cells
+   */
+  dumpGridState() {
+    console.log('\n╔════════════════════════════════════════╗');
+    console.log('║         CORPSE GRID STATE DUMP         ║');
+    console.log('╚════════════════════════════════════════╝');
+
+    if (this.occupiedCells.size === 0) {
+      console.log('No occupied cells');
+      return { minCol: 0, maxCol: 0, minRow: 0, maxRow: 0 };
+    }
+
+    // Find bounds of occupied cells
+    let minCol = Infinity, maxCol = -Infinity;
+    let minRow = Infinity, maxRow = -Infinity;
+
+    for (const key of this.occupiedCells.keys()) {
+      const { col, row } = this.parseCellKey(key);
+      minCol = Math.min(minCol, col);
+      maxCol = Math.max(maxCol, col);
+      minRow = Math.min(minRow, row);
+      maxRow = Math.max(maxRow, row);
+    }
+
+    // Extend bounds to show potential stacking area above
+    const displayMinRow = Math.max(0, minRow - 3);
+    const displayMaxRow = maxRow + 1;
+    const displayMinCol = minCol - 2;
+    const displayMaxCol = maxCol + 2;
+
+    console.log(`Grid bounds: cols ${minCol}-${maxCol}, rows ${minRow}-${maxRow}`);
+    console.log(`Display area: cols ${displayMinCol}-${displayMaxCol}, rows ${displayMinRow}-${displayMaxRow}`);
+    console.log('');
+    console.log('Legend: [X]=occupied  [_]=has support (empty)  . =no support');
+    console.log('');
+
+    // Print column headers
+    let header = '       ';
+    if (displayMinRow % 2 === 1) header += '  '; // Offset for odd first row
+    for (let col = displayMinCol; col <= displayMaxCol; col++) {
+      header += col.toString().padStart(3);
+    }
+    console.log(header);
+
+    // Print grid rows
+    for (let row = displayMinRow; row <= displayMaxRow; row++) {
+      const parity = row % 2 === 0 ? 'E' : 'O';
+      let line = `Row ${row.toString().padStart(2)} (${parity}): `;
+
+      // Add offset spacing for odd rows to show stagger visually
+      if (row % 2 === 1) {
+        line += '  '; // Half cell offset visual (approximation)
+      }
+
+      for (let col = displayMinCol; col <= displayMaxCol; col++) {
+        if (this.isOccupied(col, row)) {
+          line += '[X]';
+        } else if (this.hasSupport(col, row)) {
+          line += '[_]'; // Empty but has support (could be filled)
+        } else {
+          line += ' . '; // No support
+        }
+      }
+      console.log(line);
+    }
+
+    console.log('');
+
+    // List all occupied cells with their world positions
+    console.log('Occupied cells detail:');
+    for (const [key, corpseData] of this.occupiedCells) {
+      const { col, row } = this.parseCellKey(key);
+      const worldPos = this.gridToWorld(col, row);
+      const corpseId = corpseData?.id || '?';
+      console.log(`  Cell (${col}, ${row}) -> world (${worldPos.x.toFixed(0)}, ${worldPos.y.toFixed(0)}) [Corpse #${corpseId}]`);
+    }
+
+    console.log('════════════════════════════════════════\n');
+
+    return { minCol, maxCol, minRow, maxRow };
+  }
+
+  /**
    * Clear a cell (mark as unoccupied)
    * @param {number} col - Column index
    * @param {number} row - Row index
