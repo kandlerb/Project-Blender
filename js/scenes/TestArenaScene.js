@@ -280,6 +280,61 @@ export class TestArenaScene extends BaseScene {
       const enabled = this.corpseManager.toggleGridDebug();
       console.log(`Corpse grid debug: ${enabled ? 'ON' : 'OFF'}`);
     });
+
+    // Dump grid state and compare with actual corpse positions
+    this.input.keyboard.on('keydown-D', () => {
+      console.log('\n' + '='.repeat(50));
+      console.log('DEBUG DUMP: Grid State vs Actual Corpse Positions');
+      console.log('='.repeat(50));
+
+      // Dump grid state
+      const grid = this.corpseManager.grid;
+      if (grid) {
+        grid.dumpGridState();
+      }
+
+      // List actual corpse positions and compare
+      console.log('\n--- Actual Corpse Positions vs Claimed Cells ---');
+      const corpses = this.corpseManager.corpses || [];
+      let mismatches = 0;
+
+      for (const corpse of corpses) {
+        if (!corpse.sprite || !corpse.sprite.active) continue;
+
+        const actualX = corpse.sprite.x;
+        const actualY = corpse.sprite.y;
+        const actualGridPos = grid ? grid.worldToGrid(actualX, actualY) : { col: '?', row: '?' };
+        const claimedCell = corpse.gridCell;
+        const expectedWorldPos = claimedCell && grid ? grid.gridToWorld(claimedCell.col, claimedCell.row) : null;
+
+        const posMatch = claimedCell &&
+          actualGridPos.col === claimedCell.col &&
+          actualGridPos.row === claimedCell.row;
+
+        const worldDist = expectedWorldPos ?
+          Math.sqrt(Math.pow(actualX - expectedWorldPos.x, 2) + Math.pow(actualY - expectedWorldPos.y, 2)) : 0;
+
+        const status = corpse.state === 'settled' ? '✓' : '~';
+        const matchStatus = posMatch ? '  ' : '⚠️';
+
+        console.log(`${status} Corpse #${corpse.id}: state=${corpse.state}`);
+        console.log(`    Actual world: (${actualX.toFixed(1)}, ${actualY.toFixed(1)})`);
+        console.log(`    Actual grid:  (${actualGridPos.col}, ${actualGridPos.row})`);
+        console.log(`    Claimed cell: ${claimedCell ? `(${claimedCell.col}, ${claimedCell.row})` : 'NONE'}`);
+        if (expectedWorldPos) {
+          console.log(`    Expected pos: (${expectedWorldPos.x.toFixed(1)}, ${expectedWorldPos.y.toFixed(1)})`);
+          console.log(`    Distance:     ${worldDist.toFixed(1)} px ${matchStatus}`);
+        }
+        if (!posMatch && claimedCell) {
+          console.log(`    ${matchStatus} MISMATCH: sprite at grid (${actualGridPos.col}, ${actualGridPos.row}) but claimed (${claimedCell.col}, ${claimedCell.row})`);
+          mismatches++;
+        }
+        console.log('');
+      }
+
+      console.log(`Total corpses: ${corpses.length}, Mismatches: ${mismatches}`);
+      console.log('='.repeat(50) + '\n');
+    });
   }
 
   /**
