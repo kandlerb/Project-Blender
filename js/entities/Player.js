@@ -122,6 +122,10 @@ export class Player {
     // Sprite is 32x48, hitbox is 24x44 centered
     body.setSize(24, 44);
     body.setOffset(4, 4);
+
+    // Set mass for player-enemy collision physics
+    // Player mass = 2: Brutes (mass 5) push player slightly, swarmers (mass 1) don't
+    body.mass = 2;
   }
 
   /**

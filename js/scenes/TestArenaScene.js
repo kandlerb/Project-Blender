@@ -104,6 +104,10 @@ export class TestArenaScene extends BaseScene {
     // Mass-based physics: heavier enemies push lighter ones
     this.physics.add.collider(this.enemyGroup, this.enemyGroup);
 
+    // Set up player-enemy collision (player and enemies cannot walk through each other)
+    // Player mass = 2, swarmers = 1 (player pushes), brutes = 5 (push player)
+    this.physics.add.collider(this.player.sprite, this.enemyGroup);
+
     // Set up enemy-corpse collision (after enemies are spawned)
     // Process callback prevents physics from moving corpses - only step-up/destroy logic applies
     this.physics.add.collider(
