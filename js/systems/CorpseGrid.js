@@ -129,6 +129,34 @@ export class CorpseGrid {
   }
 
   /**
+   * Get the two support cells for a given cell based on row parity
+   * In a staggered brick pattern:
+   * - Even rows: support comes from (col-1, row+1) and (col, row+1)
+   * - Odd rows: support comes from (col, row+1) and (col+1, row+1)
+   *
+   * @param {number} col - Column index
+   * @param {number} row - Row index
+   * @returns {Array<{ col: number, row: number }>}
+   */
+  getSupportCells(col, row) {
+    const rowBelow = row + 1;
+
+    if (row % 2 === 0) {
+      // Even row: support comes from (col-1, row+1) and (col, row+1)
+      return [
+        { col: col - 1, row: rowBelow },
+        { col: col, row: rowBelow },
+      ];
+    } else {
+      // Odd row: support comes from (col, row+1) and (col+1, row+1)
+      return [
+        { col: col, row: rowBelow },
+        { col: col + 1, row: rowBelow },
+      ];
+    }
+  }
+
+  /**
    * Get the corpse data stored in a cell
    * @param {number} col - Column index
    * @param {number} row - Row index
@@ -176,41 +204,69 @@ export class CorpseGrid {
   }
 
   /**
+   * Check if a specific cell position overlaps with solid ground
+   * Unlike isGroundBelow, this checks the cell itself, not the cell below it
+   * @param {number} col - Column index
+   * @param {number} row - Row index
+   * @returns {boolean}
+   */
+  isGroundAt(col, row) {
+    if (!this.platformLayer) return false;
+
+    // Get the world position of this cell
+    const cellPos = this.gridToWorld(col, row);
+
+    // Check if this position intersects with any platform tiles
+    const children = this.platformLayer.getChildren();
+    for (const tile of children) {
+      if (!tile.body) continue;
+
+      const body = tile.body;
+
+      // Check if the cell position overlaps with this tile
+      const cellLeft = cellPos.x - this.cellWidth * 0.4;
+      const cellRight = cellPos.x + this.cellWidth * 0.4;
+      const cellTop = cellPos.y - this.cellHeight * 0.4;
+      const cellBottom = cellPos.y + this.cellHeight * 0.4;
+
+      const horizontalOverlap = cellRight > body.left && cellLeft < body.right;
+      const verticalOverlap = cellBottom > body.top && cellTop < body.bottom;
+
+      if (horizontalOverlap && verticalOverlap) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Check if a cell has support (ground below OR occupied cell(s) below)
-   * For staggered grid, "below" depends on row parity:
-   * - Even rows: check cell directly below (col, row+1)
-   * - Odd rows: check two cells below (col, row+1) and (col+1, row+1)
+   * A cell has support if ANY of these conditions are true:
+   * 1. The row below is ground (tilemap collision)
+   * 2. At least ONE of the two supporting cells below is occupied OR is ground
    *
    * @param {number} col - Column index
    * @param {number} row - Row index
    * @returns {boolean}
    */
   hasSupport(col, row) {
-    // First check for ground collision at this position
+    // First check for ground collision directly below this cell
     if (this.isGroundBelow(col, row)) {
       return true;
     }
 
-    // Check for supporting cells based on row parity
-    if (row % 2 === 0) {
-      // Even row: sits on top of odd row below
-      // In brick pattern, even rows are supported by two cells in odd row below
-      // Check (col-1, row+1) and (col, row+1) in the staggered pattern
-      const supportLeft = this.isOccupied(col - 1, row + 1);
-      const supportRight = this.isOccupied(col, row + 1);
+    // Get the two support cells based on row parity
+    const supportCells = this.getSupportCells(col, row);
 
-      // Need at least one support, but ideally both for stability
-      // For now, require at least one
-      return supportLeft || supportRight;
-    } else {
-      // Odd row: sits on top of even row below
-      // In brick pattern, odd rows are supported by two cells in even row below
-      // Check (col, row+1) and (col+1, row+1) in the staggered pattern
-      const supportLeft = this.isOccupied(col, row + 1);
-      const supportRight = this.isOccupied(col + 1, row + 1);
-
-      return supportLeft || supportRight;
+    // Has support if EITHER support cell is occupied OR is at ground level
+    for (const cell of supportCells) {
+      if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
+        return true; // ONE support is enough!
+      }
     }
+
+    return false;
   }
 
   /**
@@ -339,25 +395,29 @@ export class CorpseGrid {
   }
 
   /**
-   * Check if a cell has dual support (both supporting cells occupied)
+   * Check if a cell has dual support (both supporting cells occupied or on ground)
    * This creates more stable pyramid formations
    * @param {number} col - Column index
    * @param {number} row - Row index
    * @returns {boolean}
    */
   hasDualSupport(col, row) {
-    // Ground always counts as dual support
+    // Ground directly below always counts as dual support
     if (this.isGroundBelow(col, row)) {
       return true;
     }
 
-    if (row % 2 === 0) {
-      // Even row needs both (col-1, row+1) and (col, row+1)
-      return this.isOccupied(col - 1, row + 1) && this.isOccupied(col, row + 1);
-    } else {
-      // Odd row needs both (col, row+1) and (col+1, row+1)
-      return this.isOccupied(col, row + 1) && this.isOccupied(col + 1, row + 1);
+    // Get support cells and check if BOTH have support (occupied or ground)
+    const supportCells = this.getSupportCells(col, row);
+
+    for (const cell of supportCells) {
+      const hasSupport = this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row);
+      if (!hasSupport) {
+        return false; // Missing support on one side
+      }
     }
+
+    return true; // Both support cells have support
   }
 
   /**
