@@ -402,14 +402,22 @@ export class TestArenaScene extends BaseScene {
     this.enemyProjectiles = [];
 
     // Spawn a variety of enemy types
+    // Swarmers spawn in groups to test pack behavior
     const spawnPoints = [
+      // Left swarmer pack (4 swarmers)
       { x: 500, y: 400, type: 'SWARMER' },
-      { x: 600, y: 400, type: 'SWARMER' },
-      { x: 700, y: 400, type: 'SWARMER' },
+      { x: 540, y: 400, type: 'SWARMER' },
+      { x: 580, y: 400, type: 'SWARMER' },
+      { x: 620, y: 400, type: 'SWARMER' },
+      // Right swarmer pack (3 swarmers)
+      { x: 1000, y: 400, type: 'SWARMER' },
+      { x: 1040, y: 400, type: 'SWARMER' },
+      { x: 1080, y: 400, type: 'SWARMER' },
+      // Other enemy types
       { x: 800, y: 400, type: 'LUNGER' },
-      { x: 900, y: 400, type: 'SHIELD_BEARER' },
-      { x: 1000, y: 400, type: 'LOBBER' },
-      { x: 1100, y: 400, type: 'DETONATOR' },
+      { x: 1200, y: 400, type: 'SHIELD_BEARER' },
+      { x: 1400, y: 400, type: 'LOBBER' },
+      { x: 1500, y: 400, type: 'DETONATOR' },
     ];
 
     for (const pos of spawnPoints) {
@@ -434,7 +442,7 @@ export class TestArenaScene extends BaseScene {
       this.enemies.push(enemy);
     }
 
-    console.log(`Spawned 7 enemies (total: ${this.enemies.length}) - Swarmer x3, Lunger, Shield Bearer, Lobber, Detonator`);
+    console.log(`Spawned 11 enemies (total: ${this.enemies.length}) - Swarmer x7 (2 packs), Lunger, Shield Bearer, Lobber, Detonator`);
   }
 
   /**

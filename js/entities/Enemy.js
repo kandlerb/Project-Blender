@@ -3,7 +3,7 @@ import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
 
 /**
- * Enemy states
+ * Enemy states (generic)
  */
 export const ENEMY_STATES = Object.freeze({
   IDLE: 'idle',
@@ -12,6 +12,24 @@ export const ENEMY_STATES = Object.freeze({
   ATTACK: 'attack',
   HITSTUN: 'hitstun',
   DEAD: 'dead',
+});
+
+/**
+ * Swarmer-specific states for pack-based AI
+ */
+export const SWARMER_STATES = Object.freeze({
+  IDLE: 'swarmer_idle',
+  PATROL: 'swarmer_patrol',
+  ALERT: 'swarmer_alert',
+  CHASE: 'swarmer_chase',
+  RETREAT: 'swarmer_retreat',
+  ATTACK_WINDUP: 'swarmer_attack_windup',
+  ATTACKING: 'swarmer_attacking',
+  ATTACK_RECOVERY: 'swarmer_attack_recovery',
+  HITSTUN: 'swarmer_hitstun',
+  LAUNCHED: 'swarmer_launched',
+  DOWNED: 'swarmer_downed',
+  DEAD: 'swarmer_dead',
 });
 
 /**
@@ -29,20 +47,52 @@ export const CORPSE_INTERACTION = Object.freeze({
  */
 export const ENEMY_PRESETS = Object.freeze({
   /**
-   * SWARMER - Fast rushdown enemy
-   * Low HP, high speed, swarms the player
+   * SWARMER - Fast rushdown enemy with pack behavior
+   * Low HP, individually cowardly, dangerous in groups
+   * "The Flood" - rush mindlessly in packs, retreat when isolated
    */
   SWARMER: {
-    maxHealth: 10,
-    damage: 8,
-    speed: 150,
-    chaseSpeed: 250,
-    detectionRange: 300,
-    attackRange: 40,
-    attackCooldown: 1000,
+    // Identity
+    type: 'SWARMER',
+
+    // Health & Damage
+    maxHealth: 15,
+    damage: 5,
+
+    // Movement
+    speed: 80,           // Patrol speed
+    chaseSpeed: 200,     // Chasing player
+    retreatSpeed: 180,   // Fleeing to pack
+
+    // Detection
+    detectionRange: 350,
+    attackRange: 35,
+
+    // Pack Behavior
+    packRadius: 150,     // How far to look for pack members
+    packThreshold: 2,    // Need 2+ others to feel confident
+
+    // Attack Timing
+    attackWindup: 200,   // ms
+    attackActive: 100,   // ms
+    attackRecovery: 150, // ms
+    attackCooldown: 800, // ms between attacks
+
+    // Combat Response
+    hitstunMultiplier: 1.5,  // 50% longer hitstun than normal
+    launchResistance: 0,     // Easy to launch
+    grappleWeight: 'LIGHT',
+
+    // State Durations
+    alertDuration: 200,
+    downedDuration: 300,
+
+    // Appearance
     color: 0xffaa00,
     width: 28,
     height: 32,
+
+    // Capabilities
     canBePulled: true,
     behavior: 'swarmer',
     corpseInteraction: 'climb',
@@ -250,20 +300,21 @@ export class Enemy {
     // Combat boxes
     this.setupCombatBoxes();
 
-    // State machine (used for standard swarmer/brute behavior)
-    this.stateMachine = new StateMachine(this, ENEMY_STATES.IDLE);
-    this.stateMachine.addStates([
-      new EnemyIdleState(this.stateMachine),
-      new EnemyPatrolState(this.stateMachine),
-      new EnemyChaseState(this.stateMachine),
-      new EnemyAttackState(this.stateMachine),
-      new EnemyHitstunState(this.stateMachine),
-      new EnemyDeadState(this.stateMachine),
-    ]);
-    this.stateMachine.start(ENEMY_STATES.PATROL);
+    // State machine setup - use Swarmer-specific states for SWARMER type
+    if (this.config.type === 'SWARMER') {
+      this.setupSwarmerStates();
+    } else {
+      this.setupDefaultStates();
+    }
 
     // Hitstun tracking
     this.hitstunRemaining = 0;
+
+    // Swarmer-specific: retreat target for debug visualization
+    this.currentRetreatTarget = null;
+
+    // Swarmer-specific: pack debug graphics
+    this.packDebugGraphics = null;
 
     // Store reference on sprite
     this.sprite.setData('owner', this);
@@ -341,6 +392,44 @@ export class Enemy {
   }
 
   /**
+   * Setup default state machine for standard enemies (Brute, etc.)
+   */
+  setupDefaultStates() {
+    this.stateMachine = new StateMachine(this, ENEMY_STATES.IDLE);
+    this.stateMachine.addStates([
+      new EnemyIdleState(this.stateMachine),
+      new EnemyPatrolState(this.stateMachine),
+      new EnemyChaseState(this.stateMachine),
+      new EnemyAttackState(this.stateMachine),
+      new EnemyHitstunState(this.stateMachine),
+      new EnemyDeadState(this.stateMachine),
+    ]);
+    this.stateMachine.start(ENEMY_STATES.PATROL);
+  }
+
+  /**
+   * Setup Swarmer-specific state machine with pack behavior
+   */
+  setupSwarmerStates() {
+    this.stateMachine = new StateMachine(this, SWARMER_STATES.IDLE);
+    this.stateMachine.addStates([
+      new SwarmerIdleState(this.stateMachine),
+      new SwarmerPatrolState(this.stateMachine),
+      new SwarmerAlertState(this.stateMachine),
+      new SwarmerChaseState(this.stateMachine),
+      new SwarmerRetreatState(this.stateMachine),
+      new SwarmerAttackWindupState(this.stateMachine),
+      new SwarmerAttackingState(this.stateMachine),
+      new SwarmerAttackRecoveryState(this.stateMachine),
+      new SwarmerHitstunState(this.stateMachine),
+      new SwarmerLaunchedState(this.stateMachine),
+      new SwarmerDownedState(this.stateMachine),
+      new SwarmerDeadState(this.stateMachine),
+    ]);
+    this.stateMachine.start(SWARMER_STATES.PATROL);
+  }
+
+  /**
    * Set the target to chase/attack
    * @param {*} target
    */
@@ -412,6 +501,129 @@ export class Enemy {
    */
   stop() {
     this.sprite.setVelocityX(0);
+  }
+
+  // ============================================
+  // PACK DETECTION (Swarmer-specific)
+  // ============================================
+
+  /**
+   * Get all living swarmers within radius
+   * @param {number} radius - Detection radius (default packRadius from config)
+   * @returns {Enemy[]} - Array of nearby swarmers (excluding self)
+   */
+  getNearbySwarmers(radius = null) {
+    const searchRadius = radius || this.config.packRadius || 150;
+    const enemies = this.scene.enemies || [];
+    const nearby = [];
+
+    for (const enemy of enemies) {
+      // Skip self
+      if (enemy === this) continue;
+
+      // Only count swarmers
+      if (enemy.config.type !== 'SWARMER') continue;
+
+      // Must be alive
+      if (!enemy.isAlive) continue;
+
+      // Calculate distance
+      const dx = enemy.sprite.x - this.sprite.x;
+      const dy = enemy.sprite.y - this.sprite.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance <= searchRadius) {
+        nearby.push(enemy);
+      }
+    }
+
+    return nearby;
+  }
+
+  /**
+   * Check if this swarmer is in a pack
+   * @returns {boolean} - True if enough other swarmers nearby
+   */
+  isInPack() {
+    const threshold = this.config.packThreshold || 2;
+    return this.getNearbySwarmers().length >= threshold;
+  }
+
+  /**
+   * Get current pack count (for debug display)
+   * @returns {number} - Number of nearby swarmers
+   */
+  getPackCount() {
+    return this.getNearbySwarmers().length;
+  }
+
+  /**
+   * Find the nearest cluster of swarmers to retreat toward
+   * @returns {{x: number, y: number}|null} - Position to retreat to, or null
+   */
+  findNearestPack() {
+    // Search in extended range (3x pack radius)
+    const extendedRadius = (this.config.packRadius || 150) * 3;
+    const enemies = this.scene.enemies || [];
+
+    let nearestSwarmer = null;
+    let nearestDistance = Infinity;
+
+    for (const enemy of enemies) {
+      // Skip self
+      if (enemy === this) continue;
+
+      // Only consider swarmers
+      if (enemy.config.type !== 'SWARMER') continue;
+
+      // Must be alive
+      if (!enemy.isAlive) continue;
+
+      // Calculate distance
+      const dx = enemy.sprite.x - this.sprite.x;
+      const dy = enemy.sprite.y - this.sprite.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < nearestDistance && distance <= extendedRadius) {
+        nearestDistance = distance;
+        nearestSwarmer = enemy;
+      }
+    }
+
+    if (nearestSwarmer) {
+      return {
+        x: nearestSwarmer.sprite.x,
+        y: nearestSwarmer.sprite.y,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Get retreat target position
+   * @returns {{x: number, y: number}} - Where to move
+   */
+  getRetreatTarget() {
+    const packPosition = this.findNearestPack();
+    if (packPosition) {
+      return packPosition;
+    }
+
+    // No pack to retreat to — flee away from player
+    if (this.target && this.target.sprite) {
+      const fleeDirection = this.sprite.x < this.target.sprite.x ? -1 : 1;
+      return {
+        x: this.sprite.x + (fleeDirection * 200),
+        y: this.sprite.y,
+      };
+    }
+
+    // No target, just move in patrol direction
+    return {
+      x: this.sprite.x + (this.patrolDirection * 200),
+      y: this.sprite.y,
+    };
   }
 
   /**
@@ -569,6 +781,11 @@ export class Enemy {
     this.hurtbox.updatePosition();
     this.attackHitbox.updatePosition();
 
+    // Update pack debug visualization for swarmers
+    if (this.config.type === 'SWARMER' && this.packDebugGraphics) {
+      this.updatePackDebug();
+    }
+
     // Fix any terrain clipping
     this.fixTerrainClipping();
   }
@@ -584,10 +801,28 @@ export class Enemy {
     this.health = Math.max(0, this.health - amount);
 
     if (hitData && hitData.hitstun) {
-      this.hitstunRemaining = hitData.hitstun;
+      // Apply hitstun multiplier for swarmers (they have longer hitstun)
+      let hitstun = hitData.hitstun;
+      if (this.config.type === 'SWARMER') {
+        const multiplier = this.config.hitstunMultiplier || 1.5;
+        hitstun = Math.round(hitstun * multiplier);
+      }
+
+      this.hitstunRemaining = hitstun;
       this.currentState = 'HITSTUN';
       this.isBlocking = false;
-      this.stateMachine.transition(ENEMY_STATES.HITSTUN, { hitData }, true);
+
+      // Transition to correct hitstun state based on enemy type
+      if (this.config.type === 'SWARMER') {
+        // Check for launcher attacks (swarmers can be launched)
+        if (hitData.launcher || (hitData.knockback && hitData.knockback.y < -200)) {
+          this.stateMachine.transition(SWARMER_STATES.LAUNCHED, { hitData }, true);
+        } else {
+          this.stateMachine.transition(SWARMER_STATES.HITSTUN, { hitData }, true);
+        }
+      } else {
+        this.stateMachine.transition(ENEMY_STATES.HITSTUN, { hitData }, true);
+      }
     }
 
     this.flashWhite();
@@ -1202,7 +1437,14 @@ export class Enemy {
     this.isAlive = false;
     this.hurtbox.deactivate();
     this.attackHitbox.deactivate();
-    this.stateMachine.transition(ENEMY_STATES.DEAD, {}, true);
+
+    // Transition to correct dead state based on enemy type
+    if (this.config.type === 'SWARMER') {
+      this.stateMachine.transition(SWARMER_STATES.DEAD, {}, true);
+    } else {
+      this.stateMachine.transition(ENEMY_STATES.DEAD, {}, true);
+    }
+
     this.scene.events.emit('enemy:killed', { enemy: this });
   }
 
@@ -1268,6 +1510,74 @@ export class Enemy {
   setCombatDebug(show) {
     this.hurtbox.setDebug(show);
     this.attackHitbox.setDebug(show);
+
+    // Swarmer pack debug visualization
+    if (this.config.type === 'SWARMER') {
+      if (show) {
+        if (!this.packDebugGraphics) {
+          this.packDebugGraphics = this.scene.add.graphics();
+          this.packDebugGraphics.setDepth(999);
+        }
+        if (!this.stateText) {
+          this.stateText = this.scene.add.text(0, 0, '', {
+            fontSize: '10px',
+            color: '#ffffff',
+            backgroundColor: '#000000aa',
+            padding: { x: 2, y: 1 },
+          });
+          this.stateText.setDepth(1000);
+        }
+      } else {
+        if (this.packDebugGraphics) {
+          this.packDebugGraphics.destroy();
+          this.packDebugGraphics = null;
+        }
+        if (this.stateText) {
+          this.stateText.destroy();
+          this.stateText = null;
+        }
+      }
+    }
+  }
+
+  /**
+   * Update pack debug visualization (called in update for swarmers)
+   */
+  updatePackDebug() {
+    if (!this.packDebugGraphics || !this.scene.showCombatDebug) return;
+
+    this.packDebugGraphics.clear();
+
+    const x = this.sprite.x;
+    const y = this.sprite.y;
+    const packRadius = this.config.packRadius || 150;
+    const packCount = this.getPackCount();
+    const inPack = this.isInPack();
+
+    // Draw pack radius circle (faint)
+    this.packDebugGraphics.lineStyle(1, inPack ? 0x00ff00 : 0xff6666, 0.3);
+    this.packDebugGraphics.strokeCircle(x, y, packRadius);
+
+    // Draw line to retreat target when in RETREAT state
+    const currentState = this.stateMachine.getCurrentStateName();
+    if (currentState === SWARMER_STATES.RETREAT && this.currentRetreatTarget) {
+      this.packDebugGraphics.lineStyle(2, 0x6699ff, 0.7);
+      this.packDebugGraphics.lineBetween(
+        x, y,
+        this.currentRetreatTarget.x, this.currentRetreatTarget.y
+      );
+
+      // Draw target marker
+      this.packDebugGraphics.fillStyle(0x6699ff, 0.8);
+      this.packDebugGraphics.fillCircle(this.currentRetreatTarget.x, this.currentRetreatTarget.y, 5);
+    }
+
+    // Update state text
+    if (this.stateText) {
+      const stateName = currentState.replace('swarmer_', '').toUpperCase();
+      this.stateText.setText(`${stateName}\nPack: ${packCount}`);
+      this.stateText.setPosition(x - 20, y - this.stats.height - 25);
+    }
   }
 
   /**
@@ -1275,12 +1585,20 @@ export class Enemy {
    * @returns {object}
    */
   getDebugInfo() {
-    return {
+    const info = {
       health: `${this.health}/${this.maxHealth}`,
       state: this.stateMachine.getCurrentStateName(),
       hitstun: Math.round(this.hitstunRemaining),
       alive: this.isAlive,
     };
+
+    // Add pack info for swarmers
+    if (this.config.type === 'SWARMER') {
+      info.packCount = this.getPackCount();
+      info.inPack = this.isInPack();
+    }
+
+    return info;
   }
 
   destroy() {
@@ -1290,6 +1608,17 @@ export class Enemy {
     }
     this.hurtbox.destroy();
     this.attackHitbox.destroy();
+
+    // Clean up pack debug graphics (Swarmer-specific)
+    if (this.packDebugGraphics) {
+      this.packDebugGraphics.destroy();
+      this.packDebugGraphics = null;
+    }
+    if (this.stateText) {
+      this.stateText.destroy();
+      this.stateText = null;
+    }
+
     this.sprite.destroy();
   }
 }
@@ -1555,6 +1884,654 @@ class EnemyDeadState extends State {
     });
 
     // Immediately destroy the enemy - corpse replaces the visual
+    this.enemy.destroy();
+  }
+
+  update(time, delta) {
+    return null;
+  }
+
+  canBeInterrupted() {
+    return false;
+  }
+}
+
+// ============================================
+// SWARMER-SPECIFIC STATES
+// Pack-based AI: brave in groups, cowardly alone
+// ============================================
+
+/**
+ * Swarmer Idle State - Brief pause, waiting for stimulus
+ */
+class SwarmerIdleState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.IDLE, stateMachine);
+    this.idleDuration = 300;
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.enemy.stop();
+    // Restore original tint
+    if (this.enemy.stats.color) {
+      this.enemy.sprite.setTint(this.enemy.stats.color);
+    }
+  }
+
+  update(time, delta) {
+    // Check for player
+    if (this.enemy.canSeeTarget()) {
+      return SWARMER_STATES.ALERT;
+    }
+
+    // Return to patrol after idle
+    if (this.stateMachine.getStateTime() >= this.idleDuration) {
+      return SWARMER_STATES.PATROL;
+    }
+
+    return null;
+  }
+}
+
+/**
+ * Swarmer Patrol State - Wander back and forth
+ */
+class SwarmerPatrolState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.PATROL, stateMachine);
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    // Restore original tint
+    if (this.enemy.stats.color) {
+      this.enemy.sprite.setTint(this.enemy.stats.color);
+    }
+  }
+
+  update(time, delta) {
+    // Check for player
+    if (this.enemy.canSeeTarget()) {
+      return SWARMER_STATES.ALERT;
+    }
+
+    // Patrol movement
+    const distanceFromOrigin = this.enemy.sprite.x - this.enemy.patrolOrigin;
+
+    // Turn around at patrol limits
+    if (distanceFromOrigin > this.enemy.patrolDistance) {
+      this.enemy.patrolDirection = -1;
+    } else if (distanceFromOrigin < -this.enemy.patrolDistance) {
+      this.enemy.patrolDirection = 1;
+    }
+
+    // Check for walls
+    if (this.enemy.sprite.body.blocked.left) {
+      this.enemy.patrolDirection = 1;
+    } else if (this.enemy.sprite.body.blocked.right) {
+      this.enemy.patrolDirection = -1;
+    }
+
+    // Move at patrol speed
+    this.enemy.move(this.enemy.patrolDirection, this.enemy.speed);
+
+    return null;
+  }
+}
+
+/**
+ * Swarmer Alert State - Brief "noticed player" reaction
+ */
+class SwarmerAlertState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.ALERT, stateMachine);
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.enemy.stop();
+    this.alertDuration = this.enemy.config.alertDuration || 200;
+
+    // Face player
+    const direction = this.enemy.getDirectionToTarget();
+    this.enemy.sprite.setFlipX(direction < 0);
+
+    // Yellow tint to indicate alert
+    this.enemy.sprite.setTint(0xffff00);
+
+    // Emit alert event for debugging
+    this.enemy.scene.events.emit('swarmer:alert', { enemy: this.enemy });
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    if (stateTime >= this.alertDuration) {
+      // Decide: chase or retreat based on pack status
+      if (this.enemy.isInPack()) {
+        return SWARMER_STATES.CHASE;
+      } else {
+        return SWARMER_STATES.RETREAT;
+      }
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    // Restore tint
+    if (this.enemy.stats.color) {
+      this.enemy.sprite.setTint(this.enemy.stats.color);
+    }
+  }
+}
+
+/**
+ * Swarmer Chase State - Rush directly at player (when in pack)
+ */
+class SwarmerChaseState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.CHASE, stateMachine);
+    this.packCheckInterval = 200; // Check pack status every 200ms
+    this.lastPackCheck = 0;
+    this.wasInPack = true;
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.lastPackCheck = 0;
+    this.wasInPack = this.enemy.isInPack();
+
+    // Restore original tint (or slightly brighter for aggression)
+    this.enemy.sprite.setTint(this.enemy.stats.color || 0xffaa00);
+  }
+
+  update(time, delta) {
+    // Periodic pack status check
+    this.lastPackCheck += delta;
+    if (this.lastPackCheck >= this.packCheckInterval) {
+      this.lastPackCheck = 0;
+      this.wasInPack = this.enemy.isInPack();
+
+      // Lost pack support - retreat!
+      if (!this.wasInPack) {
+        return SWARMER_STATES.RETREAT;
+      }
+    }
+
+    // Check if can attack
+    if (this.enemy.canAttackTarget() && this.enemy.canAttack(time)) {
+      // Only attack if in pack
+      if (this.wasInPack) {
+        return SWARMER_STATES.ATTACK_WINDUP;
+      }
+    }
+
+    // Move toward target
+    if (this.enemy.canSeeTarget()) {
+      const direction = this.enemy.getDirectionToTarget();
+      this.enemy.move(direction, this.enemy.chaseSpeed);
+
+      // Attempt to climb over blocking enemies
+      if (this.enemy.canClimbEnemies && this.enemy.isBlockedByEnemy()) {
+        this.enemy.attemptClimb(time);
+      }
+    } else {
+      // Lost sight of player
+      this.enemy.stop();
+      return SWARMER_STATES.PATROL;
+    }
+
+    return null;
+  }
+}
+
+/**
+ * Swarmer Retreat State - Flee toward other swarmers (when isolated)
+ */
+class SwarmerRetreatState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.RETREAT, stateMachine);
+    this.packCheckInterval = 150;
+    this.lastPackCheck = 0;
+    this.retreatTimeout = 3000; // Give up retreating after 3s
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.lastPackCheck = 0;
+
+    // Blue-ish tint to indicate fleeing
+    this.enemy.sprite.setTint(0x6699ff);
+
+    // Calculate initial retreat target
+    this.updateRetreatTarget();
+
+    // Emit retreat event for debugging
+    this.enemy.scene.events.emit('swarmer:retreat', { enemy: this.enemy });
+  }
+
+  updateRetreatTarget() {
+    const target = this.enemy.getRetreatTarget();
+    this.enemy.currentRetreatTarget = target;
+    return target;
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Periodic pack check
+    this.lastPackCheck += delta;
+    if (this.lastPackCheck >= this.packCheckInterval) {
+      this.lastPackCheck = 0;
+
+      // Regrouped with pack - attack!
+      if (this.enemy.isInPack()) {
+        this.enemy.scene.events.emit('swarmer:regroup', { enemy: this.enemy });
+        return SWARMER_STATES.CHASE;
+      }
+
+      // Update retreat target
+      this.updateRetreatTarget();
+    }
+
+    // Timeout - no swarmers to retreat to, far from player
+    if (stateTime >= this.retreatTimeout) {
+      const distToPlayer = this.enemy.getDistanceToTarget();
+      if (distToPlayer > this.enemy.detectionRange * 1.5) {
+        return SWARMER_STATES.PATROL;
+      }
+    }
+
+    // Move toward retreat target
+    const target = this.enemy.currentRetreatTarget;
+    if (target) {
+      const dx = target.x - this.enemy.sprite.x;
+      const direction = dx > 0 ? 1 : -1;
+      const retreatSpeed = this.enemy.config.retreatSpeed || 180;
+      this.enemy.move(direction, retreatSpeed);
+
+      // Check if reached retreat target
+      if (Math.abs(dx) < 30) {
+        // Reached target but still isolated - keep looking
+        this.updateRetreatTarget();
+      }
+    } else {
+      // No retreat target - just run away from player
+      const direction = this.enemy.getDirectionToTarget() * -1;
+      const retreatSpeed = this.enemy.config.retreatSpeed || 180;
+      this.enemy.move(direction, retreatSpeed);
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.enemy.currentRetreatTarget = null;
+    // Restore tint
+    if (this.enemy.stats.color) {
+      this.enemy.sprite.setTint(this.enemy.stats.color);
+    }
+  }
+}
+
+/**
+ * Swarmer Attack Windup State - Telegraph attack
+ */
+class SwarmerAttackWindupState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.ATTACK_WINDUP, stateMachine);
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.enemy.stop();
+    this.windupDuration = this.enemy.config.attackWindup || 200;
+
+    // Face player at start
+    const direction = this.enemy.getDirectionToTarget();
+    this.enemy.sprite.setFlipX(direction < 0);
+
+    // Record attack cooldown
+    this.enemy.lastAttackTime = this.enemy.scene?.time?.now || 0;
+
+    // Red tint to telegraph
+    this.enemy.sprite.setTint(0xff6666);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Slight shake to telegraph
+    const shake = Math.sin(stateTime * 0.08) * 2;
+    this.enemy.sprite.x += shake * 0.1;
+
+    if (stateTime >= this.windupDuration) {
+      return SWARMER_STATES.ATTACKING;
+    }
+
+    return null;
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can be interrupted by damage
+    return nextStateName === SWARMER_STATES.HITSTUN ||
+           nextStateName === SWARMER_STATES.LAUNCHED ||
+           nextStateName === SWARMER_STATES.DEAD;
+  }
+}
+
+/**
+ * Swarmer Attacking State - Lunge and hitbox active
+ */
+class SwarmerAttackingState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.ATTACKING, stateMachine);
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.activeDuration = this.enemy.config.attackActive || 100;
+
+    // Activate hitbox with swarmer-specific properties
+    this.enemy.attackHitbox.damage = this.enemy.damage;
+    this.enemy.attackHitbox.knockback = { x: 150, y: -50 };
+    this.enemy.attackHitbox.hitstun = 200;
+    this.enemy.attackHitbox.activate();
+
+    // Brighter red during attack
+    this.enemy.sprite.setTint(0xff4444);
+
+    // Lunge forward
+    const direction = this.enemy.sprite.flipX ? -1 : 1;
+    this.enemy.sprite.body.setVelocityX(direction * 180);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    if (stateTime >= this.activeDuration) {
+      return SWARMER_STATES.ATTACK_RECOVERY;
+    }
+
+    return null;
+  }
+
+  exit(nextState) {
+    this.enemy.attackHitbox.deactivate();
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === SWARMER_STATES.HITSTUN ||
+           nextStateName === SWARMER_STATES.LAUNCHED ||
+           nextStateName === SWARMER_STATES.DEAD;
+  }
+}
+
+/**
+ * Swarmer Attack Recovery State - Vulnerable after attack
+ */
+class SwarmerAttackRecoveryState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.ATTACK_RECOVERY, stateMachine);
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.recoveryDuration = this.enemy.config.attackRecovery || 150;
+    this.enemy.stop();
+    this.enemy.attackHitbox.deactivate();
+
+    // Restore tint
+    if (this.enemy.stats.color) {
+      this.enemy.sprite.setTint(this.enemy.stats.color);
+    }
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    if (stateTime >= this.recoveryDuration) {
+      // Check pack status to decide next action
+      if (this.enemy.isInPack()) {
+        return SWARMER_STATES.CHASE;
+      } else {
+        return SWARMER_STATES.RETREAT;
+      }
+    }
+
+    return null;
+  }
+
+  canBeInterrupted(nextStateName) {
+    return nextStateName === SWARMER_STATES.HITSTUN ||
+           nextStateName === SWARMER_STATES.LAUNCHED ||
+           nextStateName === SWARMER_STATES.DEAD;
+  }
+}
+
+/**
+ * Swarmer Hitstun State - Extended hitstun (fodder enemy)
+ */
+class SwarmerHitstunState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.HITSTUN, stateMachine);
+    this.wasLaunched = false;
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.enemy.attackHitbox.deactivate();
+    this.wasLaunched = false;
+
+    // Apply hitstun multiplier (swarmers have longer hitstun)
+    const multiplier = this.enemy.config.hitstunMultiplier || 1.5;
+
+    // Check if this was a launcher hit
+    if (params?.hitData?.launcher) {
+      this.wasLaunched = true;
+    }
+
+    // Flash white
+    this.enemy.sprite.setTint(0xffffff);
+
+    // Schedule tint restoration
+    this.enemy.scene.time.delayedCall(50, () => {
+      if (this.enemy.sprite && this.enemy.sprite.active && this.enemy.isAlive) {
+        // Darker tint during hitstun
+        this.enemy.sprite.setTint(0xffccaa);
+      }
+    });
+  }
+
+  update(time, delta) {
+    // Check for death
+    if (this.enemy.health <= 0) {
+      return SWARMER_STATES.DEAD;
+    }
+
+    // Check for launch (hit by launcher while in hitstun)
+    if (this.wasLaunched || (this.enemy.sprite.body.velocity.y < -200 && !this.enemy.sprite.body.blocked.down)) {
+      return SWARMER_STATES.LAUNCHED;
+    }
+
+    // Wait for hitstun to end
+    if (this.enemy.hitstunRemaining <= 0) {
+      // Restore tint
+      if (this.enemy.stats.color) {
+        this.enemy.sprite.setTint(this.enemy.stats.color);
+      }
+
+      // Check pack status
+      if (this.enemy.isInPack()) {
+        return SWARMER_STATES.CHASE;
+      } else {
+        return SWARMER_STATES.RETREAT;
+      }
+    }
+
+    return null;
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can be launched while in hitstun
+    return nextStateName === SWARMER_STATES.LAUNCHED ||
+           nextStateName === SWARMER_STATES.DEAD;
+  }
+}
+
+/**
+ * Swarmer Launched State - Airborne, combo-able
+ */
+class SwarmerLaunchedState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.LAUNCHED, stateMachine);
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.enemy.attackHitbox.deactivate();
+
+    // Airborne visual
+    this.enemy.sprite.setTint(0xffaaaa);
+  }
+
+  update(time, delta) {
+    // Check for death
+    if (this.enemy.health <= 0) {
+      return SWARMER_STATES.DEAD;
+    }
+
+    // Check if landed
+    if (this.enemy.sprite.body.blocked.down || this.enemy.sprite.body.touching.down) {
+      return SWARMER_STATES.DOWNED;
+    }
+
+    return null;
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can be hit again while launched (juggle)
+    return nextStateName === SWARMER_STATES.HITSTUN ||
+           nextStateName === SWARMER_STATES.DEAD;
+  }
+}
+
+/**
+ * Swarmer Downed State - On the ground, recovering
+ */
+class SwarmerDownedState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.DOWNED, stateMachine);
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    this.downedDuration = this.enemy.config.downedDuration || 300;
+    this.enemy.stop();
+    this.enemy.attackHitbox.deactivate();
+
+    // Darker tint while downed
+    this.enemy.sprite.setTint(0x886644);
+  }
+
+  update(time, delta) {
+    const stateTime = this.stateMachine.getStateTime();
+
+    // Check for death
+    if (this.enemy.health <= 0) {
+      return SWARMER_STATES.DEAD;
+    }
+
+    // Recovery complete
+    if (stateTime >= this.downedDuration) {
+      // Restore tint
+      if (this.enemy.stats.color) {
+        this.enemy.sprite.setTint(this.enemy.stats.color);
+      }
+
+      // Check pack status
+      if (this.enemy.isInPack()) {
+        return SWARMER_STATES.CHASE;
+      } else {
+        return SWARMER_STATES.RETREAT;
+      }
+    }
+
+    return null;
+  }
+
+  canBeInterrupted(nextStateName) {
+    // Can be hit while downed (OTG)
+    return nextStateName === SWARMER_STATES.HITSTUN ||
+           nextStateName === SWARMER_STATES.LAUNCHED ||
+           nextStateName === SWARMER_STATES.DEAD;
+  }
+}
+
+/**
+ * Swarmer Dead State - Terminal state
+ */
+class SwarmerDeadState extends State {
+  constructor(stateMachine) {
+    super(SWARMER_STATES.DEAD, stateMachine);
+  }
+
+  get enemy() {
+    return this.entity;
+  }
+
+  enter(prevState, params) {
+    // Emit event for corpse spawning
+    this.enemy.scene.events.emit('enemy:died', {
+      x: this.enemy.sprite.x,
+      y: this.enemy.sprite.y,
+      enemyType: this.enemy.config.type || 'SWARMER',
+      width: this.enemy.sprite.body.width,
+      height: this.enemy.sprite.body.height,
+    });
+
+    // Clean up debug graphics
+    if (this.enemy.packDebugGraphics) {
+      this.enemy.packDebugGraphics.destroy();
+      this.enemy.packDebugGraphics = null;
+    }
+
+    // Destroy the enemy
     this.enemy.destroy();
   }
 
