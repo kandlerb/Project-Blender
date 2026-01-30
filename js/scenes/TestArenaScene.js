@@ -38,6 +38,11 @@ export class TestArenaScene extends BaseScene {
     this.corpseManager = null;
     this.hud = null;
     this.showCombatDebug = false;
+
+    // Collider references for cleanup/reset
+    this.enemyEnemyCollider = null;
+    this.playerEnemyCollider = null;
+    this.enemyCorpseCollider = null;
   }
 
   onCreate() {
@@ -100,23 +105,8 @@ export class TestArenaScene extends BaseScene {
     // Spawn initial enemies
     this.spawnEnemies();
 
-    // Set up enemy-enemy collision (solid collision between all enemies)
-    // Mass-based physics: heavier enemies push lighter ones
-    this.physics.add.collider(this.enemyGroup, this.enemyGroup);
-
-    // Set up player-enemy collision (player and enemies cannot walk through each other)
-    // Player mass = 2, swarmers = 1 (player pushes), brutes = 5 (push player)
-    this.physics.add.collider(this.player.sprite, this.enemyGroup);
-
-    // Set up enemy-corpse collision (after enemies are spawned)
-    // Process callback prevents physics from moving corpses - only step-up/destroy logic applies
-    this.physics.add.collider(
-      this.enemyGroup,
-      this.corpseManager.corpseGroup,
-      this.handleEnemyCorpseCollision,
-      this.shouldEnemyCollideWithCorpse,
-      this
-    );
+    // Set up all enemy-related colliders
+    this.setupColliders();
 
     // Create debug HUD
     this.createDebugHUD();
@@ -234,9 +224,18 @@ export class TestArenaScene extends BaseScene {
     // Physics debug toggle
     this.input.keyboard.on('keydown-BACKQUOTE', () => {
       this.physics.world.drawDebug = !this.physics.world.drawDebug;
-      if (!this.physics.world.drawDebug) {
+
+      if (this.physics.world.drawDebug) {
+        // Create the debug graphic if it doesn't exist
+        if (!this.physics.world.debugGraphic) {
+          this.physics.world.createDebugGraphic();
+        }
+      } else if (this.physics.world.debugGraphic) {
+        // Clear the debug graphic when turning off
         this.physics.world.debugGraphic.clear();
       }
+
+      console.log('Physics debug:', this.physics.world.drawDebug);
     });
 
     // Combat debug toggle
@@ -252,6 +251,8 @@ export class TestArenaScene extends BaseScene {
     // Respawn enemies
     this.input.keyboard.on('keydown-R', () => {
       this.spawnEnemies();
+      // Recreate colliders to ensure new enemies are included
+      this.setupColliders();
     });
 
     // Test damage
@@ -415,6 +416,58 @@ export class TestArenaScene extends BaseScene {
     }
 
     console.log(`Spawned 7 enemies (total: ${this.enemies.length}) - Swarmer x3, Lunger, Shield Bearer, Lobber, Detonator`);
+  }
+
+  /**
+   * Set up all enemy-related collision handlers
+   * Called after spawnEnemies() and when respawning
+   */
+  setupColliders() {
+    // Destroy existing colliders if any (for respawn scenarios)
+    if (this.enemyEnemyCollider) {
+      this.enemyEnemyCollider.destroy();
+      this.enemyEnemyCollider = null;
+    }
+    if (this.playerEnemyCollider) {
+      this.playerEnemyCollider.destroy();
+      this.playerEnemyCollider = null;
+    }
+    if (this.enemyCorpseCollider) {
+      this.enemyCorpseCollider.destroy();
+      this.enemyCorpseCollider = null;
+    }
+
+    // Enemy-enemy collision (solid collision between all enemies)
+    // Mass-based physics: heavier enemies push lighter ones
+    this.enemyEnemyCollider = this.physics.add.collider(
+      this.enemyGroup,
+      this.enemyGroup,
+      null, // no callback needed for basic collision
+      null, // no process callback
+      this
+    );
+
+    // Player-enemy collision (player and enemies cannot walk through each other)
+    // Player mass = 2, swarmers = 1 (player pushes), brutes = 5 (push player)
+    this.playerEnemyCollider = this.physics.add.collider(
+      this.player.sprite,
+      this.enemyGroup,
+      null, // no callback needed for basic collision
+      null, // no process callback
+      this
+    );
+
+    // Enemy-corpse collision
+    // Process callback prevents physics from moving corpses - only step-up/destroy logic applies
+    this.enemyCorpseCollider = this.physics.add.collider(
+      this.enemyGroup,
+      this.corpseManager.corpseGroup,
+      this.handleEnemyCorpseCollision,
+      this.shouldEnemyCollideWithCorpse,
+      this
+    );
+
+    console.log('Colliders setup. Enemy count:', this.enemies.length);
   }
 
   createArena() {
@@ -830,6 +883,20 @@ export class TestArenaScene extends BaseScene {
     // Clean up global debug references
     window.player = null;
     window.scene = null;
+
+    // Clean up colliders
+    if (this.enemyEnemyCollider) {
+      this.enemyEnemyCollider.destroy();
+      this.enemyEnemyCollider = null;
+    }
+    if (this.playerEnemyCollider) {
+      this.playerEnemyCollider.destroy();
+      this.playerEnemyCollider = null;
+    }
+    if (this.enemyCorpseCollider) {
+      this.enemyCorpseCollider.destroy();
+      this.enemyCorpseCollider = null;
+    }
 
     // Clean up projectiles
     if (this.enemyProjectiles) {
