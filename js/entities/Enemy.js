@@ -464,7 +464,12 @@ export class Enemy {
    * @returns {boolean}
    */
   canSeeTarget() {
-    if (!this.target || !this.target.isAlive) return false;
+    if (!this.target) return false;
+
+    // Check if target has isAlive property - only reject if explicitly false
+    // This handles cases where target.isAlive might be undefined
+    if (this.target.isAlive === false) return false;
+
     return this.getDistanceToTarget() <= this.detectionRange;
   }
 
@@ -695,8 +700,10 @@ export class Enemy {
     // Set cooldown
     this.lastClimbTime = time;
 
-    // Apply upward velocity (60% of player jump force, roughly 200-250)
-    const climbVelocity = -220;
+    // Apply upward velocity - needs to clear enemy height (32px for swarmers)
+    // With gravity 2400, need v = sqrt(2 * g * h) = sqrt(2 * 2400 * 32) ≈ 392
+    // Using -350 as a balance between clearing height and not looking floaty
+    const climbVelocity = -350;
     this.sprite.body.setVelocityY(climbVelocity);
 
     // Emit climb event
