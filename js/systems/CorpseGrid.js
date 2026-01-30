@@ -432,122 +432,31 @@ export class CorpseGrid {
 
   /**
    * Find the best valid cell for a falling corpse near position (x, y)
-   * Searches downward first, then upward if spawned inside a pile, then nearest
+   * Uses bottom-up search to ensure corpses settle at the LOWEST valid position,
+   * creating natural pyramid formations (wide at bottom, narrow at top).
+   *
    * @param {number} worldX - World X position
    * @param {number} worldY - World Y position
    * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
    */
   findSettlingCell(worldX, worldY) {
     // Convert to grid coordinates
-    const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
+    const { col: spawnCol, row: spawnRow } = this.worldToGrid(worldX, worldY);
 
-    // Try to find a cell at or below current position
-    const cellBelow = this.findCellDownward(startCol, startRow);
-    if (cellBelow) return cellBelow;
+    // Find ground level for this column area
+    const groundRow = this.findGroundRow(spawnCol, 0);
 
-    // If spawned inside a pile, search UPWARD for the top
-    const cellAbove = this.findCellUpward(startCol, startRow);
+    // Search from ground UP to find the LOWEST valid cell
+    // This ensures pyramids form correctly (fill bottom first)
+    const lowestCell = this.findLowestValidCell(spawnCol, groundRow);
+    if (lowestCell) return lowestCell;
+
+    // Fallback: if spawned inside a pile, search upward for the top
+    const cellAbove = this.findCellUpward(spawnCol, spawnRow);
     if (cellAbove) return cellAbove;
 
-    // Search in all directions for nearest valid cell
+    // Last resort: search in all directions for nearest valid cell
     return this.findNearestValidCell(worldX, worldY);
-  }
-
-  /**
-   * Search downward and sideways from a position to find a valid cell
-   * @param {number} startCol - Starting column
-   * @param {number} startRow - Starting row
-   * @param {number} maxRows - Maximum rows to search down (default 100)
-   * @param {number} maxCols - Maximum columns to search sideways (default 10)
-   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
-   */
-  findCellDownward(startCol, startRow, maxRows = 100, maxCols = 10) {
-    // Start from current position and search downward
-    for (let rowOffset = 0; rowOffset < maxRows; rowOffset++) {
-      const row = startRow + rowOffset;
-
-      // Search horizontally, starting from center and expanding outward
-      for (let colOffset = 0; colOffset <= maxCols; colOffset++) {
-        // Try both left and right at each offset
-        const colsToTry = colOffset === 0 ? [startCol] : [startCol - colOffset, startCol + colOffset];
-
-        for (const col of colsToTry) {
-          // Skip if already occupied
-          if (this.isOccupied(col, row)) continue;
-
-          // Check if this cell has support
-          if (this.hasSupport(col, row)) {
-            const worldPos = this.gridToWorld(col, row);
-            return {
-              col,
-              row,
-              worldX: worldPos.x,
-              worldY: worldPos.y,
-            };
-          }
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Find a settling cell that prefers stacking in pyramid formation
-   * Tries to find cells that would create natural pile shapes
-   * @param {number} worldX - World X position
-   * @param {number} worldY - World Y position
-   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
-   */
-  findStackingCell(worldX, worldY) {
-    // First, find the basic settling cell
-    const basicCell = this.findSettlingCell(worldX, worldY);
-    if (!basicCell) return null;
-
-    // Check if we can stack on top of existing corpses
-    // Look for cells that have two supporting cells below (more stable)
-    const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
-
-    // Search for ideal stacking positions (cells with two supports)
-    for (let rowOffset = 0; rowOffset < 50; rowOffset++) {
-      const row = startRow + rowOffset;
-
-      for (let colOffset = 0; colOffset <= 5; colOffset++) {
-        const colsToTry = colOffset === 0 ? [startCol] : [startCol - colOffset, startCol + colOffset];
-
-        for (const col of colsToTry) {
-          if (this.isOccupied(col, row)) continue;
-
-          // Check if has dual support (more stable for pyramid stacking)
-          const hasDualSupport = this.hasDualSupport(col, row);
-          const hasAnySupport = this.hasSupport(col, row);
-
-          if (hasDualSupport) {
-            const worldPos = this.gridToWorld(col, row);
-            return {
-              col,
-              row,
-              worldX: worldPos.x,
-              worldY: worldPos.y,
-            };
-          }
-
-          // If we've searched far enough, accept single support
-          if (hasAnySupport && rowOffset > 5) {
-            const worldPos = this.gridToWorld(col, row);
-            return {
-              col,
-              row,
-              worldX: worldPos.x,
-              worldY: worldPos.y,
-            };
-          }
-        }
-      }
-    }
-
-    // Fall back to basic settling
-    return basicCell;
   }
 
   /**
@@ -660,6 +569,116 @@ export class CorpseGrid {
     }
 
     return true; // Both support cells have support
+  }
+
+  /**
+   * Count how many of the support cells are occupied or on ground
+   * Used for pyramid shape preference (dual support = 2, single = 1, none = 0)
+   * @param {number} col - Column index
+   * @param {number} row - Row index
+   * @returns {number} 0, 1, or 2
+   */
+  countSupportCells(col, row) {
+    // Ground directly below counts as 2 (full support)
+    if (this.isGroundBelow(col, row)) {
+      return 2;
+    }
+
+    const supportCells = this.getSupportCells(col, row);
+    let count = 0;
+
+    for (const cell of supportCells) {
+      if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  /**
+   * Find the ground row for a given column area
+   * Searches downward to find where ground begins
+   * @param {number} col - Column to check
+   * @param {number} startRow - Row to start searching from (default 0)
+   * @param {number} maxRows - Maximum rows to search (default 100)
+   * @returns {number} Row index just above ground level
+   */
+  findGroundRow(col, startRow = 0, maxRows = 100) {
+    // Search downward from startRow to find ground
+    for (let row = startRow; row < startRow + maxRows; row++) {
+      if (this.isGroundBelow(col, row)) {
+        return row; // This row is just above ground
+      }
+    }
+
+    // Fallback: assume ground is at row 50 (roughly center of screen)
+    return 50;
+  }
+
+  /**
+   * Find the lowest valid cell for settling, searching from ground level upward
+   * This ensures corpses always settle at the lowest possible position,
+   * creating natural pyramids that are wide at the bottom and narrow at the top.
+   *
+   * @param {number} targetCol - Target column (near spawn X)
+   * @param {number} groundRow - Row at ground level
+   * @param {number} maxHeight - Maximum rows to search upward (default 50)
+   * @param {number} maxColOffset - Maximum columns to search sideways (default 15)
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findLowestValidCell(targetCol, groundRow, maxHeight = 50, maxColOffset = 15) {
+    // Search from ground level UPWARD (decreasing row numbers = higher up)
+    for (let row = groundRow; row >= groundRow - maxHeight; row--) {
+      const candidates = [];
+
+      // Collect all valid cells at this row within horizontal range
+      for (let colOffset = 0; colOffset <= maxColOffset; colOffset++) {
+        const cols = colOffset === 0 ? [targetCol] : [targetCol - colOffset, targetCol + colOffset];
+
+        for (const col of cols) {
+          // Skip if already occupied
+          if (this.isOccupied(col, row)) continue;
+
+          // Check if this cell has support
+          if (this.hasSupport(col, row)) {
+            const supportCount = this.countSupportCells(col, row);
+            candidates.push({
+              col,
+              row,
+              supportCount,
+              distance: Math.abs(col - targetCol),
+            });
+          }
+        }
+      }
+
+      // If we found valid cells at this row, pick the best one
+      if (candidates.length > 0) {
+        // Sort: prefer dual support first, then by distance to target
+        candidates.sort((a, b) => {
+          // First priority: more support cells = more stable (pyramid shape)
+          if (b.supportCount !== a.supportCount) {
+            return b.supportCount - a.supportCount;
+          }
+          // Second priority: closer to target column
+          return a.distance - b.distance;
+        });
+
+        const best = candidates[0];
+        const worldPos = this.gridToWorld(best.col, best.row);
+        return {
+          col: best.col,
+          row: best.row,
+          worldX: worldPos.x,
+          worldY: worldPos.y,
+        };
+      }
+
+      // No valid cells at this row - continue searching upward
+    }
+
+    return null;
   }
 
   // ========================================
