@@ -65,9 +65,8 @@ export class Corpse {
   constructor(scene, x, y, config = {}) {
     this.scene = scene;
 
-    // DEBUG: Unique ID for logging
+    // Unique ID for tracking
     this.id = ++corpseIdCounter;
-    console.log(`\n*** Corpse #${this.id} CREATED at (${x.toFixed(0)}, ${y.toFixed(0)}) ***`);
 
     // Grid reference for settling positions
     this.grid = config.grid || null;
@@ -263,12 +262,6 @@ export class Corpse {
    * @param {{ col: number, row: number, worldX: number, worldY: number }} cell - Target cell
    */
   startSnapping(cell) {
-    // DEBUG: Log state transition
-    const oldState = this.state;
-    console.log(`\n### Corpse #${this.id}: ${oldState} -> SNAPPING at (${this.sprite.x.toFixed(0)}, ${this.sprite.y.toFixed(0)})`);
-    console.log(`    Target cell: (${cell.col}, ${cell.row}) = world (${cell.worldX.toFixed(0)}, ${cell.worldY.toFixed(0)})`);
-    console.log(`    Distance: dx=${Math.abs(this.sprite.x - cell.worldX).toFixed(1)}, dy=${Math.abs(this.sprite.y - cell.worldY).toFixed(1)}`);
-
     // Claim the grid cell immediately to prevent other corpses from targeting it
     this.grid.occupyCell(cell.col, cell.row, this);
     this.gridCell = { col: cell.col, row: cell.row };
@@ -360,12 +353,6 @@ export class Corpse {
    */
   settle() {
     if (this.isSettled) return;
-
-    // DEBUG: Log state transition
-    console.log(`\n### Corpse #${this.id}: SNAPPING -> SETTLED at (${this.sprite.x.toFixed(0)}, ${this.sprite.y.toFixed(0)})`);
-    if (this.gridCell) {
-      console.log(`    Final cell: (${this.gridCell.col}, ${this.gridCell.row})`);
-    }
 
     this.isSettled = true;
     this.state = CORPSE_STATE.SETTLED;
