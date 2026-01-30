@@ -24,7 +24,11 @@ const config = {
     default: 'arcade',
     arcade: {
       gravity: { y: 0 }, // We handle gravity per-body
-      debug: false,
+      debug: true,  // Enable debug system (visibility controlled per-scene)
+      debugShowBody: true,
+      debugShowStaticBody: true,
+      debugShowVelocity: false,
+      fps: 120,  // Higher physics FPS for better collision detection
     },
   },
 

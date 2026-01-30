@@ -275,7 +275,11 @@ export class Enemy {
     body.setCollideWorldBounds(true);
     body.setBounce(0);
     body.setGravityY(PHYSICS.GRAVITY);
-    body.setMaxVelocityY(PHYSICS.TERMINAL_VELOCITY);
+    // Cap fall velocity to prevent tunneling through other enemies
+    // At 120 physics FPS with maxVelocity 500, enemies move ~4.2px per frame
+    // Smallest enemy (SWARMER) is 32px tall, so this prevents skipping collisions
+    const maxFallSpeed = 500;
+    body.setMaxVelocity(this.chaseSpeed * 1.5, maxFallSpeed);
     body.setDrag(300, 0);
 
     // The base texture is 28x28 pixels. We scale the sprite to reach target dimensions.

@@ -46,8 +46,11 @@ export class TestArenaScene extends BaseScene {
   }
 
   onCreate() {
-    // Physics debug
+    // Physics debug - start with debug hidden (debug enabled in config for toggling)
     this.physics.world.drawDebug = false;
+    if (this.physics.world.debugGraphic) {
+      this.physics.world.debugGraphic.setVisible(false);
+    }
 
     // Create managers BEFORE entities
     this.timeManager = new TimeManager(this);
@@ -225,14 +228,11 @@ export class TestArenaScene extends BaseScene {
     this.input.keyboard.on('keydown-BACKQUOTE', () => {
       this.physics.world.drawDebug = !this.physics.world.drawDebug;
 
-      if (this.physics.world.drawDebug) {
-        // Create the debug graphic if it doesn't exist
-        if (!this.physics.world.debugGraphic) {
-          this.physics.world.createDebugGraphic();
+      if (this.physics.world.debugGraphic) {
+        this.physics.world.debugGraphic.setVisible(this.physics.world.drawDebug);
+        if (!this.physics.world.drawDebug) {
+          this.physics.world.debugGraphic.clear();
         }
-      } else if (this.physics.world.debugGraphic) {
-        // Clear the debug graphic when turning off
-        this.physics.world.debugGraphic.clear();
       }
 
       console.log('Physics debug:', this.physics.world.drawDebug);
