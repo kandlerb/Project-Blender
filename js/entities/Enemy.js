@@ -278,20 +278,20 @@ export class Enemy {
     body.setMaxVelocityY(PHYSICS.TERMINAL_VELOCITY);
     body.setDrag(300, 0);
 
-    // Use config-based sizing - body slightly smaller than sprite for forgiving collisions
-    const bodyWidth = Math.max(20, this.stats.width - 4);
-    const bodyHeight = Math.max(24, this.stats.height - 4);
-    const offsetX = Math.floor((this.stats.width - bodyWidth) / 2);
-    const offsetY = Math.floor((this.stats.height - bodyHeight) / 2);
-
-    body.setSize(bodyWidth, bodyHeight);
-    body.setOffset(offsetX, offsetY);
+    // The base texture is 28x28 pixels. We scale the sprite to reach target dimensions.
+    // IMPORTANT: body.setSize() and body.setOffset() work in TEXTURE coordinates (pre-scale).
+    // Phaser automatically scales the physics body along with the sprite.
+    const textureSize = 28;
 
     // Scale sprite to match config dimensions
-    // Enemy placeholder is 28x28, scale to match target size
-    const scaleX = this.stats.width / 28;
-    const scaleY = this.stats.height / 28;
+    const scaleX = this.stats.width / textureSize;
+    const scaleY = this.stats.height / textureSize;
     this.sprite.setScale(scaleX, scaleY);
+
+    // Set body to full texture size with no offset - after scaling this will
+    // exactly match the displayed sprite dimensions
+    body.setSize(textureSize, textureSize);
+    body.setOffset(0, 0);
 
     // Set mass for enemy-enemy collision physics (heavier enemies push lighter ones)
     body.mass = this.mass;
