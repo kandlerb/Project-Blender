@@ -1,6 +1,7 @@
 import { BootScene } from './scenes/BootScene.js';
 import { PreloadScene } from './scenes/PreloadScene.js';
 import { TestArenaScene } from './scenes/TestArenaScene.js';
+import { PauseMenuScene } from './scenes/PauseMenuScene.js';
 
 // Phaser game configuration
 const config = {
@@ -33,7 +34,7 @@ const config = {
   },
 
   // Scene sequence
-  scene: [BootScene, PreloadScene, TestArenaScene],
+  scene: [BootScene, PreloadScene, TestArenaScene, PauseMenuScene],
 };
 
 // Create game instance
