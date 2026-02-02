@@ -252,12 +252,13 @@ export class CorpseGrid {
   }
 
   /**
-   * Check if a cell has support (ground below OR occupied cell(s) below)
+   * Check if a cell has support (ground below OR BOTH support cells occupied)
    * A cell has support if ANY of these conditions are true:
    * 1. The row below is ground (tilemap collision)
-   * 2. At least ONE of the two supporting cells below is occupied OR is ground
+   * 2. BOTH of the two supporting cells below are occupied OR are ground
    *
    * IMPORTANT: Returns false if the cell itself overlaps with ground (prevents clipping)
+   * NOTE: Requires DUAL support to prevent infinite cascade loops
    *
    * @param {number} col - Column index
    * @param {number} row - Row index
@@ -277,14 +278,16 @@ export class CorpseGrid {
     // Get the two support cells based on row parity
     const supportCells = this.getSupportCells(col, row);
 
-    // Has support if EITHER support cell is occupied OR is at ground level
+    // Require BOTH support cells to be occupied or on ground for stability
+    // This ensures corpses only settle in truly stable positions
     for (const cell of supportCells) {
-      if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
-        return true;
+      const cellHasSupport = this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row);
+      if (!cellHasSupport) {
+        return false; // Missing support on one side - not stable
       }
     }
 
-    return false;
+    return true; // Both supports present - stable
   }
 
   /**
