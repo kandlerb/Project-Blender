@@ -63,6 +63,7 @@ export class SkeletonInstance {
   setPosition(x, y) {
     this.position.x = x;
     this.position.y = y;
+    this.computeWorldPositions();
   }
 
   /**
@@ -73,6 +74,7 @@ export class SkeletonInstance {
   setScale(x, y) {
     this.scale.x = x;
     this.scale.y = y;
+    this.computeWorldPositions();
   }
 
   /**
@@ -81,6 +83,7 @@ export class SkeletonInstance {
    */
   setRotation(radians) {
     this.rotation = radians;
+    this.computeWorldPositions();
   }
 
   /**
@@ -93,6 +96,7 @@ export class SkeletonInstance {
       throw new Error(`Bone '${boneId}' not found in skeleton`);
     }
     this.boneAngles.set(boneId, degrees);
+    this.computeWorldPositions();
   }
 
   /**
@@ -105,8 +109,13 @@ export class SkeletonInstance {
       : Object.entries(anglesMap);
 
     for (const [boneId, degrees] of entries) {
-      this.setBoneAngle(boneId, degrees);
+      if (!this.skeleton.getBone(boneId)) {
+        throw new Error(`Bone '${boneId}' not found in skeleton`);
+      }
+      this.boneAngles.set(boneId, degrees);
     }
+    // Recompute once after all angles are set
+    this.computeWorldPositions();
   }
 
   /**
@@ -134,6 +143,7 @@ export class SkeletonInstance {
     for (const boneId of this.boneAngles.keys()) {
       this.boneAngles.set(boneId, 0);
     }
+    this.computeWorldPositions();
   }
 
   /**
