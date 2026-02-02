@@ -221,6 +221,7 @@ export class TestArenaScene extends BaseScene {
     console.log('TestArena ready');
     console.log('Controls: WASD=Move, Space=Jump, J=Light Attack, K=Heavy Attack');
     console.log('Debug: ` physics, C combat, G grid, R respawn, B boss, 8 corpse, 9 dump, 0 mute');
+    console.log('Debug: Y diagnose grid, O cascade unstable');
   }
 
   setupInputHandlers() {
@@ -356,6 +357,33 @@ export class TestArenaScene extends BaseScene {
     });
     this.input.keyboard.on('keydown-P', () => {
       this.openPauseMenu();
+    });
+
+    // Diagnose corpse grid state (Y key - P is used for pause menu)
+    this.input.keyboard.on('keydown-Y', () => {
+      if (this.corpseManager && this.corpseManager.grid) {
+        const result = this.corpseManager.grid.diagnoseGrid();
+        console.log(`Press O to trigger cascade on ${result.unstable.length} unstable corpses`);
+        this.lastDiagnosis = result;
+      }
+    });
+
+    // Trigger cascade on unstable corpses (O key)
+    this.input.keyboard.on('keydown-O', () => {
+      if (this.lastDiagnosis && this.lastDiagnosis.unstable.length > 0) {
+        console.log('Triggering cascade...');
+        if (this.corpseManager.triggerCascade) {
+          this.corpseManager.triggerCascade();
+        } else {
+          console.log('⚠️ triggerCascade() not yet implemented in CorpseManager');
+          console.log('Unstable cells that need cascading:');
+          this.lastDiagnosis.unstable.forEach(c => {
+            console.log(`  (${c.col},${c.row}) -> needs to find new position`);
+          });
+        }
+      } else {
+        console.log('No unstable corpses to cascade. Press Y first to diagnose.');
+      }
     });
   }
 
@@ -932,7 +960,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | 7 - AI Debug | G - Grid | 0 - Mute');
+    lines.push('R - Respawn | B - Boss | 7 - AI | G - Grid | Y - Diagnose | 0 - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }

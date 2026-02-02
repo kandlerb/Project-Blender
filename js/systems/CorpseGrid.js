@@ -420,6 +420,66 @@ export class CorpseGrid {
   }
 
   /**
+   * Diagnose grid state - log all occupied cells and their support status
+   * Call with: this.scene.corpseManager.grid.diagnoseGrid()
+   */
+  diagnoseGrid() {
+    console.log('=== CORPSE GRID DIAGNOSIS ===');
+    console.log(`Total occupied cells: ${this.occupiedCells.size}`);
+
+    const unstable = [];
+    const stable = [];
+
+    for (const [key, corpseData] of this.occupiedCells) {
+      const [col, row] = key.split(',').map(Number);
+      const supportCells = this.getSupportCells(col, row);
+
+      let supportCount = 0;
+      let hasGroundSupport = this.isGroundBelow(col, row);
+
+      for (const cell of supportCells) {
+        if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
+          supportCount++;
+        }
+      }
+
+      const worldPos = this.gridToWorld(col, row);
+      const cellInfo = {
+        col,
+        row,
+        worldPos,
+        supportCount,
+        hasGroundSupport,
+        isStable: hasGroundSupport || supportCount >= 2,
+        corpseId: corpseData?.id || '?',
+      };
+
+      if (cellInfo.isStable) {
+        stable.push(cellInfo);
+      } else {
+        unstable.push(cellInfo);
+      }
+    }
+
+    console.log(`\nSTABLE cells (${stable.length}):`);
+    stable.forEach(c => console.log(`  (${c.col},${c.row}) support=${c.supportCount} ground=${c.hasGroundSupport} [#${c.corpseId}]`));
+
+    console.log(`\nUNSTABLE cells (${unstable.length}):`);
+    unstable.forEach(c => console.log(`  (${c.col},${c.row}) support=${c.supportCount} ground=${c.hasGroundSupport} [#${c.corpseId}]`));
+
+    if (unstable.length > 0) {
+      console.log('\n⚠️ UNSTABLE CORPSES SHOULD BE CASCADING BUT ARE NOT!');
+      console.log('Press O to trigger cascade on unstable corpses');
+    } else if (stable.length > 0) {
+      console.log('\n✓ All corpses are stable (have ground or 2+ support cells)');
+    }
+
+    console.log('=== END DIAGNOSIS ===\n');
+
+    return { stable, unstable };
+  }
+
+  /**
    * Clear a cell (mark as unoccupied)
    * @param {number} col - Column index
    * @param {number} row - Row index
