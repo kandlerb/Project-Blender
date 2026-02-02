@@ -464,8 +464,11 @@ export class Corpse {
       gridCell: this.gridCell,
     });
 
+    console.log(`Corpse #${this.id}: Entered SETTLED state at (${this.gridCell?.col},${this.gridCell?.row})`);
+
     // Schedule stability check after a brief delay (let other corpses settle too)
     this.scene.time.delayedCall(CORPSE_CONFIG.STABILITY_CHECK_DELAY, () => {
+      console.log(`Corpse #${this.id}: Running scheduled stability check`);
       this.checkStabilityAndCascade();
     });
   }
@@ -475,31 +478,43 @@ export class Corpse {
    * Called after settling via delayed call
    */
   checkStabilityAndCascade() {
-    if (this.state !== CORPSE_STATE.SETTLED) return;
-    if (!this.gridCell || !this.grid) return;
+    if (this.state !== CORPSE_STATE.SETTLED) {
+      console.log(`Corpse #${this.id}: stability check skipped - not settled (state=${this.state})`);
+      return;
+    }
+    if (!this.gridCell) {
+      console.log(`Corpse #${this.id}: stability check skipped - no grid cell`);
+      return;
+    }
+    if (!this.grid) {
+      console.log(`Corpse #${this.id}: stability check skipped - no grid reference`);
+      return;
+    }
 
     const { col, row } = this.gridCell;
 
     // Ground level is always stable
     if (this.grid.isGroundBelow(col, row)) {
-      return; // Stable on ground - reset cascade count
+      console.log(`Corpse #${this.id}: STABLE at (${col},${row}) - on ground`);
+      return;
     }
 
     // Check support cells - need BOTH occupied to be stable
     const supports = this.grid.getSupportCells(col, row);
-    let occupiedCount = 0;
+    const leftSupport = supports[0];
+    const rightSupport = supports[1];
+    const leftOccupied = this.grid.isOccupied(leftSupport.col, leftSupport.row);
+    const rightOccupied = this.grid.isOccupied(rightSupport.col, rightSupport.row);
 
-    for (const support of supports) {
-      if (this.grid.isOccupied(support.col, support.row)) {
-        occupiedCount++;
-      }
-    }
+    console.log(`Corpse #${this.id} at (${col},${row}): supports = (${leftSupport.col},${leftSupport.row}):${leftOccupied ? 'occupied' : 'EMPTY'}, (${rightSupport.col},${rightSupport.row}):${rightOccupied ? 'occupied' : 'EMPTY'}`);
 
-    if (occupiedCount >= 2) {
-      return; // Stable - has dual support
+    if (leftOccupied && rightOccupied) {
+      console.log(`Corpse #${this.id}: STABLE - dual support`);
+      return;
     }
 
     // UNSTABLE - cascade down
+    console.log(`Corpse #${this.id}: UNSTABLE - cascading!`);
     this.cascade();
   }
 
@@ -508,7 +523,10 @@ export class Corpse {
    * Called when stability check fails
    */
   cascade() {
-    if (this.state !== CORPSE_STATE.SETTLED) return;
+    if (this.state !== CORPSE_STATE.SETTLED) {
+      console.log(`Corpse #${this.id}: cascade() called but not settled (state=${this.state})`);
+      return;
+    }
 
     // Prevent infinite cascade loops
     this.cascadeCount++;
@@ -517,8 +535,11 @@ export class Corpse {
       return; // Stay where you are
     }
 
+    console.log(`Corpse #${this.id}: Cascading (count: ${this.cascadeCount})`);
+
     // Clear grid cell
     if (this.grid && this.gridCell) {
+      console.log(`Corpse #${this.id}: Clearing cell (${this.gridCell.col},${this.gridCell.row})`);
       this.grid.clearCell(this.gridCell.col, this.gridCell.row);
       this.gridCell = null;
     }
@@ -553,6 +574,8 @@ export class Corpse {
     this.state = CORPSE_STATE.FALLING;
     this.isSettled = false;
     this.snapData = null;
+
+    console.log(`Corpse #${this.id}: Now FALLING`);
 
     // Emit event
     this.scene.events.emit('corpse:cascading', {
