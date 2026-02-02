@@ -671,7 +671,10 @@ export class CorpseGrid {
     // PHASE 1: Search DOWNWARD from corpse position to ground
     // This finds the lowest valid position near the corpse
     for (let row = startRow; row <= groundRow; row++) {
-      const cell = this.findValidCellAtRow(startCol, row, DEBUG_SETTLING);
+      // Use wider search for ground level (more valid positions, corpse will reach it)
+      // Use narrow search for upper rows (corpses fall down, not sideways)
+      const maxOffset = (row === groundRow) ? 15 : 4;
+      const cell = this.findValidCellAtRow(startCol, row, DEBUG_SETTLING, maxOffset);
       if (cell) {
         if (DEBUG_SETTLING) {
           console.log(`✓ FOUND: (${cell.col},${cell.row})`);
@@ -683,7 +686,7 @@ export class CorpseGrid {
 
     // PHASE 2: If nothing found below, search upward (rare edge case - pile above corpse)
     for (let row = startRow - 1; row >= Math.max(0, startRow - 20); row--) {
-      const cell = this.findValidCellAtRow(startCol, row, DEBUG_SETTLING);
+      const cell = this.findValidCellAtRow(startCol, row, DEBUG_SETTLING, 4);
       if (cell) {
         if (DEBUG_SETTLING) {
           console.log(`✓ FOUND (upward): (${cell.col},${cell.row})`);
@@ -708,10 +711,10 @@ export class CorpseGrid {
    * @param {number} startCol - Column to start searching from
    * @param {number} row - Row to search
    * @param {boolean} debug - Whether to log detailed info (default false)
-   * @param {number} maxOffset - Maximum horizontal offset to search (default 10)
+   * @param {number} maxOffset - Maximum horizontal offset to search (default 4 for reachable distance)
    * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
    */
-  findValidCellAtRow(startCol, row, debug = false, maxOffset = 10) {
+  findValidCellAtRow(startCol, row, debug = false, maxOffset = 4) {
     const checked = [];
 
     // Search outward from startCol: 0, then -1/+1, then -2/+2, etc.
