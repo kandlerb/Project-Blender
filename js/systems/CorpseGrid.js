@@ -302,12 +302,15 @@ export class CorpseGrid {
 
   /**
    * Check if a cell WOULD BE stable if a corpse settled there
-   * More strict than hasSupport - only counts actual occupied cells as support
-   * (not ground geometry at support cell positions)
    *
    * Stable if:
    * 1. Directly above ground (isGroundBelow returns true), OR
-   * 2. BOTH support cells are occupied by other corpses
+   * 2. BOTH support cells are "valid" - each support is valid if it's:
+   *    - Occupied by a corpse, OR
+   *    - At ground level (has ground below IT)
+   *
+   * This allows Row 1 (first row above ground) to settle because its
+   * support cells at Row 2 are at ground level = inherently stable.
    *
    * @param {number} col - Column index
    * @param {number} row - Row index
@@ -319,24 +322,27 @@ export class CorpseGrid {
       return false;
     }
 
-    // Ground directly below = always stable
+    // Case 1: Ground directly below = always stable
     if (this.isGroundBelow(col, row)) {
       return true;
     }
 
-    // Check support cells - require BOTH to be occupied by corpses
+    // Case 2: Check support cells - each must be "valid"
     const supportCells = this.getSupportCells(col, row);
-    let occupiedSupports = 0;
 
-    for (const cell of supportCells) {
-      // Only count actual occupied corpses, not ground geometry
-      if (this.isOccupied(cell.col, cell.row)) {
-        occupiedSupports++;
+    for (const support of supportCells) {
+      // A support cell is valid if it's occupied OR at ground level
+      const isOccupied = this.isOccupied(support.col, support.row);
+      const isOnGround = this.isGroundBelow(support.col, support.row);
+
+      if (!isOccupied && !isOnGround) {
+        // This support position is neither occupied nor on ground = invalid
+        return false;
       }
     }
 
-    // Need BOTH supports to be occupied corpses
-    return occupiedSupports >= 2;
+    // All support cells are valid
+    return true;
   }
 
   /**
@@ -528,15 +534,17 @@ export class CorpseGrid {
       const [col, row] = key.split(',').map(Number);
       const supportCells = this.getSupportCells(col, row);
 
-      // Count only OCCUPIED corpses as support (not ground geometry)
-      let occupiedSupportCount = 0;
-      for (const cell of supportCells) {
-        if (this.isOccupied(cell.col, cell.row)) {
-          occupiedSupportCount++;
-        }
-      }
+      // Analyze each support cell
+      const supportStatus = supportCells.map(cell => ({
+        col: cell.col,
+        row: cell.row,
+        occupied: this.isOccupied(cell.col, cell.row),
+        onGround: this.isGroundBelow(cell.col, cell.row),
+      }));
 
-      const hasGroundSupport = this.isGroundBelow(col, row);
+      // A support is valid if occupied OR on ground
+      const validSupports = supportStatus.filter(s => s.occupied || s.onGround).length;
+      const hasDirectGround = this.isGroundBelow(col, row);
       const isStable = this.wouldBeStable(col, row);
 
       const worldPos = this.gridToWorld(col, row);
@@ -544,8 +552,9 @@ export class CorpseGrid {
         col,
         row,
         worldPos,
-        supportCount: occupiedSupportCount,
-        hasGroundSupport,
+        supportStatus,
+        validSupports,
+        hasDirectGround,
         isStable,
         corpseId: corpseData?.id || '?',
       };
@@ -558,16 +567,33 @@ export class CorpseGrid {
     }
 
     console.log(`\nSTABLE cells (${stable.length}):`);
-    stable.forEach(c => console.log(`  (${c.col},${c.row}) corpseSupport=${c.supportCount} ground=${c.hasGroundSupport} [#${c.corpseId}]`));
+    stable.forEach(c => {
+      const reason = c.hasDirectGround
+        ? 'direct ground'
+        : `${c.validSupports} valid supports`;
+      const supportDetail = c.supportStatus.map(s => {
+        if (s.occupied) return `(${s.col},${s.row}):corpse`;
+        if (s.onGround) return `(${s.col},${s.row}):ground`;
+        return `(${s.col},${s.row}):empty`;
+      }).join(', ');
+      console.log(`  (${c.col},${c.row}) [#${c.corpseId}] - ${reason} [${supportDetail}]`);
+    });
 
     console.log(`\nUNSTABLE cells (${unstable.length}):`);
-    unstable.forEach(c => console.log(`  (${c.col},${c.row}) corpseSupport=${c.supportCount} ground=${c.hasGroundSupport} [#${c.corpseId}]`));
+    unstable.forEach(c => {
+      const supportDetail = c.supportStatus.map(s => {
+        if (s.occupied) return `(${s.col},${s.row}):corpse`;
+        if (s.onGround) return `(${s.col},${s.row}):ground`;
+        return `(${s.col},${s.row}):EMPTY`;
+      }).join(', ');
+      console.log(`  (${c.col},${c.row}) [#${c.corpseId}] - ${c.validSupports}/2 valid [${supportDetail}]`);
+    });
 
     if (unstable.length > 0) {
       console.log('\n⚠️ UNSTABLE CORPSES - will cascade when support changes');
       console.log('Press O to trigger cascade on unstable corpses');
     } else if (stable.length > 0) {
-      console.log('\n✓ All corpses are stable (on ground or have 2 corpse supports)');
+      console.log('\n✓ All corpses are stable (on ground or have valid supports)');
     }
 
     console.log('=== END DIAGNOSIS ===\n');
