@@ -349,6 +349,27 @@ export class TestArenaScene extends BaseScene {
       }
       console.log('----------------------');
     });
+
+    // Pause menu (ESC and P keys)
+    this.input.keyboard.on('keydown-ESC', () => {
+      this.openPauseMenu();
+    });
+    this.input.keyboard.on('keydown-P', () => {
+      this.openPauseMenu();
+    });
+  }
+
+  /**
+   * Open the pause menu overlay
+   */
+  openPauseMenu() {
+    // Prevent opening if pause menu is already active
+    if (this.scene.isActive('PauseMenu')) {
+      return;
+    }
+
+    // Launch pause menu as overlay, passing this scene's key
+    this.scene.launch('PauseMenu', { pausedScene: this.scene.key });
   }
 
   /**
