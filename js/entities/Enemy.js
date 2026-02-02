@@ -384,14 +384,13 @@ export class Enemy {
       hitstop: 40,
     });
 
-    // Punch visual - small red square that swings out during attacks
-    this.punchVisual = this.scene.add.graphics();
-    this.punchVisual.fillStyle(0xff4444, 0.8); // Red with slight transparency
-    this.punchVisual.fillRect(-6, -6, 12, 12); // 12x12 square centered at origin
-    this.punchVisual.setDepth(this.sprite.depth + 1);
-    this.punchVisual.setVisible(false);
-    this.punchVisualOffset = { x: 0, y: 0 }; // Current offset from enemy center
-    this.punchVisualTween = null;
+    // Fist visual - small square that animates through hitbox area during attacks
+    this.fistVisual = this.scene.add.graphics();
+    this.fistVisual.setDepth(this.sprite.depth + 1);
+    this.fistLocalX = 0;
+    this.fistLocalY = 0;
+    this.fistVisible = false;
+    this.fistTween = null;
 
     // Store attack offset for punch visual positioning
     this.attackOffset = attackOffset;
@@ -811,52 +810,74 @@ export class Enemy {
   }
 
   /**
-   * Show punch visual and animate it to attack offset position
+   * Draw the fist visual indicator
    */
-  showPunchVisual() {
-    if (!this.punchVisual) return;
+  drawFist() {
+    this.fistVisual.clear();
+    if (!this.fistVisible) return;
 
-    // Stop any existing tween
-    if (this.punchVisualTween) {
-      this.punchVisualTween.stop();
+    const size = 10; // Fist size (smaller than player)
+    const color = this.stats.color || 0xff4444;
+    this.fistVisual.fillStyle(color, 0.9);
+    this.fistVisual.fillRect(-size / 2, -size / 2, size, size);
+  }
+
+  /**
+   * Show fist visual and animate from inner to outer edge of hitbox
+   * @param {object} config - Optional hitbox config override
+   */
+  showFist(config = {}) {
+    const width = config.width || this.attackHitbox.width;
+    const height = config.height || this.attackHitbox.height;
+    const offsetX = config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX;
+    const offsetY = config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY;
+
+    const isVerticalAttack = Math.abs(offsetY) > Math.abs(offsetX);
+
+    let startX, startY, endX, endY;
+
+    if (isVerticalAttack) {
+      const direction = offsetY >= 0 ? 1 : -1;
+      startX = offsetX;
+      startY = offsetY - (height / 2) * direction;
+      endX = offsetX;
+      endY = offsetY + (height / 2) * direction;
+    } else {
+      startX = offsetX - (width / 2);
+      startY = offsetY;
+      endX = offsetX + (width / 2);
+      endY = offsetY;
     }
 
-    // Make visible and set initial position at enemy center
-    this.punchVisual.setVisible(true);
-    this.punchVisual.setPosition(this.sprite.x, this.sprite.y);
+    this.fistLocalX = startX;
+    this.fistLocalY = startY;
+    this.fistVisible = true;
 
-    // Animate offset from (0,0) to attack offset position
-    this.punchVisualTween = this.scene.tweens.add({
-      targets: this.punchVisualOffset,
-      x: this.attackOffset || 25,
-      y: 0,
+    if (this.fistTween) this.fistTween.stop();
+
+    this.fistTween = this.scene.tweens.add({
+      targets: this,
+      fistLocalX: endX,
+      fistLocalY: endY,
       duration: 50,
       ease: 'Quad.easeOut',
     });
   }
 
   /**
-   * Hide punch visual with retract animation
+   * Hide fist visual with retract animation
    */
-  hidePunchVisual() {
-    if (!this.punchVisual) return;
+  hideFist() {
+    if (this.fistTween) this.fistTween.stop();
 
-    // Stop any existing tween
-    if (this.punchVisualTween) {
-      this.punchVisualTween.stop();
-    }
-
-    // Animate offset back to (0, 0)
-    this.punchVisualTween = this.scene.tweens.add({
-      targets: this.punchVisualOffset,
-      x: 0,
-      y: 0,
+    this.fistTween = this.scene.tweens.add({
+      targets: this,
+      fistLocalX: 0,
+      fistLocalY: 0,
       duration: 30,
       ease: 'Quad.easeIn',
       onComplete: () => {
-        if (this.punchVisual) {
-          this.punchVisual.setVisible(false);
-        }
+        this.fistVisible = false;
       },
     });
   }
@@ -893,13 +914,14 @@ export class Enemy {
     this.hurtbox.updatePosition();
     this.attackHitbox.updatePosition();
 
-    // Update punch visual position to follow enemy
-    if (this.punchVisual && this.punchVisual.visible) {
-      const direction = this.sprite.flipX ? -1 : 1;
-      this.punchVisual.setPosition(
-        this.sprite.x + this.punchVisualOffset.x * direction,
-        this.sprite.y + this.punchVisualOffset.y
+    // Update fist visual position
+    if (this.fistVisual) {
+      const facingMult = this.sprite.flipX ? -1 : 1;
+      this.fistVisual.setPosition(
+        this.sprite.x + (this.fistLocalX * facingMult),
+        this.sprite.y + this.fistLocalY
       );
+      this.drawFist();
     }
 
     // Update pack debug visualization for swarmers
@@ -1752,14 +1774,14 @@ export class Enemy {
     this.hurtbox.destroy();
     this.attackHitbox.destroy();
 
-    // Clean up punch visual
-    if (this.punchVisualTween) {
-      this.punchVisualTween.stop();
-      this.punchVisualTween = null;
+    // Clean up fist visual
+    if (this.fistTween) {
+      this.fistTween.stop();
+      this.fistTween = null;
     }
-    if (this.punchVisual) {
-      this.punchVisual.destroy();
-      this.punchVisual = null;
+    if (this.fistVisual) {
+      this.fistVisual.destroy();
+      this.fistVisual = null;
     }
 
     // Clean up pack debug graphics (Swarmer-specific)
@@ -1948,7 +1970,7 @@ class EnemyAttackState extends State {
     if (stateTime < this.windupTime + this.activeTime) {
       if (!this.enemy.attackHitbox.active) {
         this.enemy.attackHitbox.activate();
-        this.enemy.showPunchVisual(); // Show punch visual
+        this.enemy.showFist(); // Show fist visual
         this.enemy.sprite.setTint(0xff4444); // Brighter red during attack
 
         // Lunge forward slightly
@@ -1961,7 +1983,7 @@ class EnemyAttackState extends State {
     // Recovery phase
     if (stateTime < this.totalDuration) {
       this.enemy.attackHitbox.deactivate();
-      this.enemy.hidePunchVisual(); // Hide punch visual
+      this.enemy.hideFist(); // Hide fist visual
       this.enemy.sprite.clearTint();
       this.enemy.stop();
       return null;
@@ -1976,7 +1998,7 @@ class EnemyAttackState extends State {
 
   exit(nextState) {
     this.enemy.attackHitbox.deactivate();
-    this.enemy.hidePunchVisual(); // Ensure punch visual is hidden on exit
+    this.enemy.hideFist(); // Ensure fist visual is hidden on exit
     this.enemy.sprite.clearTint();
   }
 
@@ -2417,8 +2439,8 @@ class SwarmerAttackingState extends State {
     this.enemy.attackHitbox.hitstun = 200;
     this.enemy.attackHitbox.activate();
 
-    // Show punch visual
-    this.enemy.showPunchVisual();
+    // Show fist visual
+    this.enemy.showFist();
 
     // Brighter red during attack
     this.enemy.sprite.setTint(0xff4444);
@@ -2440,7 +2462,7 @@ class SwarmerAttackingState extends State {
 
   exit(nextState) {
     this.enemy.attackHitbox.deactivate();
-    this.enemy.hidePunchVisual(); // Hide punch visual on exit
+    this.enemy.hideFist(); // Hide fist visual on exit
   }
 
   canBeInterrupted(nextStateName) {
