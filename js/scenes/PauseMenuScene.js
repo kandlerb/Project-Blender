@@ -123,7 +123,7 @@ export class PauseMenuScene extends Phaser.Scene {
    * Create the controls/moves list on the right side
    */
   createControlsList(width, height) {
-    const rightPadding = 80;
+    const rightPadding = 200;
     const startX = width - rightPadding;
     const startY = 180;
     const lineHeight = 28;
