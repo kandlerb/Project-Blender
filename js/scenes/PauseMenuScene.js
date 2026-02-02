@@ -190,6 +190,42 @@ export class PauseMenuScene extends Phaser.Scene {
 
       currentY += 10; // Extra spacing between sections
     });
+
+    // Add COMBOS section below controls
+    currentY += 40; // Gap between controls and combos
+
+    // Combos header
+    const combosHeader = this.add.text(startX, currentY, 'COMBOS', {
+      fontFamily: 'monospace',
+      fontSize: '24px',
+      color: '#ffcc00',
+    });
+    combosHeader.setOrigin(1, 0);
+    this.controlsContainer.add(combosHeader);
+    currentY += 40;
+
+    // Combo entries
+    const combos = [
+      { name: 'Basic Combo', input: 'J, J, J' },
+      { name: 'Launcher', input: 'J, J, K' },
+      { name: 'Air Combo', input: 'Jump + J' },
+      { name: 'Dive Kick', input: 'Flip + S/Down' },
+      { name: 'Spin Attack', input: 'Hold L, Release' },
+      { name: 'Grapple Pull', input: 'U (aim with WASD)' },
+      { name: 'Blink Strike', input: 'I + Direction' },
+    ];
+
+    combos.forEach((combo) => {
+      const comboLine = this.formatControlLine(combo.name, combo.input);
+      const lineText = this.add.text(startX, currentY, comboLine, {
+        fontFamily: 'monospace',
+        fontSize: '16px',
+        color: '#ffffff',
+      });
+      lineText.setOrigin(1, 0);
+      this.controlsContainer.add(lineText);
+      currentY += lineHeight;
+    });
   }
 
   /**
