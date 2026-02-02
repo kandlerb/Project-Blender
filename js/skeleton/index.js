@@ -4,3 +4,6 @@ export { SkeletonInstance } from './SkeletonInstance.js';
 
 // Skeleton definitions
 export { createHumanoidSkeleton, BONE_GROUPS, getBonesExcept } from './definitions/index.js';
+
+// Skins (rendering)
+export { Skin, LineSkin } from './skins/index.js';

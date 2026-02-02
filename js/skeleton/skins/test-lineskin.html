@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>LineSkin Test</title>
+  <style>
+    body { margin: 0; background: #1a1a2e; }
+    canvas { display: block; }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: #00ffcc;
+      font-family: monospace;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">
+    Controls:<br>
+    LEFT/RIGHT - Rotate torso<br>
+    UP/DOWN - Wave arms<br>
+    SPACE - Reset pose<br>
+    F - Flip horizontally
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+  <script type="module">
+    import { Skeleton, SkeletonInstance } from '../index.js';
+    import { createHumanoidSkeleton } from '../definitions/humanoid.js';
+    import { LineSkin } from './LineSkin.js';
+
+    class TestScene extends Phaser.Scene {
+      constructor() {
+        super('TestScene');
+      }
+
+      create() {
+        // Create humanoid skeleton
+        const skeleton = createHumanoidSkeleton();
+
+        // Create instance at center of screen
+        this.skeletonInstance = new SkeletonInstance(skeleton, {
+          position: { x: 400, y: 350 }
+        });
+
+        // Create line skin
+        this.skin = new LineSkin(this.skeletonInstance, {
+          lineWidth: 3,
+          color: 0x00ffcc,
+          jointRadius: 4,
+          headRadius: 12
+        });
+        this.skin.initialize(this);
+        this.skin.render();
+
+        // Add some interactivity for testing
+        this.createTestControls();
+
+        // Animate
+        this.time.addEvent({
+          delay: 16,
+          callback: this.animate,
+          callbackScope: this,
+          loop: true
+        });
+
+        console.log('LineSkin test initialized');
+        console.log('  - Press LEFT/RIGHT to rotate torso');
+        console.log('  - Press UP/DOWN to wave arms');
+        console.log('  - Press SPACE to reset pose');
+        console.log('  - Press F to flip horizontally');
+      }
+
+      createTestControls() {
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.spaceKey = this.input.keyboard.addKey('SPACE');
+        this.fKey = this.input.keyboard.addKey('F');
+
+        this.torsoAngle = 0;
+        this.armAngle = 0;
+        this.flipped = false;
+      }
+
+      animate() {
+        // Rotate torso with left/right
+        if (this.cursors.left.isDown) {
+          this.torsoAngle -= 2;
+        }
+        if (this.cursors.right.isDown) {
+          this.torsoAngle += 2;
+        }
+
+        // Wave arms with up/down
+        if (this.cursors.up.isDown) {
+          this.armAngle -= 3;
+        }
+        if (this.cursors.down.isDown) {
+          this.armAngle += 3;
+        }
+
+        // Reset with space
+        if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+          this.torsoAngle = 0;
+          this.armAngle = 0;
+          this.skeletonInstance.resetPose();
+        }
+
+        // Flip with F
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          this.flipped = !this.flipped;
+          this.skeletonInstance.setScale(this.flipped ? -1 : 1, 1);
+        }
+
+        // Apply angles
+        this.skeletonInstance.setBoneAngles({
+          'torso': this.torsoAngle,
+          'upperArmL': this.armAngle,
+          'upperArmR': -this.armAngle,
+          'lowerArmL': Math.abs(this.armAngle) * 0.5,
+          'lowerArmR': Math.abs(this.armAngle) * 0.5
+        });
+
+        // Re-render
+        this.skin.render();
+      }
+    }
+
+    const config = {
+      type: Phaser.AUTO,
+      width: 800,
+      height: 600,
+      backgroundColor: '#1a1a2e',
+      scene: TestScene
+    };
+
+    new Phaser.Game(config);
+  </script>
+</body>
+</html>
