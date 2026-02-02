@@ -18,17 +18,19 @@ export class Player {
   constructor(scene, x, y) {
     this.scene = scene;
 
+    // Store color for visual effects
+    this.color = 0x00ffff;
+
     // Create sprite
     this.sprite = scene.physics.add.sprite(x, y, 'player_placeholder');
     this.setupPhysics();
 
-    // Punch visual - small square that swings out during attacks
-    this.punchVisual = scene.add.graphics();
-    this.punchVisual.fillStyle(0x00ffff, 0.8); // Cyan with slight transparency
-    this.punchVisual.fillRect(-8, -8, 16, 16); // 16x16 square centered at origin
-    this.punchVisual.setDepth(this.sprite.depth + 1);
-    this.punchVisual.setVisible(false);
-    this.punchVisualOffset = { x: 0, y: 0 }; // Current offset from player center
+    // Fist visual - small square that animates through hitbox area during attacks
+    this.fistVisual = scene.add.graphics();
+    this.fistVisual.setDepth(this.sprite.depth + 1);
+    this.fistLocalX = 0;  // Local offset from sprite
+    this.fistLocalY = 0;
+    this.fistVisible = false;
 
     // Terrain groups for clipping fix
     this.terrainGroups = [];
@@ -151,14 +153,13 @@ export class Player {
     // Update facing direction based on sprite flip
     this.facingRight = !this.sprite.flipX;
 
-    // Update punch visual position to follow player
-    if (this.punchVisual && this.punchVisual.visible) {
-      const direction = this.facingRight ? 1 : -1;
-      this.punchVisual.setPosition(
-        this.sprite.x + this.punchVisualOffset.x * direction,
-        this.sprite.y + this.punchVisualOffset.y
-      );
-    }
+    // Update fist visual position
+    const facingMult = this.sprite.flipX ? -1 : 1;
+    this.fistVisual.setPosition(
+      this.sprite.x + (this.fistLocalX * facingMult),
+      this.sprite.y + this.fistLocalY
+    );
+    this.drawFist();
 
     // Fix any terrain clipping
     this.fixTerrainClipping();
@@ -383,6 +384,18 @@ export class Player {
   }
 
   /**
+   * Draw the fist visual indicator
+   */
+  drawFist() {
+    this.fistVisual.clear();
+    if (!this.fistVisible) return;
+
+    const size = 12; // Fist size
+    this.fistVisual.fillStyle(this.color, 0.9);
+    this.fistVisual.fillRect(-size / 2, -size / 2, size, size);
+  }
+
+  /**
    * Activate attack hitbox with specific properties
    * @param {object} config - Attack configuration
    *   - For single hitbox: { damage, knockback, width, height, offsetX, offsetY, ... }
@@ -429,9 +442,14 @@ export class Player {
         hitbox.updatePosition();
       });
 
-      // For multi-hitbox attacks, animate punch visual to primary hitbox position
+      // For multi-hitbox attacks, animate fist using primary hitbox config
       const primaryConfig = config.hitboxes[0] || {};
-      this.showPunchVisual(primaryConfig.offsetX || config.offsetX || 35, primaryConfig.offsetY || config.offsetY || 0);
+      this.animateFist({
+        width: primaryConfig.width || config.width || this.attackHitbox.width,
+        height: primaryConfig.height || config.height || this.attackHitbox.height,
+        offsetX: primaryConfig.offsetX !== undefined ? primaryConfig.offsetX : (config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX),
+        offsetY: primaryConfig.offsetY !== undefined ? primaryConfig.offsetY : (config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY),
+      });
     } else {
       // Single hitbox attack (normal attacks)
       this.attackHitbox.activate({
@@ -460,34 +478,63 @@ export class Player {
       // Update position immediately with new offset
       this.attackHitbox.updatePosition();
 
-      // Animate punch visual to hitbox position
-      this.showPunchVisual(config.offsetX || 35, config.offsetY || 0);
+      // Animate fist from inner edge to outer edge of hitbox
+      this.animateFist({
+        width: config.width || this.attackHitbox.width,
+        height: config.height || this.attackHitbox.height,
+        offsetX: config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX,
+        offsetY: config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY,
+      });
     }
   }
 
   /**
-   * Show punch visual and animate it to target offset
-   * @param {number} targetX - Target X offset from player center
-   * @param {number} targetY - Target Y offset from player center
+   * Animate fist from inner edge to outer edge of hitbox
+   * @param {object} hitboxConfig - Hitbox dimensions and offset
    */
-  showPunchVisual(targetX, targetY) {
-    if (!this.punchVisual) return;
+  animateFist(hitboxConfig) {
+    const width = hitboxConfig.width;
+    const height = hitboxConfig.height;
+    const offsetX = hitboxConfig.offsetX;
+    const offsetY = hitboxConfig.offsetY;
 
-    // Stop any existing tween
-    if (this.punchVisualTween) {
-      this.punchVisualTween.stop();
+    // Calculate start and end positions based on hitbox geometry
+    // For horizontal attacks (offsetX != 0): travel along X axis
+    // For vertical attacks (offsetY != 0, offsetX ~= 0): travel along Y axis
+    const isVerticalAttack = Math.abs(offsetY) > Math.abs(offsetX);
+
+    let startX, startY, endX, endY;
+
+    if (isVerticalAttack) {
+      // Vertical attack (like dive kick) - fist travels up/down
+      const direction = offsetY >= 0 ? 1 : -1;
+      startX = offsetX;
+      startY = offsetY - (height / 2) * direction; // Inner edge
+      endX = offsetX;
+      endY = offsetY + (height / 2) * direction;   // Outer edge
+    } else {
+      // Horizontal attack - fist travels left/right
+      startX = offsetX - (width / 2);  // Inner edge (closer to body)
+      startY = offsetY;
+      endX = offsetX + (width / 2);    // Outer edge
+      endY = offsetY;
     }
 
-    // Make visible and set initial position at player center
-    this.punchVisual.setVisible(true);
-    const direction = this.facingRight ? 1 : -1;
-    this.punchVisual.setPosition(this.sprite.x, this.sprite.y);
+    // Show fist at start position
+    this.fistLocalX = startX;
+    this.fistLocalY = startY;
+    this.fistVisible = true;
 
-    // Animate offset from (0,0) to target position
-    this.punchVisualTween = this.scene.tweens.add({
-      targets: this.punchVisualOffset,
-      x: targetX,
-      y: targetY,
+    // Kill any existing tween
+    if (this.fistTween) {
+      this.fistTween.stop();
+    }
+
+    // Animate to end position
+    this.fistTween = this.scene.tweens.add({
+      targets: this,
+      fistLocalX: endX,
+      fistLocalY: endY,
       duration: 50,
       ease: 'Quad.easeOut',
     });
@@ -500,32 +547,19 @@ export class Player {
     this.attackHitbox.deactivate();
     this.attackHitboxSecondary.deactivate();
 
-    // Animate punch visual back to center and hide
-    this.hidePunchVisual();
-  }
-
-  /**
-   * Hide punch visual with retract animation
-   */
-  hidePunchVisual() {
-    if (!this.punchVisual) return;
-
-    // Stop any existing tween
-    if (this.punchVisualTween) {
-      this.punchVisualTween.stop();
+    // Retract fist
+    if (this.fistTween) {
+      this.fistTween.stop();
     }
 
-    // Animate offset back to (0, 0)
-    this.punchVisualTween = this.scene.tweens.add({
-      targets: this.punchVisualOffset,
-      x: 0,
-      y: 0,
+    this.fistTween = this.scene.tweens.add({
+      targets: this,
+      fistLocalX: 0,
+      fistLocalY: 0,
       duration: 30,
       ease: 'Quad.easeIn',
       onComplete: () => {
-        if (this.punchVisual) {
-          this.punchVisual.setVisible(false);
-        }
+        this.fistVisible = false;
       },
     });
   }
@@ -584,14 +618,14 @@ export class Player {
     this.hurtbox.destroy();
     this.attackHitbox.destroy();
 
-    // Clean up punch visual
-    if (this.punchVisualTween) {
-      this.punchVisualTween.stop();
-      this.punchVisualTween = null;
+    // Clean up fist visual
+    if (this.fistTween) {
+      this.fistTween.stop();
+      this.fistTween = null;
     }
-    if (this.punchVisual) {
-      this.punchVisual.destroy();
-      this.punchVisual = null;
+    if (this.fistVisual) {
+      this.fistVisual.destroy();
+      this.fistVisual = null;
     }
 
     this.sprite.destroy();
