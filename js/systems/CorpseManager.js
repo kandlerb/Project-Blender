@@ -78,9 +78,8 @@ export class CorpseManager {
     this.debugEnabled = false;
     this.debugGraphics = null;
 
-    // Cascade timer for periodic stability checks
-    this.cascadeTimer = 0;
-    this.cascadeInterval = 500; // Check every 500ms
+    // Note: Cascade checks are now event-based (triggered by neighbor changes)
+    // instead of polling. See checkFlaggedCorpses() and grid.notifyNeighborChange()
   }
 
   /**
@@ -506,12 +505,9 @@ export class CorpseManager {
     // This creates/updates the collision surfaces for corpse piles
     this.grid.rebuildDirtyPlatforms();
 
-    // Check for cascades periodically (not every frame)
-    this.cascadeTimer += delta;
-    if (this.cascadeTimer >= this.cascadeInterval) {
-      this.cascadeTimer = 0;
-      this.triggerCascade();
-    }
+    // Check flagged corpses for stability (event-based, not polling)
+    // Corpses are flagged when their neighbors change
+    this.checkFlaggedCorpses();
 
     // Update debug visualization if enabled
     if (this.debugEnabled) {
@@ -639,6 +635,47 @@ export class CorpseManager {
     for (const cell of unstable) {
       if (cell.corpse && cell.corpse.unsettle) {
         cell.corpse.unsettle();
+      }
+    }
+  }
+
+  /**
+   * Check only corpses flagged for stability re-check
+   * More efficient than checking all corpses every frame
+   */
+  checkFlaggedCorpses() {
+    const toUnsettle = [];
+
+    for (const [key, corpseData] of this.grid.occupiedCells) {
+      if (corpseData && corpseData.needsStabilityCheck) {
+        corpseData.needsStabilityCheck = false;
+
+        const [col, row] = key.split(',').map(Number);
+
+        // Check if cell is still stable (on ground or has dual support)
+        if (!this.grid.isGroundBelow(col, row)) {
+          const supportCells = this.grid.getSupportCells(col, row);
+          let occupiedSupports = 0;
+
+          for (const cell of supportCells) {
+            if (this.grid.isOccupied(cell.col, cell.row) || this.grid.isGroundAt(cell.col, cell.row)) {
+              occupiedSupports++;
+            }
+          }
+
+          // Unstable if less than 2 supports
+          if (occupiedSupports < 2 && corpseData.unsettle) {
+            toUnsettle.push({ corpseData, col, row });
+          }
+        }
+      }
+    }
+
+    // Process top-to-bottom (lowest row numbers = highest positions)
+    if (toUnsettle.length > 0) {
+      toUnsettle.sort((a, b) => a.row - b.row);
+      for (const item of toUnsettle) {
+        item.corpseData.unsettle();
       }
     }
   }

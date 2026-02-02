@@ -168,6 +168,55 @@ export class CorpseGrid {
   }
 
   /**
+   * Get cells that would have (col, row) as a support cell
+   * This is the inverse of getSupportCells - used for cascade notification
+   *
+   * In a staggered brick pattern:
+   * - If row-1 is EVEN: cells (col, row-1) and (col+1, row-1) depend on us
+   * - If row-1 is ODD: cells (col-1, row-1) and (col, row-1) depend on us
+   *
+   * @param {number} col - Column index
+   * @param {number} row - Row index
+   * @returns {Array<{ col: number, row: number }>}
+   */
+  getCellsAbove(col, row) {
+    const rowAbove = row - 1;
+    if (rowAbove < 0) return [];
+
+    if (rowAbove % 2 === 0) {
+      // Even row above: cells (col, row-1) and (col+1, row-1) have us as support
+      return [
+        { col: col, row: rowAbove },
+        { col: col + 1, row: rowAbove },
+      ];
+    } else {
+      // Odd row above: cells (col-1, row-1) and (col, row-1) have us as support
+      return [
+        { col: col - 1, row: rowAbove },
+        { col: col, row: rowAbove },
+      ];
+    }
+  }
+
+  /**
+   * Notify that a cell changed (occupied or cleared)
+   * Marks dependent cells above for stability re-check
+   * @param {number} col - Column index of changed cell
+   * @param {number} row - Row index of changed cell
+   */
+  notifyNeighborChange(col, row) {
+    const dependentCells = this.getCellsAbove(col, row);
+
+    for (const cell of dependentCells) {
+      const key = this.getCellKey(cell.col, cell.row);
+      const corpseData = this.occupiedCells.get(key);
+      if (corpseData) {
+        corpseData.needsStabilityCheck = true;
+      }
+    }
+  }
+
+  /**
    * Get the corpse data stored in a cell
    * @param {number} col - Column index
    * @param {number} row - Row index
@@ -300,6 +349,8 @@ export class CorpseGrid {
     this.occupiedCells.set(this.getCellKey(col, row), corpseData);
     // Mark row for platform body rebuild
     this.markRowDirty(row);
+    // Notify cells above that their support may have changed
+    this.notifyNeighborChange(col, row);
   }
 
   /**
@@ -529,6 +580,8 @@ export class CorpseGrid {
     this.occupiedCells.delete(this.getCellKey(col, row));
     // Mark row for platform body rebuild
     this.markRowDirty(row);
+    // Notify cells above that their support may have changed (they might cascade)
+    this.notifyNeighborChange(col, row);
   }
 
   /**
