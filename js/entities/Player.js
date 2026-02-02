@@ -436,6 +436,11 @@ export class Player {
         const hitbox = hitboxTargets[index];
         const hbKnockback = hitboxConfig.knockback || config.knockback || { x: 300, y: -150 };
 
+        // For symmetric multi-hitbox attacks (like spin), disable followFacing
+        // so both hitboxes maintain their fixed positions relative to the player
+        // regardless of facing direction
+        hitbox.followFacing = false;
+
         hitbox.activate({
           damage: config.damage || 10,
           knockback: hbKnockback,
@@ -612,6 +617,10 @@ export class Player {
   deactivateAttackHitbox() {
     this.attackHitbox.deactivate();
     this.attackHitboxSecondary.deactivate();
+
+    // Restore followFacing to default states for next attack
+    this.attackHitbox.followFacing = true; // Primary follows facing (for directional attacks)
+    this.attackHitboxSecondary.followFacing = false; // Secondary stays on opposite side
 
     // Retract first fist
     if (this.fistTween) {
