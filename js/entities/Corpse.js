@@ -23,6 +23,7 @@ export const CORPSE_CONFIG = Object.freeze({
   // Cascade
   MAX_CASCADE_COUNT: 10,           // Prevent infinite cascade loops
   STABILITY_CHECK_DELAY: 100,      // ms after settling before checking stability
+  CASCADE_COOLDOWN: 200,           // ms after cascade before allowing re-snap
 
   // Visuals
   SETTLED_ALPHA: 1.0,
@@ -105,6 +106,7 @@ export class Corpse {
     // Cascade tracking - prevents infinite cascade loops
     this.cascadeCount = 0;
     this.settledAt = 0;
+    this.cascadeCooldownUntil = 0;  // Time until we can snap again after cascade
 
     // Configure physics body
     this.setupPhysics();
@@ -220,6 +222,11 @@ export class Corpse {
     if (!this.grid) {
       // No grid - fall back to simple ground check
       this.checkSimpleSettling();
+      return;
+    }
+
+    // Don't snap during cascade cooldown - need time to fall away from previous position
+    if (this.scene.time.now < this.cascadeCooldownUntil) {
       return;
     }
 
@@ -537,6 +544,9 @@ export class Corpse {
 
     console.log(`Corpse #${this.id}: Cascading (count: ${this.cascadeCount})`);
 
+    // Set cascade cooldown to prevent immediately re-snapping to the same cell
+    this.cascadeCooldownUntil = this.scene.time.now + CORPSE_CONFIG.CASCADE_COOLDOWN;
+
     // Clear grid cell
     if (this.grid && this.gridCell) {
       console.log(`Corpse #${this.id}: Clearing cell (${this.gridCell.col},${this.gridCell.row})`);
@@ -560,9 +570,10 @@ export class Corpse {
       this.sprite.body.checkCollision.left = true;
       this.sprite.body.checkCollision.right = true;
 
-      // Small random horizontal nudge to help find new position
-      const nudge = (Math.random() - 0.5) * 60;
-      this.sprite.body.setVelocity(nudge, 50);
+      // Give corpse velocity to fall away from current position
+      // Higher velocity ensures it moves before the cooldown ends
+      const nudge = (Math.random() - 0.5) * 80;
+      this.sprite.body.setVelocity(nudge, 100);
     }
 
     // Restore falling visuals
