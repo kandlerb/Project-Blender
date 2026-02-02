@@ -7,3 +7,6 @@ export { createHumanoidSkeleton, BONE_GROUPS, getBonesExcept } from './definitio
 
 // Skins (rendering)
 export { Skin, LineSkin } from './skins/index.js';
+
+// Poses and animations
+export { Pose, Animation } from './poses/index.js';
