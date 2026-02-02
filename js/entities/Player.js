@@ -31,6 +31,15 @@ export class Player {
     this.fistLocalX = 0;  // Local offset from sprite
     this.fistLocalY = 0;
     this.fistVisible = false;
+    this.fistTween = null;
+
+    // Second fist for dual-sided attacks (spin)
+    this.fistVisual2 = scene.add.graphics();
+    this.fistVisual2.setDepth(this.sprite.depth + 1);
+    this.fistLocal2X = 0;
+    this.fistLocal2Y = 0;
+    this.fistVisible2 = false;
+    this.fistTween2 = null;
 
     // Terrain groups for clipping fix
     this.terrainGroups = [];
@@ -153,11 +162,16 @@ export class Player {
     // Update facing direction based on sprite flip
     this.facingRight = !this.sprite.flipX;
 
-    // Update fist visual position
+    // Update fist visuals position
     const facingMult = this.sprite.flipX ? -1 : 1;
     this.fistVisual.setPosition(
       this.sprite.x + (this.fistLocalX * facingMult),
       this.sprite.y + this.fistLocalY
+    );
+    // Second fist - uses raw value without facingMult so it stays on opposite side
+    this.fistVisual2.setPosition(
+      this.sprite.x + this.fistLocal2X,
+      this.sprite.y + this.fistLocal2Y
     );
     this.drawFist();
 
@@ -384,15 +398,24 @@ export class Player {
   }
 
   /**
-   * Draw the fist visual indicator
+   * Draw the fist visual indicator(s)
    */
   drawFist() {
-    this.fistVisual.clear();
-    if (!this.fistVisible) return;
-
     const size = 12; // Fist size
-    this.fistVisual.fillStyle(this.color, 0.9);
-    this.fistVisual.fillRect(-size / 2, -size / 2, size, size);
+
+    // First fist
+    this.fistVisual.clear();
+    if (this.fistVisible) {
+      this.fistVisual.fillStyle(this.color, 0.9);
+      this.fistVisual.fillRect(-size / 2, -size / 2, size, size);
+    }
+
+    // Second fist (for spin attacks)
+    this.fistVisual2.clear();
+    if (this.fistVisible2) {
+      this.fistVisual2.fillStyle(this.color, 0.9);
+      this.fistVisual2.fillRect(-size / 2, -size / 2, size, size);
+    }
   }
 
   /**
@@ -442,14 +465,51 @@ export class Player {
         hitbox.updatePosition();
       });
 
-      // For multi-hitbox attacks, animate fist using primary hitbox config
+      // For multi-hitbox attacks, animate both fists (dual-sided spin)
       const primaryConfig = config.hitboxes[0] || {};
+      const secondaryConfig = config.hitboxes[1] || {};
+
+      // First fist (uses facingMult in update) - front side
+      const primaryWidth = primaryConfig.width || config.width || this.attackHitbox.width;
+      const primaryHeight = primaryConfig.height || config.height || this.attackHitbox.height;
+      const primaryOffsetX = primaryConfig.offsetX !== undefined ? primaryConfig.offsetX : (config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX);
+      const primaryOffsetY = primaryConfig.offsetY !== undefined ? primaryConfig.offsetY : (config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY);
+
       this.animateFist({
-        width: primaryConfig.width || config.width || this.attackHitbox.width,
-        height: primaryConfig.height || config.height || this.attackHitbox.height,
-        offsetX: primaryConfig.offsetX !== undefined ? primaryConfig.offsetX : (config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX),
-        offsetY: primaryConfig.offsetY !== undefined ? primaryConfig.offsetY : (config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY),
+        width: primaryWidth,
+        height: primaryHeight,
+        offsetX: primaryOffsetX,
+        offsetY: primaryOffsetY,
       });
+
+      // Second fist (no facingMult - raw position) - back side
+      if (config.hitboxes.length >= 2) {
+        const secondaryWidth = secondaryConfig.width || config.width || this.attackHitboxSecondary.width;
+        const secondaryHeight = secondaryConfig.height || config.height || this.attackHitboxSecondary.height;
+        const secondaryOffsetX = secondaryConfig.offsetX !== undefined ? secondaryConfig.offsetX : -primaryOffsetX;
+        const secondaryOffsetY = secondaryConfig.offsetY !== undefined ? secondaryConfig.offsetY : primaryOffsetY;
+
+        // Calculate second fist animation (outward from body)
+        // Since this fist doesn't use facingMult, we animate from inner to outer edge
+        const startX = secondaryOffsetX + (secondaryWidth / 2); // Inner edge (closer to body, so ADD since negative)
+        const endX = secondaryOffsetX - (secondaryWidth / 2);   // Outer edge (away from body)
+
+        this.fistLocal2X = startX;
+        this.fistLocal2Y = secondaryOffsetY;
+        this.fistVisible2 = true;
+
+        if (this.fistTween2) {
+          this.fistTween2.stop();
+        }
+
+        this.fistTween2 = this.scene.tweens.add({
+          targets: this,
+          fistLocal2X: endX,
+          fistLocal2Y: secondaryOffsetY,
+          duration: 50,
+          ease: 'Quad.easeOut',
+        });
+      }
     } else {
       // Single hitbox attack (normal attacks)
       this.attackHitbox.activate({
@@ -485,6 +545,12 @@ export class Player {
         offsetX: config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX,
         offsetY: config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY,
       });
+
+      // Make sure second fist is hidden for single attacks
+      this.fistVisible2 = false;
+      if (this.fistTween2) {
+        this.fistTween2.stop();
+      }
     }
   }
 
@@ -547,7 +613,7 @@ export class Player {
     this.attackHitbox.deactivate();
     this.attackHitboxSecondary.deactivate();
 
-    // Retract fist
+    // Retract first fist
     if (this.fistTween) {
       this.fistTween.stop();
     }
@@ -562,6 +628,24 @@ export class Player {
         this.fistVisible = false;
       },
     });
+
+    // Retract second fist (if visible)
+    if (this.fistVisible2) {
+      if (this.fistTween2) {
+        this.fistTween2.stop();
+      }
+
+      this.fistTween2 = this.scene.tweens.add({
+        targets: this,
+        fistLocal2X: 0,
+        fistLocal2Y: 0,
+        duration: 30,
+        ease: 'Quad.easeIn',
+        onComplete: () => {
+          this.fistVisible2 = false;
+        },
+      });
+    }
   }
 
   /**
@@ -618,7 +702,7 @@ export class Player {
     this.hurtbox.destroy();
     this.attackHitbox.destroy();
 
-    // Clean up fist visual
+    // Clean up fist visuals
     if (this.fistTween) {
       this.fistTween.stop();
       this.fistTween = null;
@@ -626,6 +710,16 @@ export class Player {
     if (this.fistVisual) {
       this.fistVisual.destroy();
       this.fistVisual = null;
+    }
+
+    // Clean up second fist visual
+    if (this.fistTween2) {
+      this.fistTween2.stop();
+      this.fistTween2 = null;
+    }
+    if (this.fistVisual2) {
+      this.fistVisual2.destroy();
+      this.fistVisual2 = null;
     }
 
     this.sprite.destroy();
