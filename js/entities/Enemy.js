@@ -691,31 +691,38 @@ export class Enemy {
 
   /**
    * Check if there's clearance above to climb
-   * Returns false if another enemy is directly above this one
+   * Returns false if another swarmer is above this one within 1.5 body heights
+   * This keeps the base of a pile stable - only top swarmers can jump
    * @returns {boolean}
    */
   hasClearanceAbove() {
-    const checkDistance = 40; // How far above to check (roughly swarmer height + buffer)
+    // Get swarmer body height, use 1.5x as check distance
+    const bodyHeight = this.sprite.body.height || 28;
+    const checkDistance = bodyHeight * 1.5;
+
+    // Horizontal tolerance - how directly above counts as "above"
+    const horizontalTolerance = this.sprite.body.width || 28;
+
     const enemies = this.scene.enemies || [];
 
     for (const enemy of enemies) {
       if (enemy === this) continue;
       if (!enemy.isAlive) continue;
+      if (enemy.config.type !== 'SWARMER') continue; // Only care about other swarmers
 
-      // Check if enemy is directly above
       const dx = Math.abs(enemy.sprite.x - this.sprite.x);
       const dy = this.sprite.y - enemy.sprite.y; // Positive if enemy is above
 
       // Enemy is above if:
-      // - Horizontally close (within ~20px)
-      // - Vertically above (dy > 0)
-      // - Not too far above (dy < checkDistance)
-      if (dx < 20 && dy > 0 && dy < checkDistance) {
-        return false; // Something is above, don't jump
+      // - Horizontally overlapping (within body width)
+      // - Vertically above us (dy > 0)
+      // - Within 1.5 body heights (dy < checkDistance)
+      if (dx < horizontalTolerance && dy > 0 && dy < checkDistance) {
+        return false; // Swarmer above us, stay planted as foundation
       }
     }
 
-    return true; // Clear to jump
+    return true; // Nothing above, free to jump
   }
 
   /**
