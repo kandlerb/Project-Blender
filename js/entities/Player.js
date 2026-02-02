@@ -168,9 +168,9 @@ export class Player {
       this.sprite.x + (this.fistLocalX * facingMult),
       this.sprite.y + this.fistLocalY
     );
-    // Second fist - uses raw value without facingMult so it stays on opposite side
+    // Second fist - also apply facingMult so it mirrors correctly when player turns
     this.fistVisual2.setPosition(
-      this.sprite.x + this.fistLocal2X,
+      this.sprite.x + (this.fistLocal2X * facingMult),
       this.sprite.y + this.fistLocal2Y
     );
     this.drawFist();
