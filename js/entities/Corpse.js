@@ -233,7 +233,8 @@ export class Corpse {
     // Safety valve: if falling too long with no stable position, destroy
     // This prevents corpses from falling forever if they clip through geometry
     if (this.fallTime > 5000) {
-      console.warn('Corpse could not find stable position after 5s, destroying');
+      const gridPos = this.grid ? this.grid.worldToGrid(this.sprite.x, this.sprite.y) : { col: '?', row: '?' };
+      console.warn(`Corpse #${this.id} destroyed: world(${Math.round(this.sprite.x)},${Math.round(this.sprite.y)}) grid(${gridPos.col},${gridPos.row}) - no stable position after 5s`);
       this.destroy();
     }
   }

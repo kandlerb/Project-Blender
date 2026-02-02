@@ -8,6 +8,12 @@ export const GRID_CONFIG = Object.freeze({
 });
 
 /**
+ * Debug flag for verbose settling search logging
+ * Set to true to trace why corpses can't find stable positions
+ */
+const DEBUG_SETTLING = true;
+
+/**
  * CorpseGrid - Manages a 2D staggered grid for corpse settling
  *
  * Uses a "brick pattern" where odd rows are offset by half a cell width,
@@ -658,21 +664,39 @@ export class CorpseGrid {
     const { col: startCol, row: startRow } = this.worldToGrid(worldX, worldY);
     const groundRow = this.getGroundRow(startCol);
 
+    if (DEBUG_SETTLING) {
+      console.group(`findSettlingCell: world(${Math.round(worldX)},${Math.round(worldY)}) → grid(${startCol},${startRow}), groundRow=${groundRow}`);
+    }
+
     // PHASE 1: Search DOWNWARD from corpse position to ground
     // This finds the lowest valid position near the corpse
     for (let row = startRow; row <= groundRow; row++) {
-      const cell = this.findValidCellAtRow(startCol, row);
+      const cell = this.findValidCellAtRow(startCol, row, DEBUG_SETTLING);
       if (cell) {
+        if (DEBUG_SETTLING) {
+          console.log(`✓ FOUND: (${cell.col},${cell.row})`);
+          console.groupEnd();
+        }
         return cell;
       }
     }
 
     // PHASE 2: If nothing found below, search upward (rare edge case - pile above corpse)
     for (let row = startRow - 1; row >= Math.max(0, startRow - 20); row--) {
-      const cell = this.findValidCellAtRow(startCol, row);
+      const cell = this.findValidCellAtRow(startCol, row, DEBUG_SETTLING);
       if (cell) {
+        if (DEBUG_SETTLING) {
+          console.log(`✓ FOUND (upward): (${cell.col},${cell.row})`);
+          console.groupEnd();
+        }
         return cell;
       }
+    }
+
+    if (DEBUG_SETTLING) {
+      console.log(`✗ NO VALID CELL FOUND`);
+      this.logGridState(startCol, groundRow);
+      console.groupEnd();
     }
 
     // No valid position found
@@ -683,10 +707,13 @@ export class CorpseGrid {
    * Find a valid (unoccupied + stable) cell at a specific row, searching outward from startCol
    * @param {number} startCol - Column to start searching from
    * @param {number} row - Row to search
+   * @param {boolean} debug - Whether to log detailed info (default false)
    * @param {number} maxOffset - Maximum horizontal offset to search (default 10)
    * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
    */
-  findValidCellAtRow(startCol, row, maxOffset = 10) {
+  findValidCellAtRow(startCol, row, debug = false, maxOffset = 10) {
+    const checked = [];
+
     // Search outward from startCol: 0, then -1/+1, then -2/+2, etc.
     for (let offset = 0; offset <= maxOffset; offset++) {
       const colsToCheck = offset === 0
@@ -696,11 +723,28 @@ export class CorpseGrid {
       for (const col of colsToCheck) {
         if (col < 0) continue; // Skip invalid columns
 
-        // Skip if occupied or overlaps with ground geometry
-        if (this.isOccupied(col, row) || this.isGroundAt(col, row)) continue;
+        const occupied = this.isOccupied(col, row);
+        const groundAt = this.isGroundAt(col, row);
+        const stable = !occupied && !groundAt && this.wouldBeStable(col, row);
 
-        // Must be stable (on ground OR has valid supports)
-        if (this.wouldBeStable(col, row)) {
+        if (debug) {
+          let reason = '';
+          if (occupied) {
+            reason = 'occupied';
+          } else if (groundAt) {
+            reason = 'ground-clip';
+          } else if (!stable) {
+            reason = this.getInstabilityReason(col, row);
+          } else {
+            reason = 'VALID';
+          }
+          checked.push(`(${col},${row}):${reason}`);
+        }
+
+        if (!occupied && !groundAt && stable) {
+          if (debug && checked.length > 0) {
+            console.log(`  Row ${row}: ${checked.join(', ')}`);
+          }
           const worldPos = this.gridToWorld(col, row);
           return {
             col,
@@ -710,6 +754,10 @@ export class CorpseGrid {
           };
         }
       }
+    }
+
+    if (debug && checked.length > 0) {
+      console.log(`  Row ${row}: ${checked.join(', ')}`);
     }
 
     return null; // No valid cell at this row
@@ -730,6 +778,77 @@ export class CorpseGrid {
     const groundRow = this.findGroundRow(col, 0);
     this._groundRowCache = groundRow;
     return groundRow;
+  }
+
+  /**
+   * Get human-readable reason why a cell is unstable (for debug logging)
+   * @param {number} col - Column index
+   * @param {number} row - Row index
+   * @returns {string} Reason string
+   */
+  getInstabilityReason(col, row) {
+    if (this.isGroundBelow(col, row)) {
+      return 'stable(ground)'; // Shouldn't happen if we got here
+    }
+
+    const supports = this.getSupportCells(col, row);
+    const supportStatus = supports.map(s => {
+      const occ = this.isOccupied(s.col, s.row);
+      return `${s.col},${s.row}:${occ ? '✓' : '✗'}`;
+    });
+
+    return `needs[${supportStatus.join(' ')}]`;
+  }
+
+  /**
+   * Log the current grid state around a position (for debugging failures)
+   * @param {number} centerCol - Center column for the display
+   * @param {number} groundRow - Ground row level
+   */
+  logGridState(centerCol, groundRow) {
+    console.log('--- Grid state around search area ---');
+
+    // Show rows from groundRow-5 to groundRow
+    for (let row = groundRow - 5; row <= groundRow; row++) {
+      const cells = [];
+      for (let col = centerCol - 5; col <= centerCol + 5; col++) {
+        if (this.isOccupied(col, row)) {
+          cells.push('[C]');
+        } else if (this.isGroundAt(col, row)) {
+          cells.push('[#]'); // Ground geometry (can't settle here)
+        } else if (this.isGroundBelow(col, row)) {
+          cells.push('[G]'); // Ground level, empty (can settle)
+        } else {
+          cells.push('[ ]'); // Empty, not ground
+        }
+      }
+      const rowLabel = row === groundRow ? ' ← ground' : '';
+      console.log(`Row ${row.toString().padStart(2)}: ${cells.join('')}${rowLabel}`);
+    }
+
+    // Count stats
+    const stats = this.countGroundCells(centerCol, groundRow);
+    console.log(`Total occupied: ${this.occupiedCells.size}, Ground cells in range: ${stats.total}, empty: ${stats.empty}`);
+  }
+
+  /**
+   * Count ground cells in search range (for debug stats)
+   * @param {number} centerCol - Center column
+   * @param {number} groundRow - Ground row level
+   * @returns {{ total: number, empty: number }}
+   */
+  countGroundCells(centerCol, groundRow) {
+    let total = 0;
+    let empty = 0;
+    for (let col = centerCol - 10; col <= centerCol + 10; col++) {
+      if (this.isGroundBelow(col, groundRow) && !this.isGroundAt(col, groundRow)) {
+        total++;
+        if (!this.isOccupied(col, groundRow)) {
+          empty++;
+        }
+      }
+    }
+    return { total, empty };
   }
 
   /**
