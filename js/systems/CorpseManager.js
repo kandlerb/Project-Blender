@@ -77,6 +77,10 @@ export class CorpseManager {
     // Debug visualization state
     this.debugEnabled = false;
     this.debugGraphics = null;
+
+    // Cascade timer for periodic stability checks
+    this.cascadeTimer = 0;
+    this.cascadeInterval = 500; // Check every 500ms
   }
 
   /**
@@ -502,6 +506,13 @@ export class CorpseManager {
     // This creates/updates the collision surfaces for corpse piles
     this.grid.rebuildDirtyPlatforms();
 
+    // Check for cascades periodically (not every frame)
+    this.cascadeTimer += delta;
+    if (this.cascadeTimer >= this.cascadeInterval) {
+      this.cascadeTimer = 0;
+      this.triggerCascade();
+    }
+
     // Update debug visualization if enabled
     if (this.debugEnabled) {
       this.updateDebugVisualization();
@@ -605,6 +616,29 @@ export class CorpseManager {
             progress
           );
         }
+      }
+    }
+  }
+
+  /**
+   * Check for and trigger corpse cascades
+   * Corpses with insufficient support will fall to new positions
+   * Call this periodically or after major pile changes
+   */
+  triggerCascade() {
+    const unstable = this.grid.findUnstableCells();
+
+    if (unstable.length === 0) return;
+
+    console.log(`Cascading ${unstable.length} unstable corpses`);
+
+    // Process top-to-bottom (lowest row numbers first = highest positions)
+    // This ensures corpses at the top fall first
+    unstable.sort((a, b) => a.row - b.row);
+
+    for (const cell of unstable) {
+      if (cell.corpse && cell.corpse.unsettle) {
+        cell.corpse.unsettle();
       }
     }
   }

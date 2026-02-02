@@ -480,6 +480,44 @@ export class CorpseGrid {
   }
 
   /**
+   * Find all occupied cells that are unstable (should cascade)
+   * A cell is unstable if it has less than 2 support cells and no ground below
+   * @returns {Array<{col, row, corpse, occupiedSupports, supportCells}>}
+   */
+  findUnstableCells() {
+    const unstable = [];
+
+    for (const [key, corpseData] of this.occupiedCells) {
+      const [col, row] = key.split(',').map(Number);
+
+      // Skip cells on ground - they're always stable
+      if (this.isGroundBelow(col, row)) continue;
+
+      const supportCells = this.getSupportCells(col, row);
+      let occupiedSupports = 0;
+
+      for (const cell of supportCells) {
+        if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
+          occupiedSupports++;
+        }
+      }
+
+      // Unstable if less than 2 supports
+      if (occupiedSupports < 2) {
+        unstable.push({
+          col,
+          row,
+          corpse: corpseData,
+          occupiedSupports,
+          supportCells,
+        });
+      }
+    }
+
+    return unstable;
+  }
+
+  /**
    * Clear a cell (mark as unoccupied)
    * @param {number} col - Column index
    * @param {number} row - Row index

@@ -426,6 +426,58 @@ export class Corpse {
   }
 
   /**
+   * Force corpse back to falling state (for cascade)
+   * Used when a corpse becomes unstable due to support being removed
+   */
+  unsettle() {
+    if (this.state !== CORPSE_STATE.SETTLED) return;
+
+    // Clear grid cell
+    if (this.grid && this.gridCell) {
+      this.grid.clearCell(this.gridCell.col, this.gridCell.row);
+      this.gridCell = null;
+    }
+
+    // Re-enable physics for falling
+    if (this.sprite && this.sprite.body) {
+      this.sprite.body.setAllowGravity(true);
+      this.sprite.body.setImmovable(false);
+      this.sprite.body.moves = true;
+
+      // Restore full body size for falling
+      this.sprite.body.setSize(this.config.width, this.config.height);
+      this.sprite.body.setOffset(0, 0);
+
+      // Re-enable all collision directions
+      this.sprite.body.checkCollision.up = true;
+      this.sprite.body.checkCollision.down = true;
+      this.sprite.body.checkCollision.left = true;
+      this.sprite.body.checkCollision.right = true;
+
+      // Small nudge to get it moving
+      this.sprite.body.setVelocity(0, 50);
+    }
+
+    // Restore falling visuals
+    this.sprite.setTint(this.config.tint);
+    this.sprite.setAlpha(CORPSE_DEFAULTS.ALPHA);
+    this.sprite.setDepth(CORPSE_CONFIG.FALLING_DEPTH);
+
+    // Return to falling state
+    this.state = CORPSE_STATE.FALLING;
+    this.isSettled = false;
+    this.fallTime = 0;
+    this.snapData = null;
+
+    // Emit event
+    this.scene.events.emit('corpse:unsettled', {
+      corpse: this,
+      x: this.sprite.x,
+      y: this.sprite.y,
+    });
+  }
+
+  /**
    * Begin the decay fade-out animation
    */
   startDecay() {
