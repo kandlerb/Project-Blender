@@ -642,6 +642,7 @@ export class CorpseManager {
   /**
    * Check only corpses flagged for stability re-check
    * More efficient than checking all corpses every frame
+   * Uses wouldBeStable() for consistency with settling logic
    */
   checkFlaggedCorpses() {
     const toUnsettle = [];
@@ -652,21 +653,10 @@ export class CorpseManager {
 
         const [col, row] = key.split(',').map(Number);
 
-        // Check if cell is still stable (on ground or has dual support)
-        if (!this.grid.isGroundBelow(col, row)) {
-          const supportCells = this.grid.getSupportCells(col, row);
-          let occupiedSupports = 0;
-
-          for (const cell of supportCells) {
-            if (this.grid.isOccupied(cell.col, cell.row) || this.grid.isGroundAt(cell.col, cell.row)) {
-              occupiedSupports++;
-            }
-          }
-
-          // Unstable if less than 2 supports
-          if (occupiedSupports < 2 && corpseData.unsettle) {
-            toUnsettle.push({ corpseData, col, row });
-          }
+        // Use wouldBeStable for consistency with settling logic
+        // This checks: on ground OR both support cells are occupied corpses
+        if (!this.grid.wouldBeStable(col, row) && corpseData.unsettle) {
+          toUnsettle.push({ corpseData, col, row });
         }
       }
     }

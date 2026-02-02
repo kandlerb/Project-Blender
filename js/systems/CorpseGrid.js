@@ -301,6 +301,45 @@ export class CorpseGrid {
   }
 
   /**
+   * Check if a cell WOULD BE stable if a corpse settled there
+   * More strict than hasSupport - only counts actual occupied cells as support
+   * (not ground geometry at support cell positions)
+   *
+   * Stable if:
+   * 1. Directly above ground (isGroundBelow returns true), OR
+   * 2. BOTH support cells are occupied by other corpses
+   *
+   * @param {number} col - Column index
+   * @param {number} row - Row index
+   * @returns {boolean}
+   */
+  wouldBeStable(col, row) {
+    // Don't settle in cells that overlap with ground (prevents clipping)
+    if (this.isGroundAt(col, row)) {
+      return false;
+    }
+
+    // Ground directly below = always stable
+    if (this.isGroundBelow(col, row)) {
+      return true;
+    }
+
+    // Check support cells - require BOTH to be occupied by corpses
+    const supportCells = this.getSupportCells(col, row);
+    let occupiedSupports = 0;
+
+    for (const cell of supportCells) {
+      // Only count actual occupied corpses, not ground geometry
+      if (this.isOccupied(cell.col, cell.row)) {
+        occupiedSupports++;
+      }
+    }
+
+    // Need BOTH supports to be occupied corpses
+    return occupiedSupports >= 2;
+  }
+
+  /**
    * Check if a cell has support (ground below OR BOTH support cells occupied)
    * A cell has support if ANY of these conditions are true:
    * 1. The row below is ground (tilemap collision)
@@ -475,6 +514,7 @@ export class CorpseGrid {
 
   /**
    * Diagnose grid state - log all occupied cells and their support status
+   * Uses wouldBeStable() for consistency with settling/cascade logic
    * Call with: this.scene.corpseManager.grid.diagnoseGrid()
    */
   diagnoseGrid() {
@@ -488,23 +528,25 @@ export class CorpseGrid {
       const [col, row] = key.split(',').map(Number);
       const supportCells = this.getSupportCells(col, row);
 
-      let supportCount = 0;
-      let hasGroundSupport = this.isGroundBelow(col, row);
-
+      // Count only OCCUPIED corpses as support (not ground geometry)
+      let occupiedSupportCount = 0;
       for (const cell of supportCells) {
-        if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
-          supportCount++;
+        if (this.isOccupied(cell.col, cell.row)) {
+          occupiedSupportCount++;
         }
       }
+
+      const hasGroundSupport = this.isGroundBelow(col, row);
+      const isStable = this.wouldBeStable(col, row);
 
       const worldPos = this.gridToWorld(col, row);
       const cellInfo = {
         col,
         row,
         worldPos,
-        supportCount,
+        supportCount: occupiedSupportCount,
         hasGroundSupport,
-        isStable: hasGroundSupport || supportCount >= 2,
+        isStable,
         corpseId: corpseData?.id || '?',
       };
 
@@ -516,16 +558,16 @@ export class CorpseGrid {
     }
 
     console.log(`\nSTABLE cells (${stable.length}):`);
-    stable.forEach(c => console.log(`  (${c.col},${c.row}) support=${c.supportCount} ground=${c.hasGroundSupport} [#${c.corpseId}]`));
+    stable.forEach(c => console.log(`  (${c.col},${c.row}) corpseSupport=${c.supportCount} ground=${c.hasGroundSupport} [#${c.corpseId}]`));
 
     console.log(`\nUNSTABLE cells (${unstable.length}):`);
-    unstable.forEach(c => console.log(`  (${c.col},${c.row}) support=${c.supportCount} ground=${c.hasGroundSupport} [#${c.corpseId}]`));
+    unstable.forEach(c => console.log(`  (${c.col},${c.row}) corpseSupport=${c.supportCount} ground=${c.hasGroundSupport} [#${c.corpseId}]`));
 
     if (unstable.length > 0) {
-      console.log('\n⚠️ UNSTABLE CORPSES SHOULD BE CASCADING BUT ARE NOT!');
+      console.log('\n⚠️ UNSTABLE CORPSES - will cascade when support changes');
       console.log('Press O to trigger cascade on unstable corpses');
     } else if (stable.length > 0) {
-      console.log('\n✓ All corpses are stable (have ground or 2+ support cells)');
+      console.log('\n✓ All corpses are stable (on ground or have 2 corpse supports)');
     }
 
     console.log('=== END DIAGNOSIS ===\n');
@@ -535,7 +577,7 @@ export class CorpseGrid {
 
   /**
    * Find all occupied cells that are unstable (should cascade)
-   * A cell is unstable if it has less than 2 support cells and no ground below
+   * Uses wouldBeStable() for consistency - only counts occupied corpses as support
    * @returns {Array<{col, row, corpse, occupiedSupports, supportCells}>}
    */
   findUnstableCells() {
@@ -544,20 +586,17 @@ export class CorpseGrid {
     for (const [key, corpseData] of this.occupiedCells) {
       const [col, row] = key.split(',').map(Number);
 
-      // Skip cells on ground - they're always stable
-      if (this.isGroundBelow(col, row)) continue;
+      // Use wouldBeStable for consistency
+      if (!this.wouldBeStable(col, row)) {
+        const supportCells = this.getSupportCells(col, row);
+        let occupiedSupports = 0;
 
-      const supportCells = this.getSupportCells(col, row);
-      let occupiedSupports = 0;
-
-      for (const cell of supportCells) {
-        if (this.isOccupied(cell.col, cell.row) || this.isGroundAt(cell.col, cell.row)) {
-          occupiedSupports++;
+        for (const cell of supportCells) {
+          if (this.isOccupied(cell.col, cell.row)) {
+            occupiedSupports++;
+          }
         }
-      }
 
-      // Unstable if less than 2 supports
-      if (occupiedSupports < 2) {
         unstable.push({
           col,
           row,
@@ -585,9 +624,9 @@ export class CorpseGrid {
   }
 
   /**
-   * Find the best valid cell for a falling corpse near position (x, y)
-   * Uses bottom-up search to ensure corpses settle at the LOWEST valid position,
-   * creating natural pyramid formations (wide at bottom, narrow at top).
+   * Find the best STABLE cell for a falling corpse near position (x, y)
+   * Only returns cells that are truly stable (on ground OR dual support).
+   * Returns null if no stable position exists - corpse should keep falling.
    *
    * @param {number} worldX - World X position
    * @param {number} worldY - World Y position
@@ -600,22 +639,91 @@ export class CorpseGrid {
     // Find ground level for this column area
     const groundRow = this.findGroundRow(spawnCol, 0);
 
-    // Search from ground UP to find the LOWEST valid cell
-    // This ensures pyramids form correctly (fill bottom first)
-    const lowestCell = this.findLowestValidCell(spawnCol, groundRow);
-    if (lowestCell) return lowestCell;
+    // PHASE 1: Search for cells ON GROUND first (most stable)
+    const groundCell = this.findGroundCell(spawnCol, groundRow);
+    if (groundCell) return groundCell;
 
-    // Fallback: if spawned inside a pile, search upward for the top
-    const cellAbove = this.findCellUpward(spawnCol, spawnRow);
-    if (cellAbove) return cellAbove;
+    // PHASE 2: Search for cells with DUAL SUPPORT (both support cells occupied)
+    const stableCell = this.findStableCell(spawnCol, groundRow, spawnRow);
+    if (stableCell) return stableCell;
 
-    // Last resort: search in all directions for nearest valid cell
-    return this.findNearestValidCell(worldX, worldY);
+    // PHASE 3: No stable position exists - return null
+    // Corpse should keep falling/waiting rather than settle unstably
+    return null;
   }
 
   /**
-   * Search upward from a position to find a valid cell at the top of a pile
+   * Find an unoccupied cell at ground level
+   * @param {number} startCol - Column to start searching from
+   * @param {number} groundRow - Row at ground level
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findGroundCell(startCol, groundRow) {
+    // Search outward from start position at ground level
+    for (let offset = 0; offset <= 20; offset++) {
+      const cols = offset === 0 ? [startCol] : [startCol - offset, startCol + offset];
+
+      for (const col of cols) {
+        if (!this.isOccupied(col, groundRow) &&
+            !this.isGroundAt(col, groundRow) &&
+            this.isGroundBelow(col, groundRow)) {
+          const worldPos = this.gridToWorld(col, groundRow);
+          return {
+            col,
+            row: groundRow,
+            worldX: worldPos.x,
+            worldY: worldPos.y,
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Find a cell with dual support (both support cells occupied by corpses)
+   * Searches from ground level upward to find the lowest stable position
+   * @param {number} startCol - Column to start searching from
+   * @param {number} groundRow - Row at ground level
+   * @param {number} currentRow - Current corpse row (for upper bound)
+   * @returns {{ col: number, row: number, worldX: number, worldY: number } | null}
+   */
+  findStableCell(startCol, groundRow, currentRow) {
+    // Search from one row above ground, upward
+    // Stop before we get too high above the corpse's current position
+    const maxSearchRow = Math.max(0, currentRow - 20);
+
+    for (let row = groundRow - 1; row >= maxSearchRow; row--) {
+      // Search outward from starting column
+      for (let offset = 0; offset <= 15; offset++) {
+        const cols = offset === 0 ? [startCol] : [startCol - offset, startCol + offset];
+
+        for (const col of cols) {
+          // Skip if occupied or overlaps ground
+          if (this.isOccupied(col, row) || this.isGroundAt(col, row)) continue;
+
+          // Check if this cell would be stable
+          if (this.wouldBeStable(col, row)) {
+            const worldPos = this.gridToWorld(col, row);
+            return {
+              col,
+              row,
+              worldX: worldPos.x,
+              worldY: worldPos.y,
+            };
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Search upward from a position to find a STABLE cell at the top of a pile
    * Used when a corpse spawns inside an existing pile
+   * Only returns cells that are truly stable (on ground OR dual support)
    * @param {number} col - Starting column
    * @param {number} row - Starting row
    * @param {number} maxRows - Maximum rows to search upward (default 50)
@@ -627,7 +735,9 @@ export class CorpseGrid {
     // Scan upward from current position
     for (let checkRow = row - 1; checkRow >= minRow; checkRow--) {
       // Check this cell directly above
-      if (!this.isOccupied(col, checkRow) && this.hasSupport(col, checkRow)) {
+      if (!this.isOccupied(col, checkRow) &&
+          !this.isGroundAt(col, checkRow) &&
+          this.wouldBeStable(col, checkRow)) {
         const worldPos = this.gridToWorld(col, checkRow);
         return {
           col,
@@ -640,7 +750,9 @@ export class CorpseGrid {
       // Check adjacent columns at this height
       for (const offset of [-1, 1]) {
         const checkCol = col + offset;
-        if (!this.isOccupied(checkCol, checkRow) && this.hasSupport(checkCol, checkRow)) {
+        if (!this.isOccupied(checkCol, checkRow) &&
+            !this.isGroundAt(checkCol, checkRow) &&
+            this.wouldBeStable(checkCol, checkRow)) {
           const worldPos = this.gridToWorld(checkCol, checkRow);
           return {
             col: checkCol,
@@ -656,8 +768,9 @@ export class CorpseGrid {
   }
 
   /**
-   * Find the nearest valid cell in any direction
+   * Find the nearest STABLE cell in any direction
    * Last resort search that expands outward in a spiral pattern
+   * Only returns cells that are truly stable (on ground OR dual support)
    * @param {number} worldX - World X position
    * @param {number} worldY - World Y position
    * @param {number} maxDistance - Maximum search distance in cells (default 20)
@@ -679,11 +792,12 @@ export class CorpseGrid {
           const checkCol = startCol + colOffset;
           const checkRow = startRow + rowOffset;
 
-          // Skip if occupied
+          // Skip if occupied or overlaps ground
           if (this.isOccupied(checkCol, checkRow)) continue;
+          if (this.isGroundAt(checkCol, checkRow)) continue;
 
-          // Check if has support
-          if (this.hasSupport(checkCol, checkRow)) {
+          // Check if would be stable
+          if (this.wouldBeStable(checkCol, checkRow)) {
             const worldPos = this.gridToWorld(checkCol, checkRow);
             return {
               col: checkCol,

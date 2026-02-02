@@ -198,6 +198,7 @@ export class Corpse {
   /**
    * Update logic for FALLING state
    * Normal physics, checking for snap opportunity each frame
+   * Only settles into STABLE positions (on ground or dual support)
    * @param {number} time - Current game time
    * @param {number} delta - Delta time in ms
    */
@@ -211,26 +212,25 @@ export class Corpse {
       return;
     }
 
-    // Find a valid grid cell to snap to
+    // Try to find a STABLE settling cell
     const cell = this.grid.findSettlingCell(this.sprite.x, this.sprite.y);
 
-    if (cell && this.isCloseEnoughToSnap(cell)) {
-      this.startSnapping(cell);
-      return;
-    }
-
-    // Safety valve: if falling for too long, force find ANY valid cell
-    if (this.fallTime > CORPSE_CONFIG.FALL_TIMEOUT) {
-      const anyCell = this.grid.findNearestValidCell(this.sprite.x, this.sprite.y);
-      if (anyCell) {
-        // Teleport near it and start snapping immediately
-        this.sprite.setPosition(anyCell.worldX, anyCell.worldY - 30);
-        this.startSnapping(anyCell);
-      } else {
-        // Absolute fallback: destroy this corpse to prevent visual glitches
-        console.warn('Corpse could not find valid cell after timeout, destroying');
-        this.destroy();
+    if (cell) {
+      // Check if we're close enough to snap
+      if (this.isCloseEnoughToSnap(cell)) {
+        this.startSnapping(cell);
+        return;
       }
+      // Otherwise keep falling toward the target naturally
+    }
+    // If cell is null, no stable position exists yet - just keep falling
+    // Physics will handle movement, we'll check again next frame
+
+    // Safety valve: if falling too long with no stable position, destroy
+    // This prevents corpses from falling forever if they clip through geometry
+    if (this.fallTime > 5000) {
+      console.warn('Corpse could not find stable position after 5s, destroying');
+      this.destroy();
     }
   }
 
