@@ -620,22 +620,34 @@ export class CorpseManager {
    * Check for and trigger corpse cascades
    * Corpses with insufficient support will fall to new positions
    * Call this periodically or after major pile changes
+   * Respects cascade immunity to prevent rapid oscillation
    */
   triggerCascade() {
     const unstable = this.grid.findUnstableCells();
 
     if (unstable.length === 0) return;
 
-    console.log(`Cascading ${unstable.length} unstable corpses`);
-
     // Process top-to-bottom (lowest row numbers first = highest positions)
     // This ensures corpses at the top fall first
     unstable.sort((a, b) => a.row - b.row);
 
+    let cascadedCount = 0;
+    let immuneCount = 0;
+
     for (const cell of unstable) {
       if (cell.corpse && cell.corpse.unsettle) {
+        // Check if corpse is immune (recently settled)
+        if (cell.corpse.isCascadeImmune && cell.corpse.isCascadeImmune()) {
+          immuneCount++;
+          continue;
+        }
         cell.corpse.unsettle();
+        cascadedCount++;
       }
+    }
+
+    if (cascadedCount > 0 || immuneCount > 0) {
+      console.log(`Cascading ${cascadedCount} unstable corpses (${immuneCount} immune)`);
     }
   }
 
@@ -643,9 +655,11 @@ export class CorpseManager {
    * Check only corpses flagged for stability re-check
    * More efficient than checking all corpses every frame
    * Uses wouldBeStable() for consistency with settling logic
+   * Respects cascade immunity to prevent rapid oscillation
    */
   checkFlaggedCorpses() {
     const toUnsettle = [];
+    let immuneCount = 0;
 
     for (const [key, corpseData] of this.grid.occupiedCells) {
       if (corpseData && corpseData.needsStabilityCheck) {
@@ -656,6 +670,11 @@ export class CorpseManager {
         // Use wouldBeStable for consistency with settling logic
         // This checks: on ground OR both support cells are occupied corpses
         if (!this.grid.wouldBeStable(col, row) && corpseData.unsettle) {
+          // Check if corpse is immune (recently settled)
+          if (corpseData.isCascadeImmune && corpseData.isCascadeImmune()) {
+            immuneCount++;
+            continue;
+          }
           toUnsettle.push({ corpseData, col, row });
         }
       }
@@ -666,6 +685,9 @@ export class CorpseManager {
       toUnsettle.sort((a, b) => a.row - b.row);
       for (const item of toUnsettle) {
         item.corpseData.unsettle();
+      }
+      if (immuneCount > 0) {
+        console.log(`Cascading ${toUnsettle.length} corpses (${immuneCount} immune)`);
       }
     }
   }

@@ -97,6 +97,10 @@ export class Corpse {
     // Grid cell this corpse occupies (set during snapping)
     this.gridCell = null;
 
+    // Cascade immunity - prevents rapid oscillation after settling
+    this.settledAt = 0;
+    this.cascadeImmunityMs = 1500; // 1.5 seconds of immunity after settling
+
     // Configure physics body
     this.setupPhysics();
 
@@ -356,6 +360,7 @@ export class Corpse {
 
     this.isSettled = true;
     this.state = CORPSE_STATE.SETTLED;
+    this.settledAt = this.scene.time.now; // Track when we settled for cascade immunity
 
     // Snap to exact target position if we have snap data
     if (this.snapData) {
@@ -423,6 +428,18 @@ export class Corpse {
       y: this.sprite.y,
       gridCell: this.gridCell,
     });
+  }
+
+  /**
+   * Check if this corpse is immune to cascade (recently settled)
+   * Prevents rapid oscillation by giving corpses time to stabilize
+   * @returns {boolean} True if corpse should not be cascaded yet
+   */
+  isCascadeImmune() {
+    if (this.state !== CORPSE_STATE.SETTLED) return false;
+
+    const timeSinceSettled = this.scene.time.now - this.settledAt;
+    return timeSinceSettled < this.cascadeImmunityMs;
   }
 
   /**
