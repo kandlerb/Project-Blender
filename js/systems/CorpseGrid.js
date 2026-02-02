@@ -304,13 +304,11 @@ export class CorpseGrid {
    * Check if a cell WOULD BE stable if a corpse settled there
    *
    * Stable if:
-   * 1. Directly above ground (isGroundBelow returns true), OR
-   * 2. BOTH support cells are "valid" - each support is valid if it's:
-   *    - Occupied by a corpse, OR
-   *    - At ground level (has ground below IT)
+   * 1. Directly above ground (isGroundBelow returns true) - corpse rests on ground tiles
+   * 2. BOTH support cells are OCCUPIED by other corpses
    *
-   * This allows Row 1 (first row above ground) to settle because its
-   * support cells at Row 2 are at ground level = inherently stable.
+   * Note: Empty cells provide NO support, even if they're at ground level.
+   * Only the ground itself (checked via isGroundBelow) or occupied corpses provide support.
    *
    * @param {number} col - Column index
    * @param {number} row - Row index
@@ -323,25 +321,23 @@ export class CorpseGrid {
     }
 
     // Case 1: Ground directly below = always stable
+    // (This cell rests on actual ground tiles)
     if (this.isGroundBelow(col, row)) {
       return true;
     }
 
-    // Case 2: Check support cells - each must be "valid"
+    // Case 2: Not on ground - need BOTH support cells to be OCCUPIED
+    // Empty cells provide no support, even at ground level
     const supportCells = this.getSupportCells(col, row);
 
     for (const support of supportCells) {
-      // A support cell is valid if it's occupied OR at ground level
-      const isOccupied = this.isOccupied(support.col, support.row);
-      const isOnGround = this.isGroundBelow(support.col, support.row);
-
-      if (!isOccupied && !isOnGround) {
-        // This support position is neither occupied nor on ground = invalid
+      if (!this.isOccupied(support.col, support.row)) {
+        // This support position is empty = no support
         return false;
       }
     }
 
-    // All support cells are valid
+    // Both support cells are occupied
     return true;
   }
 
@@ -539,11 +535,11 @@ export class CorpseGrid {
         col: cell.col,
         row: cell.row,
         occupied: this.isOccupied(cell.col, cell.row),
-        onGround: this.isGroundBelow(cell.col, cell.row),
+        atGroundLevel: this.isGroundBelow(cell.col, cell.row),
       }));
 
-      // A support is valid if occupied OR on ground
-      const validSupports = supportStatus.filter(s => s.occupied || s.onGround).length;
+      // A support is valid ONLY if occupied (empty cells provide no support)
+      const validSupports = supportStatus.filter(s => s.occupied).length;
       const hasDirectGround = this.isGroundBelow(col, row);
       const isStable = this.wouldBeStable(col, row);
 
@@ -570,11 +566,11 @@ export class CorpseGrid {
     stable.forEach(c => {
       const reason = c.hasDirectGround
         ? 'direct ground'
-        : `${c.validSupports} valid supports`;
+        : `${c.validSupports}/2 corpse supports`;
       const supportDetail = c.supportStatus.map(s => {
         if (s.occupied) return `(${s.col},${s.row}):corpse`;
-        if (s.onGround) return `(${s.col},${s.row}):ground`;
-        return `(${s.col},${s.row}):empty`;
+        if (s.atGroundLevel) return `(${s.col},${s.row}):EMPTY(ground-level)`;
+        return `(${s.col},${s.row}):EMPTY`;
       }).join(', ');
       console.log(`  (${c.col},${c.row}) [#${c.corpseId}] - ${reason} [${supportDetail}]`);
     });
@@ -583,10 +579,10 @@ export class CorpseGrid {
     unstable.forEach(c => {
       const supportDetail = c.supportStatus.map(s => {
         if (s.occupied) return `(${s.col},${s.row}):corpse`;
-        if (s.onGround) return `(${s.col},${s.row}):ground`;
+        if (s.atGroundLevel) return `(${s.col},${s.row}):EMPTY(ground-level)`;
         return `(${s.col},${s.row}):EMPTY`;
       }).join(', ');
-      console.log(`  (${c.col},${c.row}) [#${c.corpseId}] - ${c.validSupports}/2 valid [${supportDetail}]`);
+      console.log(`  (${c.col},${c.row}) [#${c.corpseId}] - ${c.validSupports}/2 corpse supports [${supportDetail}]`);
     });
 
     if (unstable.length > 0) {
