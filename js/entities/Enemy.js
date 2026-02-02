@@ -384,6 +384,18 @@ export class Enemy {
       hitstop: 40,
     });
 
+    // Punch visual - small red square that swings out during attacks
+    this.punchVisual = this.scene.add.graphics();
+    this.punchVisual.fillStyle(0xff4444, 0.8); // Red with slight transparency
+    this.punchVisual.fillRect(-6, -6, 12, 12); // 12x12 square centered at origin
+    this.punchVisual.setDepth(this.sprite.depth + 1);
+    this.punchVisual.setVisible(false);
+    this.punchVisualOffset = { x: 0, y: 0 }; // Current offset from enemy center
+    this.punchVisualTween = null;
+
+    // Store attack offset for punch visual positioning
+    this.attackOffset = attackOffset;
+
     if (this.scene.combatManager) {
       this.scene.combatManager.register(this.hurtbox);
       this.scene.combatManager.register(this.attackHitbox);
@@ -798,6 +810,57 @@ export class Enemy {
     });
   }
 
+  /**
+   * Show punch visual and animate it to attack offset position
+   */
+  showPunchVisual() {
+    if (!this.punchVisual) return;
+
+    // Stop any existing tween
+    if (this.punchVisualTween) {
+      this.punchVisualTween.stop();
+    }
+
+    // Make visible and set initial position at enemy center
+    this.punchVisual.setVisible(true);
+    this.punchVisual.setPosition(this.sprite.x, this.sprite.y);
+
+    // Animate offset from (0,0) to attack offset position
+    this.punchVisualTween = this.scene.tweens.add({
+      targets: this.punchVisualOffset,
+      x: this.attackOffset || 25,
+      y: 0,
+      duration: 50,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  /**
+   * Hide punch visual with retract animation
+   */
+  hidePunchVisual() {
+    if (!this.punchVisual) return;
+
+    // Stop any existing tween
+    if (this.punchVisualTween) {
+      this.punchVisualTween.stop();
+    }
+
+    // Animate offset back to (0, 0)
+    this.punchVisualTween = this.scene.tweens.add({
+      targets: this.punchVisualOffset,
+      x: 0,
+      y: 0,
+      duration: 30,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        if (this.punchVisual) {
+          this.punchVisual.setVisible(false);
+        }
+      },
+    });
+  }
+
   update(time, delta) {
     if (!this.isAlive) return;
 
@@ -829,6 +892,15 @@ export class Enemy {
 
     this.hurtbox.updatePosition();
     this.attackHitbox.updatePosition();
+
+    // Update punch visual position to follow enemy
+    if (this.punchVisual && this.punchVisual.visible) {
+      const direction = this.sprite.flipX ? -1 : 1;
+      this.punchVisual.setPosition(
+        this.sprite.x + this.punchVisualOffset.x * direction,
+        this.sprite.y + this.punchVisualOffset.y
+      );
+    }
 
     // Update pack debug visualization for swarmers
     if (this.config.type === 'SWARMER' && this.packDebugGraphics) {
@@ -1680,6 +1752,16 @@ export class Enemy {
     this.hurtbox.destroy();
     this.attackHitbox.destroy();
 
+    // Clean up punch visual
+    if (this.punchVisualTween) {
+      this.punchVisualTween.stop();
+      this.punchVisualTween = null;
+    }
+    if (this.punchVisual) {
+      this.punchVisual.destroy();
+      this.punchVisual = null;
+    }
+
     // Clean up pack debug graphics (Swarmer-specific)
     if (this.packDebugGraphics) {
       this.packDebugGraphics.destroy();
@@ -1866,6 +1948,7 @@ class EnemyAttackState extends State {
     if (stateTime < this.windupTime + this.activeTime) {
       if (!this.enemy.attackHitbox.active) {
         this.enemy.attackHitbox.activate();
+        this.enemy.showPunchVisual(); // Show punch visual
         this.enemy.sprite.setTint(0xff4444); // Brighter red during attack
 
         // Lunge forward slightly
@@ -1878,6 +1961,7 @@ class EnemyAttackState extends State {
     // Recovery phase
     if (stateTime < this.totalDuration) {
       this.enemy.attackHitbox.deactivate();
+      this.enemy.hidePunchVisual(); // Hide punch visual
       this.enemy.sprite.clearTint();
       this.enemy.stop();
       return null;
@@ -1892,6 +1976,7 @@ class EnemyAttackState extends State {
 
   exit(nextState) {
     this.enemy.attackHitbox.deactivate();
+    this.enemy.hidePunchVisual(); // Ensure punch visual is hidden on exit
     this.enemy.sprite.clearTint();
   }
 
@@ -2332,6 +2417,9 @@ class SwarmerAttackingState extends State {
     this.enemy.attackHitbox.hitstun = 200;
     this.enemy.attackHitbox.activate();
 
+    // Show punch visual
+    this.enemy.showPunchVisual();
+
     // Brighter red during attack
     this.enemy.sprite.setTint(0xff4444);
 
@@ -2352,6 +2440,7 @@ class SwarmerAttackingState extends State {
 
   exit(nextState) {
     this.enemy.attackHitbox.deactivate();
+    this.enemy.hidePunchVisual(); // Hide punch visual on exit
   }
 
   canBeInterrupted(nextStateName) {
