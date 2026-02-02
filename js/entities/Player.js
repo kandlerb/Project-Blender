@@ -22,6 +22,14 @@ export class Player {
     this.sprite = scene.physics.add.sprite(x, y, 'player_placeholder');
     this.setupPhysics();
 
+    // Punch visual - small square that swings out during attacks
+    this.punchVisual = scene.add.graphics();
+    this.punchVisual.fillStyle(0x00ffff, 0.8); // Cyan with slight transparency
+    this.punchVisual.fillRect(-8, -8, 16, 16); // 16x16 square centered at origin
+    this.punchVisual.setDepth(this.sprite.depth + 1);
+    this.punchVisual.setVisible(false);
+    this.punchVisualOffset = { x: 0, y: 0 }; // Current offset from player center
+
     // Terrain groups for clipping fix
     this.terrainGroups = [];
 
@@ -142,6 +150,15 @@ export class Player {
 
     // Update facing direction based on sprite flip
     this.facingRight = !this.sprite.flipX;
+
+    // Update punch visual position to follow player
+    if (this.punchVisual && this.punchVisual.visible) {
+      const direction = this.facingRight ? 1 : -1;
+      this.punchVisual.setPosition(
+        this.sprite.x + this.punchVisualOffset.x * direction,
+        this.sprite.y + this.punchVisualOffset.y
+      );
+    }
 
     // Fix any terrain clipping
     this.fixTerrainClipping();
@@ -411,6 +428,10 @@ export class Player {
         // Update position immediately with new offset
         hitbox.updatePosition();
       });
+
+      // For multi-hitbox attacks, animate punch visual to primary hitbox position
+      const primaryConfig = config.hitboxes[0] || {};
+      this.showPunchVisual(primaryConfig.offsetX || config.offsetX || 35, primaryConfig.offsetY || config.offsetY || 0);
     } else {
       // Single hitbox attack (normal attacks)
       this.attackHitbox.activate({
@@ -438,7 +459,38 @@ export class Player {
 
       // Update position immediately with new offset
       this.attackHitbox.updatePosition();
+
+      // Animate punch visual to hitbox position
+      this.showPunchVisual(config.offsetX || 35, config.offsetY || 0);
     }
+  }
+
+  /**
+   * Show punch visual and animate it to target offset
+   * @param {number} targetX - Target X offset from player center
+   * @param {number} targetY - Target Y offset from player center
+   */
+  showPunchVisual(targetX, targetY) {
+    if (!this.punchVisual) return;
+
+    // Stop any existing tween
+    if (this.punchVisualTween) {
+      this.punchVisualTween.stop();
+    }
+
+    // Make visible and set initial position at player center
+    this.punchVisual.setVisible(true);
+    const direction = this.facingRight ? 1 : -1;
+    this.punchVisual.setPosition(this.sprite.x, this.sprite.y);
+
+    // Animate offset from (0,0) to target position
+    this.punchVisualTween = this.scene.tweens.add({
+      targets: this.punchVisualOffset,
+      x: targetX,
+      y: targetY,
+      duration: 50,
+      ease: 'Quad.easeOut',
+    });
   }
 
   /**
@@ -447,6 +499,35 @@ export class Player {
   deactivateAttackHitbox() {
     this.attackHitbox.deactivate();
     this.attackHitboxSecondary.deactivate();
+
+    // Animate punch visual back to center and hide
+    this.hidePunchVisual();
+  }
+
+  /**
+   * Hide punch visual with retract animation
+   */
+  hidePunchVisual() {
+    if (!this.punchVisual) return;
+
+    // Stop any existing tween
+    if (this.punchVisualTween) {
+      this.punchVisualTween.stop();
+    }
+
+    // Animate offset back to (0, 0)
+    this.punchVisualTween = this.scene.tweens.add({
+      targets: this.punchVisualOffset,
+      x: 0,
+      y: 0,
+      duration: 30,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        if (this.punchVisual) {
+          this.punchVisual.setVisible(false);
+        }
+      },
+    });
   }
 
   /**
@@ -502,6 +583,17 @@ export class Player {
     }
     this.hurtbox.destroy();
     this.attackHitbox.destroy();
+
+    // Clean up punch visual
+    if (this.punchVisualTween) {
+      this.punchVisualTween.stop();
+      this.punchVisualTween = null;
+    }
+    if (this.punchVisual) {
+      this.punchVisual.destroy();
+      this.punchVisual = null;
+    }
+
     this.sprite.destroy();
   }
 }
