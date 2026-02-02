@@ -2,25 +2,27 @@ import { PHYSICS } from '../utils/physics.js';
 
 /**
  * Corpse state machine states
- * Physics-first approach: fall with gravity, then figure out grid position
+ * Snap-first approach: snap when velocity drops, then cascade if unstable
  */
 export const CORPSE_STATE = Object.freeze({
   FALLING: 'falling',      // Physics-enabled, gravity active, waiting to land
-  TUMBLING: 'tumbling',    // Landed on corpses, rolling toward open side
-  SNAPPING: 'snapping',    // Found final position, lerping into grid cell
-  SETTLED: 'settled',      // Static sprite, no updates needed
+  SNAPPING: 'snapping',    // Found position, lerping into grid cell
+  SETTLED: 'settled',      // Static sprite, stability check pending or complete
 });
 
 /**
- * Corpse configuration for physics-first settling
+ * Corpse configuration for snap-first settling
  */
 export const CORPSE_CONFIG = Object.freeze({
   // Physics thresholds
-  LANDING_VELOCITY_THRESHOLD: 50,  // Speed below which we consider "landed"
-  TUMBLE_VELOCITY: 50,             // Horizontal speed when tumbling off pile
+  LANDING_VELOCITY_THRESHOLD: 20,  // Speed below which we force snap
 
   // Snapping
   SNAP_DURATION: 150,              // ms to lerp into final position
+
+  // Cascade
+  MAX_CASCADE_COUNT: 10,           // Prevent infinite cascade loops
+  STABILITY_CHECK_DELAY: 100,      // ms after settling before checking stability
 
   // Visuals
   SETTLED_ALPHA: 1.0,
@@ -100,9 +102,9 @@ export class Corpse {
     // Grid cell this corpse occupies (set during snapping)
     this.gridCell = null;
 
-    // Cascade immunity - prevents rapid oscillation after settling
+    // Cascade tracking - prevents infinite cascade loops
+    this.cascadeCount = 0;
     this.settledAt = 0;
-    this.cascadeImmunityMs = 1500; // 1.5 seconds of immunity after settling
 
     // Configure physics body
     this.setupPhysics();
@@ -188,7 +190,7 @@ export class Corpse {
    * @param {number} delta - Time since last frame in ms
    */
   update(time, delta) {
-    // Settled corpses skip all update logic
+    // Settled corpses skip all update logic - stability checked via delayed call
     if (this.state === CORPSE_STATE.SETTLED) return;
 
     // Bounds check - destroy if fallen off world
@@ -202,10 +204,6 @@ export class Corpse {
         this.updateFalling(time, delta);
         break;
 
-      case CORPSE_STATE.TUMBLING:
-        this.updateTumbling(time, delta);
-        break;
-
       case CORPSE_STATE.SNAPPING:
         this.updateSnapping(time, delta);
         break;
@@ -214,7 +212,7 @@ export class Corpse {
 
   /**
    * Update logic for FALLING state
-   * Physics-first approach: let physics handle movement, check when landed
+   * Snap-first approach: force snap when velocity drops low enough
    * @param {number} time - Current game time
    * @param {number} delta - Delta time in ms
    */
@@ -225,106 +223,66 @@ export class Corpse {
       return;
     }
 
-    // Let physics do all the work - just check if we've "landed"
+    // Check velocity - force snap when low enough (landed on something)
     const velocity = this.sprite.body.velocity;
     const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
 
-    // Only consider settling when velocity is low (has landed on something)
-    if (speed > CORPSE_CONFIG.LANDING_VELOCITY_THRESHOLD) {
-      // Still moving fast - let physics continue
-      return;
-    }
-
-    // Velocity is low - we've landed on something
-    // Check if we're on the ground or on corpses
-    const { col, row } = this.grid.worldToGrid(this.sprite.x, this.sprite.y);
-    const groundRow = this.grid.getGroundRow(col);
-
-    if (row >= groundRow || this.grid.isGroundBelow(col, row)) {
-      // On or below ground level - find nearest open ground cell and snap
-      this.startGroundSnap(col, groundRow);
-    } else {
-      // Above ground - we're on top of corpses, start tumbling
-      this.state = CORPSE_STATE.TUMBLING;
+    if (speed < CORPSE_CONFIG.LANDING_VELOCITY_THRESHOLD) {
+      // Velocity is low - force snap to nearest open cell
+      this.forceSnapToNearestCell();
     }
   }
 
   /**
-   * Update logic for TUMBLING state
-   * Sand physics: check supports and tumble toward open side
-   * @param {number} time - Current game time
-   * @param {number} delta - Delta time in ms
+   * Force snap to the nearest unoccupied cell - no stability check
+   * Stability will be checked AFTER settling
    */
-  updateTumbling(time, delta) {
+  forceSnapToNearestCell() {
     const { col, row } = this.grid.worldToGrid(this.sprite.x, this.sprite.y);
 
-    // Get the two support cells below this position
-    const supports = this.grid.getSupportCells(col, row);
-    const leftSupport = supports[0];
-    const rightSupport = supports[1];
-    const leftOccupied = this.grid.isOccupied(leftSupport.col, leftSupport.row);
-    const rightOccupied = this.grid.isOccupied(rightSupport.col, rightSupport.row);
+    // Find nearest unoccupied cell - don't check stability, just find ANY open cell
+    const cell = this.findNearestUnoccupiedCell(col, row);
 
-    // Check if we're at ground level
-    const groundRow = this.grid.getGroundRow(col);
-    if (row >= groundRow || this.grid.isGroundBelow(col, row)) {
-      // Reached ground level - snap to ground
-      this.startGroundSnap(col, groundRow);
+    if (!cell) {
+      // Extremely rare - no cells available at all
+      console.warn(`Corpse #${this.id}: No cells available near (${col},${row}), destroying`);
+      this.destroy();
       return;
     }
 
-    if (leftOccupied && rightOccupied) {
-      // BOTH supports occupied - we're stable! Snap to this cell
-      this.startSnappingToCell(col, row);
-      return;
-    }
-
-    if (!leftOccupied && !rightOccupied) {
-      // NEITHER support occupied - fall straight down
-      // Pick random direction, apply small impulse, return to FALLING
-      const direction = Math.random() < 0.5 ? -1 : 1;
-      this.sprite.body.setVelocityX(direction * 30);
-      this.sprite.body.setVelocityY(50); // Push down a bit
-      this.state = CORPSE_STATE.FALLING;
-      return;
-    }
-
-    // ONE support occupied - tumble toward the OPEN side
-    if (!leftOccupied) {
-      // Left is open - tumble left
-      this.sprite.body.setVelocityX(-CORPSE_CONFIG.TUMBLE_VELOCITY);
-    } else {
-      // Right is open - tumble right
-      this.sprite.body.setVelocityX(CORPSE_CONFIG.TUMBLE_VELOCITY);
-    }
-
-    // Return to falling to let physics move us
-    this.state = CORPSE_STATE.FALLING;
+    this.startSnappingToCell(cell.col, cell.row);
   }
 
   /**
-   * Find nearest open ground cell and start snapping to it
-   * @param {number} startCol - Column to start searching from
-   * @param {number} groundRow - The ground row level
+   * Find the nearest unoccupied cell, searching outward from start position
+   * @param {number} startCol - Starting column
+   * @param {number} startRow - Starting row
+   * @returns {{ col: number, row: number } | null}
    */
-  startGroundSnap(startCol, groundRow) {
-    // Find nearest unoccupied ground cell
-    for (let offset = 0; offset <= 20; offset++) {
-      const cols = offset === 0 ? [startCol] : [startCol - offset, startCol + offset];
+  findNearestUnoccupiedCell(startCol, startRow) {
+    // Check current cell first
+    if (!this.grid.isOccupied(startCol, startRow) && !this.grid.isGroundAt(startCol, startRow)) {
+      return { col: startCol, row: startRow };
+    }
 
-      for (const col of cols) {
-        if (!this.grid.isOccupied(col, groundRow) &&
-            !this.grid.isGroundAt(col, groundRow) &&
-            this.grid.isGroundBelow(col, groundRow)) {
-          this.startSnappingToCell(col, groundRow);
-          return;
+    // Spiral outward to find nearest unoccupied cell
+    for (let radius = 1; radius <= 10; radius++) {
+      for (let dRow = -radius; dRow <= radius; dRow++) {
+        for (let dCol = -radius; dCol <= radius; dCol++) {
+          // Only check cells on the edge of this radius
+          if (Math.abs(dCol) !== radius && Math.abs(dRow) !== radius) continue;
+
+          const col = startCol + dCol;
+          const row = startRow + dRow;
+
+          if (col >= 0 && !this.grid.isOccupied(col, row) && !this.grid.isGroundAt(col, row)) {
+            return { col, row };
+          }
         }
       }
     }
 
-    // No ground cell found - might be off platform, keep falling
-    // Will be destroyed by bounds check eventually
-    this.state = CORPSE_STATE.FALLING;
+    return null;
   }
 
   /**
@@ -505,26 +463,59 @@ export class Corpse {
       y: this.sprite.y,
       gridCell: this.gridCell,
     });
+
+    // Schedule stability check after a brief delay (let other corpses settle too)
+    this.scene.time.delayedCall(CORPSE_CONFIG.STABILITY_CHECK_DELAY, () => {
+      this.checkStabilityAndCascade();
+    });
   }
 
   /**
-   * Check if this corpse is immune to cascade (recently settled)
-   * Prevents rapid oscillation by giving corpses time to stabilize
-   * @returns {boolean} True if corpse should not be cascaded yet
+   * Check if this corpse is stable and cascade if not
+   * Called after settling via delayed call
    */
-  isCascadeImmune() {
-    if (this.state !== CORPSE_STATE.SETTLED) return false;
-
-    const timeSinceSettled = this.scene.time.now - this.settledAt;
-    return timeSinceSettled < this.cascadeImmunityMs;
-  }
-
-  /**
-   * Force corpse back to falling state (for cascade)
-   * Used when a corpse becomes unstable due to support being removed
-   */
-  unsettle() {
+  checkStabilityAndCascade() {
     if (this.state !== CORPSE_STATE.SETTLED) return;
+    if (!this.gridCell || !this.grid) return;
+
+    const { col, row } = this.gridCell;
+
+    // Ground level is always stable
+    if (this.grid.isGroundBelow(col, row)) {
+      return; // Stable on ground - reset cascade count
+    }
+
+    // Check support cells - need BOTH occupied to be stable
+    const supports = this.grid.getSupportCells(col, row);
+    let occupiedCount = 0;
+
+    for (const support of supports) {
+      if (this.grid.isOccupied(support.col, support.row)) {
+        occupiedCount++;
+      }
+    }
+
+    if (occupiedCount >= 2) {
+      return; // Stable - has dual support
+    }
+
+    // UNSTABLE - cascade down
+    this.cascade();
+  }
+
+  /**
+   * Cascade: unsettle and fall to find a new position
+   * Called when stability check fails
+   */
+  cascade() {
+    if (this.state !== CORPSE_STATE.SETTLED) return;
+
+    // Prevent infinite cascade loops
+    this.cascadeCount++;
+    if (this.cascadeCount > CORPSE_CONFIG.MAX_CASCADE_COUNT) {
+      console.warn(`Corpse #${this.id}: Cascade limit reached, forcing stable`);
+      return; // Stay where you are
+    }
 
     // Clear grid cell
     if (this.grid && this.gridCell) {
@@ -548,8 +539,9 @@ export class Corpse {
       this.sprite.body.checkCollision.left = true;
       this.sprite.body.checkCollision.right = true;
 
-      // Small nudge to get it moving
-      this.sprite.body.setVelocity(0, 50);
+      // Small random horizontal nudge to help find new position
+      const nudge = (Math.random() - 0.5) * 60;
+      this.sprite.body.setVelocity(nudge, 50);
     }
 
     // Restore falling visuals
@@ -563,11 +555,19 @@ export class Corpse {
     this.snapData = null;
 
     // Emit event
-    this.scene.events.emit('corpse:unsettled', {
+    this.scene.events.emit('corpse:cascading', {
       corpse: this,
-      x: this.sprite.x,
-      y: this.sprite.y,
+      cascadeCount: this.cascadeCount,
     });
+  }
+
+  /**
+   * Force corpse back to falling state (for external cascade triggers)
+   * Used when a corpse becomes unstable due to support being removed
+   */
+  unsettle() {
+    if (this.state !== CORPSE_STATE.SETTLED) return;
+    this.cascade();
   }
 
   /**
