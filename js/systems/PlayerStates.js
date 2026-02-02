@@ -1123,9 +1123,9 @@ export class SpinActiveState extends PlayerState {
   update(time, delta) {
     const stateTime = this.stateMachine.getStateTime();
 
-    // Rotate sprite
+    // Track rotation for internal timing (but don't apply to sprite - keep player upright)
     this.totalRotation += delta * 0.02; // Rotation speed
-    this.sprite.setRotation(this.totalRotation);
+    // Sprite rotation removed - fist visuals now handle the spin effect
 
     // Movement while spinning (reduced)
     const horizontal = this.input.getHorizontalAxis();
