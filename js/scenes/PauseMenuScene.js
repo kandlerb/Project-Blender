@@ -170,6 +170,7 @@ export class PauseMenuScene extends Phaser.Scene {
         fontFamily: 'monospace',
         fontSize: '18px',
         color: '#ffcc00',
+        lineSpacing: 8,
       });
       sectionHeader.setOrigin(1, 0);
       this.controlsContainer.add(sectionHeader);
@@ -182,6 +183,7 @@ export class PauseMenuScene extends Phaser.Scene {
           fontFamily: 'monospace',
           fontSize: '16px',
           color: '#ffffff',
+          lineSpacing: 8,
         });
         lineText.setOrigin(1, 0);
         this.controlsContainer.add(lineText);
@@ -221,6 +223,7 @@ export class PauseMenuScene extends Phaser.Scene {
         fontFamily: 'monospace',
         fontSize: '16px',
         color: '#ffffff',
+        lineSpacing: 8,
       });
       lineText.setOrigin(1, 0);
       this.controlsContainer.add(lineText);
