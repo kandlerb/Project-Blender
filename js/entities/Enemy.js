@@ -2105,27 +2105,29 @@ export class Enemy {
   }
 
   /**
-   * Safely remove a Matter.js body after the current physics update
-   * Prevents "Cannot read properties of undefined (reading 'index')" errors
+   * Safely remove a Matter.js body using world manager or fallback
    * @param {MatterJS.BodyType} body - The body to remove
    */
-  deferBodyRemoval(body) {
-    if (!body || !this.scene?.matter?.world) return;
+  safeRemoveBody(body) {
+    if (!body) return;
 
-    this.scene.matter.world.once('afterupdate', () => {
-      if (body && this.scene?.matter?.world) {
+    if (this.scene?.worldManager) {
+      this.scene.worldManager.safeRemove(body);
+    } else if (this.scene?.matter?.world) {
+      // Fallback to afterupdate
+      this.scene.matter.world.once('afterupdate', () => {
         try {
           this.scene.matter.world.remove(body);
         } catch (e) {
           // Body may already be removed, ignore
         }
-      }
-    });
+      });
+    }
   }
 
   /**
    * Disable combat bodies - call BEFORE ragdoll creation
-   * Defers actual removal until after Matter.js physics update completes
+   * Uses world manager for safe deferred removal
    */
   disableCombatBodies() {
     console.log('Disabling combat bodies');
@@ -2154,15 +2156,14 @@ export class Enemy {
       }
     }
 
-    // Defer body removal until after physics update completes
-    // This prevents errors when bodies are removed during collision iteration
+    // Safe removal via world manager (deferred if during physics update)
     if (this.hitboxBody) {
-      this.deferBodyRemoval(this.hitboxBody);
+      this.safeRemoveBody(this.hitboxBody);
       this.hitboxBody = null;
     }
 
     if (this.hurtboxBody) {
-      this.deferBodyRemoval(this.hurtboxBody);
+      this.safeRemoveBody(this.hurtboxBody);
       this.hurtboxBody = null;
     }
   }
@@ -2223,9 +2224,9 @@ export class Enemy {
     // Hide sprite
     this.sprite.setVisible(false);
 
-    // DEFER main body removal until after physics update
+    // Safe removal of main body via world manager
     if (this.body) {
-      this.deferBodyRemoval(this.body);
+      this.safeRemoveBody(this.body);
       this.body = null;
     }
 
@@ -2389,22 +2390,25 @@ export class Enemy {
 
   destroy() {
     // Unregister from combat manager
-    if (this.scene.combatManager) {
+    if (this.scene?.combatManager) {
       if (this.scene.combatManager.unregisterHurtbox) {
         this.scene.combatManager.unregisterHurtbox(this.hurtboxBody);
         this.scene.combatManager.unregisterHitbox(this.hitboxBody);
       }
     }
 
-    // Remove Matter.js bodies (only if not ragdoll - ragdoll handles its own cleanup)
+    // Safe removal of Matter.js bodies (only if not ragdoll - ragdoll handles its own cleanup)
     if (this.body && !this.isRagdoll) {
-      this.scene.matter.world.remove(this.body);
+      this.safeRemoveBody(this.body);
+      this.body = null;
     }
     if (this.hurtboxBody) {
-      this.scene.matter.world.remove(this.hurtboxBody);
+      this.safeRemoveBody(this.hurtboxBody);
+      this.hurtboxBody = null;
     }
     if (this.hitboxBody) {
-      this.scene.matter.world.remove(this.hitboxBody);
+      this.safeRemoveBody(this.hitboxBody);
+      this.hitboxBody = null;
     }
 
     // Note: ragdoll and skin may be managed by corpse system now

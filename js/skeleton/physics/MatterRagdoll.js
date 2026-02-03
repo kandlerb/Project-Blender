@@ -110,13 +110,22 @@ export class MatterRagdoll {
 
     console.log('Constraints created:', this.constraints.length);
 
-    // Add composite to world
-    this.scene.matter.world.add(this.composite);
-
-    console.log('Composite added to world');
-
-    // Apply initial impulse to all bodies
-    this.applyImpulse(impulse, angularImpulse);
+    // DEFER adding composite to world using safe manager
+    // This prevents corruption if called during collision callback
+    if (this.scene.worldManager) {
+      this.scene.worldManager.safeAdd(this.composite, () => {
+        console.log('Ragdoll composite added to world (deferred)');
+        // Apply impulse AFTER bodies are in the world
+        this.applyImpulse(impulse, angularImpulse);
+      });
+    } else {
+      // Fallback: use afterupdate event directly
+      console.warn('No worldManager found, using fallback deferred add');
+      this.scene.matter.world.once('afterupdate', () => {
+        this.scene.matter.world.add(this.composite);
+        this.applyImpulse(impulse, angularImpulse);
+      });
+    }
 
     // Verify bodies are dynamic (not static)
     for (const [boneId, body] of this.bodies) {
@@ -130,7 +139,7 @@ export class MatterRagdoll {
     this.settleTime = 0;
     this.minSimulationTime = 0;
 
-    console.log('Ragdoll active:', this.active);
+    console.log('Ragdoll activation queued');
     console.log('=== END ACTIVATION ===');
   }
 
@@ -622,14 +631,25 @@ export class MatterRagdoll {
   }
 
   /**
-   * Clean up
+   * Clean up - uses safe removal to avoid mid-physics-update errors
    */
   destroy() {
     console.log('Destroying ragdoll');
 
-    // Remove from world
+    // Remove from world using safe removal
     if (this.composite) {
-      this.scene.matter.world.remove(this.composite);
+      if (this.scene.worldManager) {
+        this.scene.worldManager.safeRemove(this.composite);
+      } else if (this.scene?.matter?.world) {
+        // Fallback
+        this.scene.matter.world.once('afterupdate', () => {
+          try {
+            this.scene.matter.world.remove(this.composite);
+          } catch (e) {
+            // Ignore - may already be removed
+          }
+        });
+      }
     }
 
     // Clear references

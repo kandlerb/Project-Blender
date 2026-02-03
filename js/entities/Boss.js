@@ -758,26 +758,44 @@ export class Boss {
     if (this.healthBarContainer) {
       this.healthBarContainer.destroy();
     }
+
+    // Helper for safe body removal
+    const safeRemove = (body) => {
+      if (!body) return;
+      if (this.scene?.worldManager) {
+        this.scene.worldManager.safeRemove(body);
+      } else if (this.scene?.matter?.world) {
+        try {
+          this.scene.matter.world.remove(body);
+        } catch (e) {
+          // Ignore
+        }
+      }
+    };
+
     // Unregister hurtbox from combat manager before destroying
     if (this.hurtboxBody) {
-      if (this.scene.combatManager) {
+      if (this.scene?.combatManager) {
         this.scene.combatManager.hurtboxes.delete(this.hurtboxBody.id);
       }
-      this.scene.matter.world.remove(this.hurtboxBody);
+      safeRemove(this.hurtboxBody);
+      this.hurtboxBody = null;
     }
     if (this.hitboxBody) {
-      if (this.scene.combatManager) {
+      if (this.scene?.combatManager) {
         this.scene.combatManager.hitboxes.delete(this.hitboxBody.id);
       }
-      this.scene.matter.world.remove(this.hitboxBody);
+      safeRemove(this.hitboxBody);
+      this.hitboxBody = null;
     }
     if (this.body) {
-      this.scene.matter.world.remove(this.body);
+      safeRemove(this.body);
+      this.body = null;
     }
     if (this.sprite) {
       this.sprite.destroy();
     }
-    if (this.scene.currentBoss === this) {
+    if (this.scene?.currentBoss === this) {
       this.scene.currentBoss = null;
     }
   }

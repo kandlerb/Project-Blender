@@ -1047,9 +1047,17 @@ export class Player {
     this.skeletonInstance = null;
     this.poseBlender = null;
 
-    // Clean up Matter.js body
+    // Clean up Matter.js body using safe removal
     if (this.body) {
-      this.scene.matter.world.remove(this.body);
+      if (this.scene?.worldManager) {
+        this.scene.worldManager.safeRemove(this.body);
+      } else if (this.scene?.matter?.world) {
+        try {
+          this.scene.matter.world.remove(this.body);
+        } catch (e) {
+          // Ignore
+        }
+      }
       this.body = null;
     }
 

@@ -8,6 +8,7 @@ import { EffectsManager } from '../systems/EffectsManager.js';
 import { AudioManager } from '../systems/AudioManager.js';
 import { CorpseTerrainManager } from '../systems/CorpseTerrainManager.js';
 import { CorpseRenderer } from '../systems/CorpseRenderer.js';
+import { MatterWorldManager } from '../systems/MatterWorldManager.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
@@ -44,6 +45,7 @@ export class TestArenaScene extends BaseScene {
     this.audioManager = null;
     this.corpseTerrainManager = null;
     this.corpseRenderer = null;
+    this.worldManager = null;
     this.hud = null;
     this.showCombatDebug = false;
     this._showCorpseDebug = false;
@@ -57,6 +59,9 @@ export class TestArenaScene extends BaseScene {
   onCreate() {
     // Matter.js physics debug - start with debug hidden
     this.matter.world.drawDebug = false;
+
+    // Create world manager FIRST - handles safe body addition/removal
+    this.worldManager = new MatterWorldManager(this);
 
     // Create managers BEFORE entities
     this.timeManager = new TimeManager(this);
@@ -765,6 +770,10 @@ export class TestArenaScene extends BaseScene {
     if (this.corpseRenderer) {
       this.corpseRenderer.destroy();
       this.corpseRenderer = null;
+    }
+    if (this.worldManager) {
+      this.worldManager.destroy();
+      this.worldManager = null;
     }
   }
 }
