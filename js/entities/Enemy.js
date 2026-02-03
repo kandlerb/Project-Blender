@@ -1861,23 +1861,23 @@ export class Enemy {
     const dy = targetY - startY;
     const distance = Math.abs(dx);
 
-    // Create projectile
+    // Create projectile with Matter.js physics
     const projectile = scene.add.circle(startX, startY, 8, 0x88ff44);
-    scene.physics.add.existing(projectile);
+    scene.matter.add.gameObject(projectile, {
+      shape: { type: 'circle', radius: 8 },
+      isSensor: true, // Pass through terrain, damage handled manually
+      frictionAir: 0
+    });
 
-    const projBody = projectile.body;
-    projBody.setCircle(8);
-    projBody.setAllowGravity(true);
+    // Enable gravity for projectile
+    projectile.body.ignoreGravity = false;
 
-    const gravity = 400 * this.stats.projectileArc;
-    projBody.setGravityY(gravity);
-
-    // Calculate velocity for arc (corrected formula for projectile motion)
+    // Calculate velocity for arc (Matter.js scale)
     const flightTime = distance / this.stats.projectileSpeed;
-    const vx = dx / flightTime;
-    const vy = (dy / flightTime) + (0.5 * gravity * flightTime);
+    const vx = (dx / flightTime) / 60; // Scale to Matter.js
+    const vy = ((dy / flightTime) + (0.5 * 40 * this.stats.projectileArc * flightTime)) / 60;
 
-    projBody.setVelocity(vx, vy);
+    scene.matter.body.setVelocity(projectile.body, { x: vx, y: vy });
 
     // Track projectile
     if (!scene.enemyProjectiles) scene.enemyProjectiles = [];
@@ -1987,23 +1987,24 @@ export class Enemy {
 
     // Visual explosion
     if (scene.effectsManager) {
-      // Big particle burst
+      // Big particle burst (using tweens instead of physics for visual particles)
       for (let i = 0; i < 20; i++) {
         const angle = (i / 20) * Math.PI * 2;
         const speed = 200 + Math.random() * 100;
         const particle = scene.add.circle(x, y, 6, 0xff4444);
-        scene.physics.add.existing(particle);
-        particle.body.setVelocity(
-          Math.cos(angle) * speed,
-          Math.sin(angle) * speed
-        );
-        particle.body.setAllowGravity(false);
+
+        // Animate particles with tweens (no physics needed for visual effect)
+        const targetX = x + Math.cos(angle) * speed;
+        const targetY = y + Math.sin(angle) * speed;
 
         scene.tweens.add({
           targets: particle,
+          x: targetX,
+          y: targetY,
           alpha: 0,
           scale: 0,
           duration: 500,
+          ease: 'Power2',
           onComplete: () => particle.destroy(),
         });
       }

@@ -1487,8 +1487,8 @@ export class BlinkState extends PlayerState {
     // Make player invulnerable
     this.setInvulnerable(true);
 
-    // Disable physics body during blink (phase through everything)
-    this.player.scene.matter.world.remove(this.body);
+    // Disable physics collisions during blink (phase through everything)
+    this.body.isSensor = true;
 
     // Make sprite semi-transparent during blink
     this.sprite.setAlpha(0.3);
@@ -1521,8 +1521,8 @@ export class BlinkState extends PlayerState {
   }
 
   finishBlink() {
-    // Re-enable physics
-    this.player.scene.matter.world.add(this.body);
+    // Re-enable physics collisions
+    this.body.isSensor = false;
 
     // Check if target position is valid (not inside wall)
     // If invalid, push player to nearest valid position
@@ -1608,10 +1608,8 @@ export class BlinkState extends PlayerState {
   exit(nextState) {
     this.setInvulnerable(false);
     this.sprite.setAlpha(1);
-    // Re-enable physics if not already in world (safety check)
-    if (!this.player.scene.matter.world.has(this.body)) {
-      this.player.scene.matter.world.add(this.body);
-    }
+    // Re-enable physics collisions (safety check)
+    this.body.isSensor = false;
 
     // Afterimage cleanup handled by tween
   }
