@@ -203,6 +203,17 @@ export class LineSkin extends Skin {
   }
 
   /**
+   * Set visibility of the skin.
+   * @param {boolean} visible - Whether the skin should be visible
+   */
+  setVisible(visible) {
+    super.setVisible(visible);
+    if (!visible && this.graphics) {
+      this.graphics.clear();
+    }
+  }
+
+  /**
    * Clean up rendering resources.
    */
   destroy() {
