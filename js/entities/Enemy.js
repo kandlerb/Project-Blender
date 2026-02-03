@@ -2105,8 +2105,27 @@ export class Enemy {
   }
 
   /**
+   * Safely remove a Matter.js body after the current physics update
+   * Prevents "Cannot read properties of undefined (reading 'index')" errors
+   * @param {MatterJS.BodyType} body - The body to remove
+   */
+  deferBodyRemoval(body) {
+    if (!body || !this.scene?.matter?.world) return;
+
+    this.scene.matter.world.once('afterupdate', () => {
+      if (body && this.scene?.matter?.world) {
+        try {
+          this.scene.matter.world.remove(body);
+        } catch (e) {
+          // Body may already be removed, ignore
+        }
+      }
+    });
+  }
+
+  /**
    * Disable combat bodies - call BEFORE ragdoll creation
-   * Uses deferred removal to prevent stale references in collision callbacks
+   * Defers actual removal until after Matter.js physics update completes
    */
   disableCombatBodies() {
     console.log('Disabling combat bodies');
@@ -2135,27 +2154,16 @@ export class Enemy {
       }
     }
 
-    // DEFER body removal to end of frame
-    // This prevents "Cannot read properties of null (reading 'index')" errors
-    // when bodies are removed while Matter.js is still iterating collision pairs
+    // Defer body removal until after physics update completes
+    // This prevents errors when bodies are removed during collision iteration
     if (this.hitboxBody) {
-      const hitboxToRemove = this.hitboxBody;
-      this.hitboxBody = null; // Clear reference immediately to prevent reuse
-      this.scene.time.delayedCall(0, () => {
-        if (hitboxToRemove && this.scene?.matter?.world) {
-          this.scene.matter.world.remove(hitboxToRemove);
-        }
-      });
+      this.deferBodyRemoval(this.hitboxBody);
+      this.hitboxBody = null;
     }
 
     if (this.hurtboxBody) {
-      const hurtboxToRemove = this.hurtboxBody;
+      this.deferBodyRemoval(this.hurtboxBody);
       this.hurtboxBody = null;
-      this.scene.time.delayedCall(0, () => {
-        if (hurtboxToRemove && this.scene?.matter?.world) {
-          this.scene.matter.world.remove(hurtboxToRemove);
-        }
-      });
     }
   }
 
@@ -2215,9 +2223,10 @@ export class Enemy {
     // Hide sprite
     this.sprite.setVisible(false);
 
-    // Remove main physics body
+    // DEFER main body removal until after physics update
     if (this.body) {
-      this.scene.matter.world.remove(this.body);
+      this.deferBodyRemoval(this.body);
+      this.body = null;
     }
 
     console.log('Enemy converted to ragdoll');

@@ -360,4 +360,41 @@ export class MatterPhysicsHelper {
   setPosition(body, x, y) {
     this.matter.body.setPosition(body, { x, y });
   }
+
+  /**
+   * Safely remove a body after the physics update completes
+   * Use this instead of direct world.remove() to prevent mid-update removal errors
+   * @param {MatterJS.BodyType} body
+   */
+  safeRemove(body) {
+    if (!body) return;
+
+    this.matter.world.once('afterupdate', () => {
+      try {
+        this.matter.world.remove(body);
+      } catch (e) {
+        // Body already removed or world destroyed
+      }
+    });
+  }
+
+  /**
+   * Safely remove multiple bodies after physics update
+   * @param {MatterJS.BodyType[]} bodies
+   */
+  safeRemoveAll(bodies) {
+    if (!bodies || bodies.length === 0) return;
+
+    this.matter.world.once('afterupdate', () => {
+      for (const body of bodies) {
+        if (body) {
+          try {
+            this.matter.world.remove(body);
+          } catch (e) {
+            // Ignore - body may already be removed
+          }
+        }
+      }
+    });
+  }
 }
