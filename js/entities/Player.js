@@ -182,6 +182,9 @@ export class Player {
 
     // Flag to toggle skeleton visibility (for testing)
     this.showSkeleton = true;
+
+    // Hide the placeholder sprite - skeleton handles visuals now
+    this.sprite.setVisible(false);
   }
 
   /**
