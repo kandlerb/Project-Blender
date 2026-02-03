@@ -1187,7 +1187,7 @@ export class SpinChargeState extends PlayerState {
 
     // Sync physics body position after scale change
     this.setVelocityY(0);
-    this.body.reset(this.sprite.x, this.sprite.y);
+    this.player.setPosition(this.sprite.x, this.sprite.y);
   }
 
   canBeInterrupted(nextStateName) {
@@ -1426,7 +1426,7 @@ export class SpinReleaseState extends PlayerState {
     this.sprite.setScale(1);
 
     // Sync physics body position
-    this.body.reset(this.sprite.x, this.sprite.y);
+    this.player.setPosition(this.sprite.x, this.sprite.y);
   }
 
   canBeInterrupted(nextStateName) {
@@ -1526,7 +1526,7 @@ export class BlinkState extends PlayerState {
     this.validatePosition();
 
     // Sync physics body to sprite position
-    this.body.reset(this.sprite.x, this.sprite.y);
+    this.player.setPosition(this.sprite.x, this.sprite.y);
 
     // Determine next state
     if (this.isOnFloor()) {
