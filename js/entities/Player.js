@@ -514,23 +514,12 @@ export class Player {
 
   /**
    * Draw the fist visual indicator(s)
+   * Note: Disabled now that skeleton handles attack visuals
    */
   drawFist() {
-    const size = 12; // Fist size
-
-    // First fist
+    // Clear fist graphics - skeleton animations handle attack visuals now
     this.fistVisual.clear();
-    if (this.fistVisible) {
-      this.fistVisual.fillStyle(this.color, 0.9);
-      this.fistVisual.fillRect(-size / 2, -size / 2, size, size);
-    }
-
-    // Second fist (for spin attacks)
     this.fistVisual2.clear();
-    if (this.fistVisible2) {
-      this.fistVisual2.fillStyle(this.color, 0.9);
-      this.fistVisual2.fillRect(-size / 2, -size / 2, size, size);
-    }
   }
 
   /**
