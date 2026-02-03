@@ -1,6 +1,7 @@
 import { State } from './StateMachine.js';
 import { PHYSICS } from '../utils/physics.js';
 import { ACTIONS } from './InputManager.js';
+import { PlayerLocomotionAnimations } from '../data/animations/player/index.js';
 
 /**
  * Player state names - use these constants to avoid typos
@@ -118,7 +119,14 @@ export class IdleState extends PlayerState {
 
   enter(prevState, params) {
     this.body.setVelocityX(0);
-    // TODO: Play idle animation
+
+    // Play idle animation
+    if (this.player.poseBlender) {
+      this.player.playSkeletonAnimation(PlayerLocomotionAnimations.idle, {
+        layer: 'base',
+        blendDuration: 150,
+      });
+    }
   }
 
   update(time, delta) {
@@ -207,7 +215,13 @@ export class RunState extends PlayerState {
   }
 
   enter(prevState, params) {
-    // TODO: Play run animation
+    // Play run animation
+    if (this.player.poseBlender) {
+      this.player.playSkeletonAnimation(PlayerLocomotionAnimations.run, {
+        layer: 'base',
+        blendDuration: 100,
+      });
+    }
   }
 
   update(time, delta) {
@@ -315,7 +329,14 @@ export class JumpState extends PlayerState {
     } else {
       this.wallJumpDirection = 0;
     }
-    // TODO: Play jump animation
+
+    // Play jump animation
+    if (this.player.poseBlender) {
+      this.player.playSkeletonAnimation(PlayerLocomotionAnimations.jump, {
+        layer: 'base',
+        blendDuration: 50,
+      });
+    }
   }
 
   update(time, delta) {
@@ -398,7 +419,13 @@ export class FallState extends PlayerState {
   }
 
   enter(prevState, params) {
-    // TODO: Play fall animation
+    // Play fall animation
+    if (this.player.poseBlender) {
+      this.player.playSkeletonAnimation(PlayerLocomotionAnimations.fall, {
+        layer: 'base',
+        blendDuration: 100,
+      });
+    }
   }
 
   update(time, delta) {
@@ -481,8 +508,14 @@ export class LandState extends PlayerState {
   enter(prevState, params) {
     // Zero Y velocity on landing to prevent ground clipping
     this.body.setVelocityY(0);
-    // TODO: Play land animation/effect
-    // TODO: Screen shake for hard landings?
+
+    // Play land animation
+    if (this.player.poseBlender) {
+      this.player.playSkeletonAnimation(PlayerLocomotionAnimations.land, {
+        layer: 'base',
+        blendDuration: 50,
+      });
+    }
   }
 
   update(time, delta) {
