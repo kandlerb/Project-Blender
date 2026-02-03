@@ -2530,8 +2530,8 @@ class EnemyAttackState extends State {
 
     // Active phase - hitbox active
     if (stateTime < this.windupTime + this.activeTime) {
-      if (!this.enemy.attackHitbox.active) {
-        this.enemy.attackHitbox.activate();
+      if (!this.enemy.hitboxActive) {
+        this.enemy.activateHitbox();
         this.enemy.showFist(); // Show fist visual
         this.enemy.sprite.setTint(0xff4444); // Brighter red during attack
 
@@ -2544,7 +2544,7 @@ class EnemyAttackState extends State {
 
     // Recovery phase
     if (stateTime < this.totalDuration) {
-      this.enemy.attackHitbox.deactivate();
+      this.enemy.deactivateHitbox();
       this.enemy.hideFist(); // Hide fist visual
       this.enemy.sprite.clearTint();
       this.enemy.stop();
@@ -2559,7 +2559,7 @@ class EnemyAttackState extends State {
   }
 
   exit(nextState) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
     this.enemy.hideFist(); // Ensure fist visual is hidden on exit
     this.enemy.sprite.clearTint();
   }
@@ -2583,7 +2583,7 @@ class EnemyHitstunState extends State {
   }
 
   enter(prevState, params) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
     this.enemy.playAnimation(BasicEnemyAnimations.hitstun, {
       layer: 'base',
       blendDuration: 30,
@@ -3086,7 +3086,7 @@ class SwarmerAttackRecoveryState extends State {
   enter(prevState, params) {
     this.recoveryDuration = this.enemy.config.attackRecovery || 150;
     this.enemy.stop();
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
 
     // Restore tint
     if (this.enemy.stats.color) {
@@ -3130,7 +3130,7 @@ class SwarmerHitstunState extends State {
   }
 
   enter(prevState, params) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
     this.wasLaunched = false;
 
     // Apply hitstun multiplier (swarmers have longer hitstun)
@@ -3208,7 +3208,7 @@ class SwarmerLaunchedState extends State {
   }
 
   enter(prevState, params) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
 
     // Airborne visual
     this.enemy.sprite.setTint(0xffaaaa);
@@ -3256,7 +3256,7 @@ class SwarmerDownedState extends State {
   enter(prevState, params) {
     this.downedDuration = this.enemy.config.downedDuration || 300;
     this.enemy.stop();
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
 
     // Darker tint while downed
     this.enemy.sprite.setTint(0x886644);
