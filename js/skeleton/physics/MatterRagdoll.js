@@ -138,13 +138,22 @@ export class MatterRagdoll {
    * Create physics bodies for each bone
    */
   createBodies(worldPositions) {
+    // Get ground Y level for validation
+    const groundY = this.getGroundY();
+    console.log('Ground Y level:', groundY);
+
     this.skeleton.traverseDepthFirst((bone) => {
       // Skip zero-length bones but track position for constraints
       if (bone.length === 0) {
         const pos = worldPositions.get(bone.id);
         if (pos) {
           // Create tiny sensor body for constraint anchor
-          const body = this.Bodies.circle(pos.x, pos.y, 2, {
+          let anchorY = pos.y;
+          // Ensure anchor is above ground
+          if (anchorY > groundY - 20) {
+            anchorY = groundY - 50;
+          }
+          const body = this.Bodies.circle(pos.x, anchorY, 2, {
             isSensor: true,
             isStatic: false,  // IMPORTANT: Must be false even for anchors
             label: `ragdoll_anchor_${bone.id}`,
@@ -167,6 +176,16 @@ export class MatterRagdoll {
       const length = bone.length;
       const thickness = this.boneThickness[bone.id] || 6;
 
+      // Calculate center position
+      let centerX = (pos.x + pos.endX) / 2;
+      let centerY = (pos.y + pos.endY) / 2;
+
+      // Ensure body is above ground
+      if (centerY > groundY - 20) {
+        console.warn(`Body ${bone.id} would be below ground, adjusting Y from ${centerY.toFixed(1)} to ${(groundY - 50).toFixed(1)}`);
+        centerY = groundY - 50;
+      }
+
       // CRITICAL: isStatic must be false for ragdoll to fall
       const bodyOptions = {
         isStatic: false,  // MUST BE FALSE
@@ -184,8 +203,8 @@ export class MatterRagdoll {
 
       // Create rectangle body at bone center
       const body = this.Bodies.rectangle(
-        (pos.x + pos.endX) / 2,  // Center X
-        (pos.y + pos.endY) / 2,  // Center Y
+        centerX,
+        centerY,
         length,                   // Width = bone length
         thickness,                // Height = bone thickness
         bodyOptions
@@ -207,6 +226,29 @@ export class MatterRagdoll {
       // Add to composite
       this.Composite.add(this.composite, body);
     });
+  }
+
+  /**
+   * Get approximate ground Y level
+   */
+  getGroundY() {
+    // Try to find ground body in the scene
+    try {
+      const allBodies = Phaser.Physics.Matter.Matter.Composite.allBodies(
+        this.scene.matter.world.localWorld
+      );
+
+      for (const body of allBodies) {
+        if (body.label === 'ground' && body.isStatic) {
+          return body.bounds.min.y;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not find ground body:', e.message);
+    }
+
+    // Fallback: assume ground near bottom of screen
+    return this.scene.game.config.height - 50;
   }
 
   /**
@@ -278,11 +320,15 @@ export class MatterRagdoll {
    */
   applyImpulse(impulse, angularImpulse) {
     console.log('Applying impulse to', this.bodies.size, 'bodies');
+    console.log('Raw impulse:', impulse);
 
-    // Matter.js velocity scale is roughly 1/60th of Arcade
-    // If impulse is { x: 300, y: -200 } from Arcade,
-    // Matter.js needs { x: 5, y: -3.3 }
-    const velocityScale = 1 / 60;
+    // Matter.js uses MUCH smaller velocities than Arcade
+    // Arcade: 300 = fast, Matter: 5-10 = fast
+    // Scale factor should be roughly 1/100 to 1/200
+    const velocityScale = 1 / 150;
+
+    // Clamp maximum velocity to prevent flying off screen
+    const maxVelocity = 15;
 
     for (const [boneId, body] of this.bodies) {
       if (body.isSensor) continue;
@@ -291,20 +337,23 @@ export class MatterRagdoll {
         continue;
       }
 
-      // Vary impulse by depth for more dynamic motion
       const depth = this.getBoneDepth(boneId);
-      const scale = 1 + depth * 0.1;
-      const randomVariance = 0.85 + Math.random() * 0.3;
+      const scale = 1 + depth * 0.05; // Reduced depth influence
+      const randomVariance = 0.9 + Math.random() * 0.2;
 
-      const vx = impulse.x * velocityScale * scale * randomVariance;
-      const vy = impulse.y * velocityScale * scale * randomVariance;
+      let vx = impulse.x * velocityScale * scale * randomVariance;
+      let vy = impulse.y * velocityScale * scale * randomVariance;
+
+      // Clamp velocities
+      vx = Math.max(-maxVelocity, Math.min(maxVelocity, vx));
+      vy = Math.max(-maxVelocity, Math.min(maxVelocity, vy));
 
       // Set velocity
       this.Body.setVelocity(body, { x: vx, y: vy });
 
-      // Angular velocity also needs scaling
-      const angVel = angularImpulse * 0.01 * (Math.random() - 0.5 + 0.5);
-      this.Body.setAngularVelocity(body, angVel);
+      // Angular velocity - also scale down significantly
+      const angVel = angularImpulse * 0.001 * (Math.random() - 0.3);
+      this.Body.setAngularVelocity(body, Math.max(-0.3, Math.min(0.3, angVel)));
 
       if (boneId === 'torso') {
         console.log(`Torso velocity set to: (${vx.toFixed(2)}, ${vy.toFixed(2)})`);

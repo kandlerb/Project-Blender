@@ -2070,13 +2070,12 @@ export class Enemy {
   die(hitData = null) {
     if (!this.isAlive) return;
 
+    console.log('=== ENEMY DEATH ===');
+
     this.isAlive = false;
 
-    // Deactivate combat boxes
-    this.deactivateHitbox();
-    if (this.scene.combatManager && this.scene.combatManager.deactivateHitbox) {
-      // Unregister from Matter combat manager - hurtbox doesn't need explicit deactivation
-    }
+    // IMMEDIATELY disable combat bodies to stop taking hits
+    this.disableCombatBodies();
 
     // Stop any playing animations
     if (this.poseBlender) {
@@ -2094,6 +2093,47 @@ export class Enemy {
   }
 
   /**
+   * Disable combat bodies - call BEFORE ragdoll creation
+   */
+  disableCombatBodies() {
+    console.log('Disabling combat bodies');
+
+    // Deactivate attack hitbox
+    this.deactivateHitbox();
+
+    // Unregister from combat manager FIRST
+    if (this.scene.combatManager) {
+      if (this.hitboxBody) {
+        if (this.scene.combatManager.deactivateHitbox) {
+          this.scene.combatManager.deactivateHitbox(this.hitboxBody);
+        }
+        if (this.scene.combatManager.unregisterHitbox) {
+          this.scene.combatManager.unregisterHitbox(this.hitboxBody);
+        } else if (this.scene.combatManager.hitboxes) {
+          this.scene.combatManager.hitboxes.delete(this.hitboxBody.id);
+        }
+      }
+      if (this.hurtboxBody) {
+        if (this.scene.combatManager.unregisterHurtbox) {
+          this.scene.combatManager.unregisterHurtbox(this.hurtboxBody);
+        } else if (this.scene.combatManager.hurtboxes) {
+          this.scene.combatManager.hurtboxes.delete(this.hurtboxBody.id);
+        }
+      }
+    }
+
+    // Remove from physics world
+    if (this.hitboxBody) {
+      this.scene.matter.world.remove(this.hitboxBody);
+      this.hitboxBody = null;
+    }
+    if (this.hurtboxBody) {
+      this.scene.matter.world.remove(this.hurtboxBody);
+      this.hurtboxBody = null;
+    }
+  }
+
+  /**
    * Convert to ragdoll physics using Matter.js
    * @param {object} hitData - Hit data for impulse direction
    */
@@ -2106,32 +2146,33 @@ export class Enemy {
     console.log('=== CONVERTING TO RAGDOLL ===');
     console.log('Enemy position:', this.body.position);
 
-    // CRITICAL: Sync skeleton position to enemy position BEFORE ragdoll
-    // The skeleton needs to be at the correct world position for bodies to spawn there
-    this.skeleton.setPosition(this.body.position.x, this.body.position.y - 8);
+    // Sync skeleton position BEFORE creating ragdoll
+    // Offset upward to ensure bodies are above ground
+    const skeletonY = this.body.position.y - this.height / 2;
+    this.skeleton.setPosition(this.body.position.x, skeletonY);
     this.skeleton.computeWorldPositions();
 
-    // Calculate death impulse from hit data
-    // Note: knockback values are already in Matter.js scale (small values like 6-10)
-    // We need to scale UP for a visible death impulse
-    let impulse = { x: 0, y: -200 };  // Base impulse in "visual" scale
+    console.log('Skeleton Y adjusted to:', skeletonY);
+
+    // Calculate impulse - DON'T multiply knockback, it's already correct scale
+    // Just add a small upward pop
+    let impulse = { x: 0, y: -300 }; // Modest upward pop
 
     if (hitData && hitData.knockback) {
-      // knockback is in Matter.js scale (~6), multiply by 60 to get visual scale (~360)
-      // Then the ragdoll will divide by 60 again to get proper Matter.js velocity
-      impulse.x = hitData.knockback.x * 60;
-      impulse.y = Math.min(hitData.knockback.y * 60, -100); // Ensure some upward
+      // Knockback is already in reasonable units, just use direction and modest force
+      const kbDirection = hitData.knockback.x > 0 ? 1 : -1;
+      impulse.x = kbDirection * 200; // Consistent modest horizontal
+      impulse.y = -300; // Consistent upward
     }
 
     console.log('Death impulse:', impulse);
 
-    // Create Matter.js ragdoll
+    // Create ragdoll
     this.ragdoll = new MatterRagdoll(this.scene, this.skeleton);
 
-    // Activate with impulse
     this.ragdoll.activate({
       impulse: impulse,
-      angularImpulse: impulse.x * 0.01,
+      angularImpulse: impulse.x * 0.1, // Very small spin
       onSettle: (ragdoll) => {
         console.log('Ragdoll settle callback triggered');
         this.onRagdollSettle(ragdoll);
@@ -2140,15 +2181,17 @@ export class Enemy {
 
     this.isRagdoll = true;
 
+    // Gray out skin
+    if (this.skin) {
+      this.skin.setColor(0x666666);
+    }
+
     // Hide sprite
     this.sprite.setVisible(false);
 
-    // Remove Matter.js body from world (ragdoll now handles physics)
-    this.scene.matter.world.remove(this.body);
-
-    // Change skin color to indicate death
-    if (this.skin) {
-      this.skin.setColor(0x888888);
+    // Remove main physics body
+    if (this.body) {
+      this.scene.matter.world.remove(this.body);
     }
 
     console.log('Enemy converted to ragdoll');
