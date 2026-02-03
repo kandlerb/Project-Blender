@@ -10,3 +10,6 @@ export { Skin, LineSkin } from './skins/index.js';
 
 // Poses and animations
 export { Pose, Animation, AnimationLayer, PoseBlender } from './poses/index.js';
+
+// Physics (ragdoll)
+export { Ragdoll } from './physics/index.js';

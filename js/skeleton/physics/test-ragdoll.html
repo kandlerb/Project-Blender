@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ragdoll Test</title>
+  <style>
+    body { margin: 0; background: #1a1a2e; }
+  </style>
+</head>
+<body>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+  <script type="module">
+    import { SkeletonInstance } from '../SkeletonInstance.js';
+    import { createHumanoidSkeleton } from '../definitions/humanoid.js';
+    import { LineSkin } from '../skins/LineSkin.js';
+    import { Ragdoll } from './Ragdoll.js';
+
+    class TestScene extends Phaser.Scene {
+      constructor() {
+        super('TestScene');
+      }
+
+      create() {
+        // Create ground
+        this.ground = this.add.rectangle(400, 580, 800, 40, 0x444444);
+        this.physics.add.existing(this.ground, true); // Static body
+
+        // Create humanoid skeleton
+        const skeleton = createHumanoidSkeleton();
+        this.skeletonInstance = new SkeletonInstance(skeleton, {
+          position: { x: 400, y: 300 }
+        });
+
+        // Create skin for rendering
+        this.skin = new LineSkin(this.skeletonInstance, {
+          lineWidth: 3,
+          color: 0x00ffcc,
+          jointRadius: 4,
+          headRadius: 12
+        });
+        this.skin.initialize(this);
+
+        // Initially render the skeleton
+        this.skin.render();
+
+        // Ragdoll (not activated yet)
+        this.ragdoll = null;
+        this.isRagdoll = false;
+
+        // Instructions
+        this.add.text(10, 10, 'Click to spawn ragdoll\nR to reset', {
+          fontSize: '16px',
+          fill: '#ffffff'
+        });
+
+        // Click to ragdoll
+        this.input.on('pointerdown', (pointer) => {
+          this.spawnRagdoll(pointer.x, pointer.y);
+        });
+
+        // R to reset
+        this.input.keyboard.on('keydown-R', () => {
+          this.reset();
+        });
+
+        console.log('=== Ragdoll Test Ready ===');
+        console.log('Click anywhere to spawn a ragdoll');
+        console.log('Press R to reset');
+      }
+
+      spawnRagdoll(x, y) {
+        // Clean up previous ragdoll
+        if (this.ragdoll) {
+          this.ragdoll.destroy();
+        }
+
+        // Position skeleton at click point
+        this.skeletonInstance.setPosition(x, y);
+        this.skeletonInstance.computeWorldPositions();
+
+        // Create ragdoll
+        this.ragdoll = new Ragdoll(this, this.skeletonInstance);
+
+        // Activate with random impulse
+        const impulseX = (Math.random() - 0.5) * 400;
+        const impulseY = -200 - Math.random() * 200;
+
+        this.ragdoll.activate({
+          impulse: { x: impulseX, y: impulseY },
+          angularImpulse: impulseX * 0.5,
+          onSettle: (r) => {
+            console.log('Ragdoll settled!');
+            r.freeze();
+            this.skin.setColor(0x888888); // Gray when frozen
+          }
+        });
+
+        // Add ground collider
+        this.ragdoll.addCollider(this.ground);
+
+        this.isRagdoll = true;
+        this.skin.setColor(0x00ffcc);
+
+        console.log('Ragdoll spawned at', x, y, 'with impulse', impulseX.toFixed(0), impulseY.toFixed(0));
+      }
+
+      reset() {
+        if (this.ragdoll) {
+          this.ragdoll.destroy();
+          this.ragdoll = null;
+        }
+        this.isRagdoll = false;
+        this.skeletonInstance.setPosition(400, 300);
+        this.skeletonInstance.resetPose();
+        this.skin.setColor(0x00ffcc);
+        this.skin.render();
+        console.log('Reset');
+      }
+
+      update(time, delta) {
+        if (this.isRagdoll && this.ragdoll) {
+          this.ragdoll.update(delta);
+
+          // Render from ragdoll positions
+          const positions = this.ragdoll.getWorldPositions();
+          this.skin.renderFromPositions(positions);
+        }
+      }
+    }
+
+    const config = {
+      type: Phaser.AUTO,
+      width: 800,
+      height: 600,
+      backgroundColor: '#1a1a2e',
+      physics: {
+        default: 'arcade',
+        arcade: {
+          gravity: { y: 0 }, // Ragdoll handles its own gravity
+          debug: false
+        }
+      },
+      scene: TestScene
+    };
+
+    new Phaser.Game(config);
+  </script>
+</body>
+</html>

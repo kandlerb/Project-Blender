@@ -113,6 +113,69 @@ export class LineSkin extends Skin {
   }
 
   /**
+   * Render from a custom world positions map.
+   * Used for ragdoll rendering where positions come from physics bodies.
+   * @param {Map<string, {x: number, y: number, endX: number, endY: number, angle: number}>} worldPositions
+   */
+  renderFromPositions(worldPositions) {
+    if (!this.graphics) {
+      return;
+    }
+
+    // Clear previous frame
+    this.graphics.clear();
+
+    // Early exit if not visible
+    if (!this.visible) {
+      return;
+    }
+
+    const joints = [];
+
+    // Draw bones as lines
+    for (const [boneId, pos] of worldPositions) {
+      const bone = this.skeleton.skeleton.getBone(boneId);
+      if (!bone) continue;
+
+      // Skip zero-length bones (like pelvis) for line drawing
+      if (bone.length === 0) {
+        // Still track joint position
+        joints.push({ x: pos.x, y: pos.y });
+        continue;
+      }
+
+      // Get style for this bone
+      const style = this.getBoneStyle(boneId);
+
+      // Skip if explicitly hidden
+      if (style.visible === false) {
+        continue;
+      }
+
+      // Special handling for head - draw as circle at end, not line
+      if (boneId === 'head') {
+        this.drawHead(pos, style);
+        continue;
+      }
+
+      // Draw the bone line
+      this.graphics.lineStyle(style.lineWidth, style.color, style.alpha);
+      this.graphics.beginPath();
+      this.graphics.moveTo(pos.x, pos.y);
+      this.graphics.lineTo(pos.endX, pos.endY);
+      this.graphics.strokePath();
+
+      // Track joint positions
+      joints.push({ x: pos.x, y: pos.y });
+    }
+
+    // Draw joints on top of lines
+    if (this.config.showJoints) {
+      this.drawJoints(joints);
+    }
+  }
+
+  /**
    * Draw the head as a filled circle.
    * @param {Object} pos - World position of the head bone
    * @param {Object} style - Style settings for the head
