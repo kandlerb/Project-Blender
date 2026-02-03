@@ -1,7 +1,10 @@
 import { State } from './StateMachine.js';
 import { PHYSICS } from '../utils/physics.js';
 import { ACTIONS } from './InputManager.js';
-import { PlayerLocomotionAnimations } from '../data/animations/player/index.js';
+import {
+  PlayerLocomotionAnimations,
+  PlayerAttackAnimations,
+} from '../data/animations/player/index.js';
 
 /**
  * Player state names - use these constants to avoid typos
@@ -547,6 +550,16 @@ export class LandState extends PlayerState {
  * Base class for attack states - reads from weapon data
  */
 class AttackState extends PlayerState {
+  /** Map attack types to their animations */
+  static ATTACK_ANIMATIONS = {
+    light1: PlayerAttackAnimations.light1,
+    light2: PlayerAttackAnimations.light2,
+    light3: PlayerAttackAnimations.light3,
+    heavy: PlayerAttackAnimations.heavy,
+    air: PlayerAttackAnimations.air,
+    spin: PlayerAttackAnimations.spin,
+  };
+
   /**
    * @param {string} name - State name
    * @param {StateMachine} stateMachine
@@ -592,6 +605,36 @@ class AttackState extends PlayerState {
 
     // Stop horizontal movement (slight momentum)
     this.body.setVelocityX(this.body.velocity.x * 0.3);
+
+    // Play attack animation
+    this.playAttackAnimation();
+  }
+
+  /**
+   * Play the animation for this attack type
+   */
+  playAttackAnimation() {
+    if (!this.player.poseBlender) return;
+
+    const animation = AttackState.ATTACK_ANIMATIONS[this.attackType];
+    if (!animation) return;
+
+    this.player.playSkeletonAnimation(animation, {
+      layer: 'base',
+      blendDuration: 30,
+      onEvent: (event) => this.handleAnimationEvent(event),
+    });
+  }
+
+  /**
+   * Handle animation events (hitbox_on, hitbox_off)
+   * Note: Frame-based hitbox timing in update() serves as fallback
+   * @param {Object} event - Animation event { type, data }
+   */
+  handleAnimationEvent(event) {
+    // Animation events provide visual feedback timing
+    // The frame-based system in update() handles actual hitbox for reliability
+    // This could be enhanced to use events exclusively if desired
   }
 
   update(time, delta) {
