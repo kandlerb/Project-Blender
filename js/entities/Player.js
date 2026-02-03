@@ -4,6 +4,12 @@ import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
 import { COMBAT } from '../utils/combat.js';
 import { WeaponManager } from '../weapons/WeaponManager.js';
+import {
+  CollisionCategories,
+  CollisionMasks,
+  createPlayerBodyConfig,
+  MatterPhysicsHelper
+} from '../systems/MatterPhysics.js';
 
 // Skeletal animation system
 import { SkeletonInstance } from '../skeleton/SkeletonInstance.js';
@@ -27,9 +33,51 @@ export class Player {
     // Store color for visual effects
     this.color = 0x00ffff;
 
-    // Create sprite
-    this.sprite = scene.physics.add.sprite(x, y, 'player_placeholder');
-    this.setupPhysics();
+    // Body dimensions
+    this.width = 24;
+    this.height = 44;
+
+    // Create Matter.js body with rectangle shape
+    this.body = this.scene.matter.add.rectangle(
+      x, y, this.width, this.height,
+      createPlayerBodyConfig(this.width, this.height)
+    );
+
+    // Store owner reference on body for collision callbacks
+    this.body.gameObject = this;
+    this.body.label = 'player';
+
+    // Create visual sprite (no physics, just graphics for compatibility)
+    // This maintains compatibility with existing code that references this.sprite
+    this.sprite = this.scene.add.rectangle(x, y, this.width, this.height, 0x00ff00);
+    this.sprite.setDepth(10);
+    this.sprite.setVisible(false); // Skeleton handles visuals
+    // Add compatibility properties that states might use
+    this.sprite.flipX = false;
+    this.sprite.setFlipX = (flip) => {
+      this.sprite.flipX = flip;
+      this.facingRight = !flip;
+    };
+    this.sprite.setData = (key, value) => {
+      if (!this.sprite._data) this.sprite._data = {};
+      this.sprite._data[key] = value;
+    };
+    this.sprite.getData = (key) => {
+      if (!this.sprite._data) return undefined;
+      return this.sprite._data[key];
+    };
+    this.sprite.setAlpha = (alpha) => {
+      this.sprite.alpha = alpha;
+      if (this.skin) this.skin.setAlpha(alpha);
+    };
+
+    // Create physics helper
+    this.matterHelper = new MatterPhysicsHelper(this.scene);
+
+    // Movement properties (tuned for Matter.js - scale is different from Arcade)
+    this.moveSpeed = 5;           // Matter velocity scale
+    this.jumpForce = 12;          // Matter jump force
+    this.airControl = 0.7;        // Multiplier for air movement
 
     // Fist visual - small square that animates through hitbox area during attacks
     this.fistVisual = scene.add.graphics();
@@ -47,12 +95,18 @@ export class Player {
     this.fistVisible2 = false;
     this.fistTween2 = null;
 
-    // Terrain groups for clipping fix
-    this.terrainGroups = [];
+    // Ground detection via collision events
+    this.groundContacts = 0;
+    this._isOnGround = false;
+    this.setupCollisionEvents();
 
     // State tracking
     this.leftGroundTime = 0; // For coyote time
     this.facingRight = true;
+
+    // Wall contact tracking
+    this.wallContactLeft = 0;
+    this.wallContactRight = 0;
 
     // Health system (basic for now)
     this.maxHealth = 100;
@@ -137,24 +191,94 @@ export class Player {
   }
 
   /**
-   * Configure physics body
+   * Set up collision event listeners for ground/wall detection
    */
-  setupPhysics() {
-    const body = this.sprite.body;
+  setupCollisionEvents() {
+    // Track ground contact
+    this.scene.matter.world.on('collisionstart', (event) => {
+      for (const pair of event.pairs) {
+        this.handleCollisionStart(pair);
+      }
+    });
 
-    body.setCollideWorldBounds(true);
-    body.setBounce(0);
-    body.setGravityY(PHYSICS.GRAVITY);
-    body.setMaxVelocityY(PHYSICS.TERMINAL_VELOCITY);
+    this.scene.matter.world.on('collisionend', (event) => {
+      for (const pair of event.pairs) {
+        this.handleCollisionEnd(pair);
+      }
+    });
+  }
 
-    // Slightly smaller hitbox than sprite for forgiving collisions
-    // Sprite is 32x48, hitbox is 24x44 centered
-    body.setSize(24, 44);
-    body.setOffset(4, 4);
+  /**
+   * Handle collision start event
+   * @param {object} pair - Collision pair
+   */
+  handleCollisionStart(pair) {
+    const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
+    if (!dominated) return;
 
-    // Set mass for player-enemy collision physics
-    // Player mass = 2: Brutes (mass 5) push player slightly, swarmers (mass 1) don't
-    body.mass = 2;
+    const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
+    const category = other.collisionFilter.category;
+
+    // Check if it's a ground-like surface
+    if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
+      return;
+    }
+
+    // Check collision normal to determine contact direction
+    const normal = pair.collision.normal;
+    const ny = pair.bodyA === this.body ? normal.y : -normal.y;
+    const nx = pair.bodyA === this.body ? normal.x : -normal.x;
+
+    // Normal points up = we're standing on it (ground contact)
+    if (ny < -0.5) {
+      this.groundContacts++;
+    }
+
+    // Normal points left = wall on right
+    if (nx < -0.5) {
+      this.wallContactRight++;
+    }
+
+    // Normal points right = wall on left
+    if (nx > 0.5) {
+      this.wallContactLeft++;
+    }
+  }
+
+  /**
+   * Handle collision end event
+   * @param {object} pair - Collision pair
+   */
+  handleCollisionEnd(pair) {
+    const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
+    if (!dominated) return;
+
+    const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
+    const category = other.collisionFilter.category;
+
+    // Check if it's a ground-like surface
+    if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
+      return;
+    }
+
+    // Check collision normal to determine which contact ended
+    const normal = pair.collision.normal;
+    const ny = pair.bodyA === this.body ? normal.y : -normal.y;
+    const nx = pair.bodyA === this.body ? normal.x : -normal.x;
+
+    // Ground contact ended
+    if (ny < -0.5) {
+      this.groundContacts = Math.max(0, this.groundContacts - 1);
+    }
+
+    // Wall contact ended
+    if (nx < -0.5) {
+      this.wallContactRight = Math.max(0, this.wallContactRight - 1);
+    }
+
+    if (nx > 0.5) {
+      this.wallContactLeft = Math.max(0, this.wallContactLeft - 1);
+    }
   }
 
   /**
@@ -193,32 +317,62 @@ export class Player {
    * @param {number} delta - Time since last frame in ms
    */
   update(time, delta) {
+    // Update ground state
+    this._isOnGround = this.groundContacts > 0;
+
+    // Sync visual sprite to physics body
+    this.sprite.setPosition(this.body.position.x, this.body.position.y);
+    this.sprite.x = this.body.position.x;
+    this.sprite.y = this.body.position.y;
+
+    // Update facing direction based on velocity
+    if (this.body.velocity.x > 0.5) {
+      this.facingRight = true;
+      this.sprite.flipX = false;
+    } else if (this.body.velocity.x < -0.5) {
+      this.facingRight = false;
+      this.sprite.flipX = true;
+    }
+
     this.stateMachine.update(time, delta);
 
     // Update weapon manager
     this.weaponManager.update(delta);
 
-    // Update facing direction based on sprite flip
-    this.facingRight = !this.sprite.flipX;
-
     // Update fist visuals position
     const facingMult = this.sprite.flipX ? -1 : 1;
     this.fistVisual.setPosition(
-      this.sprite.x + (this.fistLocalX * facingMult),
-      this.sprite.y + this.fistLocalY
+      this.body.position.x + (this.fistLocalX * facingMult),
+      this.body.position.y + this.fistLocalY
     );
     // Second fist - also apply facingMult so it mirrors correctly when player turns
     this.fistVisual2.setPosition(
-      this.sprite.x + (this.fistLocal2X * facingMult),
-      this.sprite.y + this.fistLocal2Y
+      this.body.position.x + (this.fistLocal2X * facingMult),
+      this.body.position.y + this.fistLocal2Y
     );
     this.drawFist();
 
-    // Fix any terrain clipping
-    this.fixTerrainClipping();
+    // Update hitboxes to follow body position
+    this.updateHitboxes();
 
     // Update skeletal animation
     this.updateSkeleton(delta);
+  }
+
+  /**
+   * Sync hitboxes to body position
+   */
+  updateHitboxes() {
+    if (this.hurtbox) {
+      this.hurtbox.setPosition(this.body.position.x, this.body.position.y);
+    }
+    if (this.attackHitbox) {
+      // Hitboxes update themselves based on owner position
+      this.attackHitbox.updatePosition();
+    }
+    if (this.attackHitboxSecondary) {
+      this.attackHitboxSecondary.updatePosition();
+    }
   }
 
   /**
@@ -228,10 +382,10 @@ export class Player {
   updateSkeleton(delta) {
     if (!this.skeletonInstance) return;
 
-    // Sync skeleton position to sprite (physics body is source of truth)
-    // Offset Y so skeleton's pelvis aligns with sprite center
+    // Sync skeleton position to physics body (body is source of truth)
+    // Offset Y so skeleton's pelvis aligns with body center
     const offsetY = -10; // Adjust based on visual alignment
-    this.skeletonInstance.setPosition(this.sprite.x, this.sprite.y + offsetY);
+    this.skeletonInstance.setPosition(this.body.position.x, this.body.position.y + offsetY);
 
     // Sync facing direction
     this.skeletonInstance.setScale(this.facingRight ? 1 : -1, 1);
@@ -252,7 +406,7 @@ export class Player {
    * @returns {{x: number, y: number}}
    */
   getPosition() {
-    return { x: this.sprite.x, y: this.sprite.y };
+    return { x: this.body.position.x, y: this.body.position.y };
   }
 
   /**
@@ -261,8 +415,8 @@ export class Player {
    */
   getVelocity() {
     return {
-      x: this.sprite.body.velocity.x,
-      y: this.sprite.body.velocity.y,
+      x: this.body.velocity.x,
+      y: this.body.velocity.y,
     };
   }
 
@@ -271,7 +425,75 @@ export class Player {
    * @returns {boolean}
    */
   isOnGround() {
-    return this.sprite.body.onFloor();
+    return this._isOnGround;
+  }
+
+  /**
+   * Check if player is touching a wall on the left
+   * @returns {boolean}
+   */
+  isTouchingLeftWall() {
+    return this.wallContactLeft > 0;
+  }
+
+  /**
+   * Check if player is touching a wall on the right
+   * @returns {boolean}
+   */
+  isTouchingRightWall() {
+    return this.wallContactRight > 0;
+  }
+
+  /**
+   * Set position (for respawn, teleport, etc.)
+   * @param {number} x - X position
+   * @param {number} y - Y position
+   */
+  setPosition(x, y) {
+    this.scene.matter.body.setPosition(this.body, { x, y });
+    this.scene.matter.body.setVelocity(this.body, { x: 0, y: 0 });
+    // Sync visual sprite
+    this.sprite.x = x;
+    this.sprite.y = y;
+  }
+
+  /**
+   * Move horizontally
+   * @param {number} direction - -1 for left, 1 for right
+   */
+  moveX(direction) {
+    const speed = this._isOnGround ? this.moveSpeed : this.moveSpeed * this.airControl;
+    this.matterHelper.setVelocityX(this.body, direction * speed);
+  }
+
+  /**
+   * Stop horizontal movement with friction
+   */
+  stopX() {
+    // Apply friction-like stopping (don't instantly stop)
+    const vx = this.body.velocity.x * 0.8;
+    if (Math.abs(vx) < 0.5) {
+      this.matterHelper.setVelocityX(this.body, 0);
+    } else {
+      this.matterHelper.setVelocityX(this.body, vx);
+    }
+  }
+
+  /**
+   * Jump
+   */
+  jump() {
+    if (this._isOnGround) {
+      // Matter.js: negative Y is up
+      this.matterHelper.setVelocityY(this.body, -this.jumpForce);
+    }
+  }
+
+  /**
+   * Force jump (for wall jump, etc.) - ignores ground check
+   */
+  forceJump() {
+    this.matterHelper.setVelocityY(this.body, -this.jumpForce);
   }
 
   /**
@@ -384,66 +606,15 @@ export class Player {
 
   /**
    * Add collision with a group or object
-   * @param {Phaser.GameObjects.Group|Phaser.Tilemaps.TilemapLayer} target
-   * @param {Function} callback - Optional collision callback
+   * With Matter.js, collisions are handled via collision categories/masks
+   * This method is kept for API compatibility but Matter.js doesn't need explicit colliders
+   * @param {object} target - Target to collide with (ignored in Matter.js)
+   * @param {Function} callback - Optional collision callback (ignored in Matter.js)
    */
   addCollider(target, callback = null) {
-    this.scene.physics.add.collider(this.sprite, target, callback);
-    // Track static groups for terrain clipping fix
-    if (target && target.getChildren) {
-      this.terrainGroups.push(target);
-    }
-  }
-
-  /**
-   * Check for and fix clipping into terrain
-   * Pushes player up if embedded in ground/platforms
-   */
-  fixTerrainClipping() {
-    if (this.terrainGroups.length === 0) return;
-
-    const body = this.sprite.body;
-    if (!body) return;
-
-    let maxOverlap = 0;
-
-    // Check against all terrain groups
-    for (const terrainGroup of this.terrainGroups) {
-      if (!terrainGroup) continue;
-
-      const children = terrainGroup.getChildren();
-      for (const terrain of children) {
-        if (!terrain.body) continue;
-
-        const terrainBody = terrain.body;
-
-        // Check if there's horizontal overlap
-        const horizontalOverlap =
-          body.right > terrainBody.left && body.left < terrainBody.right;
-
-        if (!horizontalOverlap) continue;
-
-        // Check if player bottom is below terrain top (embedded)
-        if (body.bottom > terrainBody.top && body.top < terrainBody.bottom) {
-          // Calculate how much the player is embedded
-          const overlap = body.bottom - terrainBody.top;
-          if (overlap > maxOverlap) {
-            maxOverlap = overlap;
-          }
-        }
-      }
-    }
-
-    // If embedded, push player up
-    if (maxOverlap > 0) {
-      this.sprite.y -= maxOverlap + 1; // +1 to ensure clearance
-      body.reset(this.sprite.x, this.sprite.y);
-
-      // Stop downward velocity to prevent re-embedding
-      if (body.velocity.y > 0) {
-        body.setVelocityY(0);
-      }
-    }
+    // Matter.js handles collisions via collision filters set in createPlayerBodyConfig
+    // This method exists for API compatibility with existing scene code
+    // No action needed - collisions are automatic based on collision categories
   }
 
   /**
@@ -456,12 +627,13 @@ export class Player {
 
     return {
       position: `${Math.round(pos.x)}, ${Math.round(pos.y)}`,
-      velocity: `${Math.round(vel.x)}, ${Math.round(vel.y)}`,
+      velocity: `${Math.round(vel.x * 100) / 100}, ${Math.round(vel.y * 100) / 100}`,
       state: this.getCurrentState(),
       stateTime: Math.round(this.stateMachine.getStateTime()),
       onGround: this.isOnGround(),
       health: `${this.health}/${this.maxHealth}`,
       facing: this.facingRight ? 'right' : 'left',
+      groundContacts: this.groundContacts,
     };
   }
 
@@ -811,9 +983,11 @@ export class Player {
     if (this.scene.combatManager) {
       this.scene.combatManager.unregister(this.hurtbox);
       this.scene.combatManager.unregister(this.attackHitbox);
+      this.scene.combatManager.unregister(this.attackHitboxSecondary);
     }
     this.hurtbox.destroy();
     this.attackHitbox.destroy();
+    this.attackHitboxSecondary.destroy();
 
     // Clean up fist visuals
     if (this.fistTween) {
@@ -843,6 +1017,16 @@ export class Player {
     this.skeletonInstance = null;
     this.poseBlender = null;
 
-    this.sprite.destroy();
+    // Clean up Matter.js body
+    if (this.body) {
+      this.scene.matter.world.remove(this.body);
+      this.body = null;
+    }
+
+    // Clean up visual sprite
+    if (this.sprite) {
+      this.sprite.destroy();
+      this.sprite = null;
+    }
   }
 }

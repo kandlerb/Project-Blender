@@ -12,6 +12,12 @@ import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
 import { SOUNDS, MUSIC } from '../utils/audio.js';
 import { PHYSICS } from '../utils/physics.js';
+import {
+  CollisionCategories,
+  CollisionMasks,
+  createGroundBodyConfig,
+  createPlatformBodyConfig
+} from '../systems/MatterPhysics.js';
 
 // Import weapons module to register all weapons
 import '../weapons/index.js';
@@ -46,11 +52,8 @@ export class TestArenaScene extends BaseScene {
   }
 
   onCreate() {
-    // Physics debug - start with debug hidden (debug enabled in config for toggling)
-    this.physics.world.drawDebug = false;
-    if (this.physics.world.debugGraphic) {
-      this.physics.world.debugGraphic.setVisible(false);
-    }
+    // Matter.js physics debug - start with debug hidden
+    this.matter.world.drawDebug = false;
 
     // Create managers BEFORE entities
     this.timeManager = new TimeManager(this);
@@ -66,40 +69,32 @@ export class TestArenaScene extends BaseScene {
     this.createArena();
 
     // Create corpse manager with platform layer for grid ground detection
+    // Note: Corpse manager needs updating for Matter.js but basic functionality preserved
     this.corpseManager = new CorpseManager(this, {
-      platformLayer: this.ground,
+      platformLayer: this.groundBodies,
       maxCorpses: Infinity,
       cleanupMode: 'none',
       decayEnabled: false,
     });
 
     // Set terrain for corpse-platform collision during falling
-    this.corpseManager.setTerrain(this.ground, this.platforms);
+    // Note: Corpse manager terrain may need Matter.js updates
+    this.corpseManager.setTerrain(this.groundBodies, this.platformBodies);
 
     // Note: Corpse-to-corpse collision is now handled by grid snapping
     // No physics-based corpse stacking needed
 
-    // Create enemy group for collision handling
-    // runChildUpdate: false prevents group from interfering with enemy updates
-    this.enemyGroup = this.physics.add.group({
-      runChildUpdate: false,
-    });
+    // Note: Enemy group and Arcade colliders removed - Matter.js uses collision categories
+    // Enemies will need individual Matter.js migration
 
     // Create player
     this.player = new Player(this, 300, 400);
-    this.player.addCollider(this.ground);
-    this.player.addCollider(this.platforms);
+    // Matter.js collisions are automatic via collision categories - no addCollider needed
+    this.player.addCollider(this.groundBodies);
+    this.player.addCollider(this.platformBodies);
 
-    // Player-corpse collision with step-up handling
-    this.playerStepUpHeight = 32; // Generous height for smooth traversal
-    this.isPlayerSteppingUp = false;
-    this.physics.add.collider(
-      this.player.sprite,
-      this.corpseManager.corpseGroup,
-      this.handlePlayerCorpseCollision,
-      this.shouldPlayerCollideWithCorpse,
-      this
-    );
+    // Note: Player-corpse collision handled via collision categories in Matter.js
+    this.playerStepUpHeight = 32; // For future step-up handling
 
     // Expose for console debugging
     window.player = this.player;
@@ -224,18 +219,16 @@ export class TestArenaScene extends BaseScene {
   }
 
   setupInputHandlers() {
-    // Physics debug toggle
+    // Matter.js physics debug toggle
     this.input.keyboard.on('keydown-BACKTICK', () => {
-      this.physics.world.drawDebug = !this.physics.world.drawDebug;
+      this.matter.world.drawDebug = !this.matter.world.drawDebug;
 
-      if (this.physics.world.debugGraphic) {
-        this.physics.world.debugGraphic.setVisible(this.physics.world.drawDebug);
-        if (!this.physics.world.drawDebug) {
-          this.physics.world.debugGraphic.clear();
-        }
+      if (!this.matter.world.debugGraphic) {
+        this.matter.world.createDebugGraphic();
       }
+      this.matter.world.debugGraphic.setVisible(this.matter.world.drawDebug);
 
-      console.log('Physics debug:', this.physics.world.drawDebug);
+      console.log('Physics debug:', this.matter.world.drawDebug);
     });
 
     // Combat debug toggle
@@ -376,6 +369,9 @@ export class TestArenaScene extends BaseScene {
    * Spawn the Tonfa Warden boss
    */
   spawnBoss() {
+    // TODO: Boss needs Matter.js migration - temporarily disabled
+    console.log('Boss spawning disabled - requires Matter.js migration');
+
     // Clear existing boss
     if (this.currentBoss) {
       this.currentBoss.destroy();
@@ -398,32 +394,20 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemyProjectiles = [];
 
-    // Spawn boss in center-right of arena
+    // NOTE: Boss spawning disabled until Boss class is migrated to Matter.js
+    /*
     this.currentBoss = new TonfaWarden(this, 800, 450);
     this.currentBoss.addCollider(this.ground);
     this.currentBoss.addCollider(this.platforms);
-
-    // Add boss to enemy group for collision with player, other enemies, and corpses
-    if (this.currentBoss.sprite && this.enemyGroup) {
-      this.enemyGroup.add(this.currentBoss.sprite);
-
-      // Re-apply physics settings that group may have overwritten
-      this.currentBoss.sprite.body.setAllowGravity(true);
-      this.currentBoss.sprite.body.setGravityY(PHYSICS.GRAVITY);
-      this.currentBoss.sprite.body.setCollideWorldBounds(true);
-    }
-
-    // Apply combat debug if currently enabled
-    if (this.showCombatDebug && this.currentBoss.setCombatDebug) {
-      this.currentBoss.setCombatDebug(true);
-    }
-
-    console.log('Boss spawned: The Tonfa Warden');
-    console.log('Tip: Attack during blue circle = parried! Bait the defensive stance.');
+    // ... boss setup
+    */
   }
 
   spawnEnemies() {
-    // NOTE: No longer clearing existing enemies - R key spawns additional enemies
+    // TODO: Enemies need Matter.js migration - temporarily disabled
+    console.log('Enemy spawning disabled - requires Matter.js migration');
+    console.log('Use Matter.js physics debug (`) to verify player collision works');
+
     // Clear existing projectiles to avoid stale references
     if (this.enemyProjectiles) {
       for (const proj of this.enemyProjectiles) {
@@ -434,48 +418,19 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemyProjectiles = [];
 
-    // Spawn a variety of enemy types
-    // Swarmers spawn in groups to test pack behavior
+    // NOTE: Enemy spawning disabled until Enemy class is migrated to Matter.js
+    // The following code uses Arcade physics which is no longer available
+    /*
     const spawnPoints = [
-      // Left swarmer pack (4 swarmers)
       { x: 500, y: 400, type: 'SWARMER' },
-      { x: 540, y: 400, type: 'SWARMER' },
-      { x: 580, y: 400, type: 'SWARMER' },
-      { x: 620, y: 400, type: 'SWARMER' },
-      // Right swarmer pack (3 swarmers)
-      { x: 1000, y: 400, type: 'SWARMER' },
-      { x: 1040, y: 400, type: 'SWARMER' },
-      { x: 1080, y: 400, type: 'SWARMER' },
-      // Other enemy types
-      { x: 800, y: 400, type: 'LUNGER' },
-      { x: 1200, y: 400, type: 'SHIELD_BEARER' },
-      { x: 1400, y: 400, type: 'LOBBER' },
-      { x: 1500, y: 400, type: 'DETONATOR' },
+      // ... more spawn points
     ];
 
     for (const pos of spawnPoints) {
       const enemy = new Enemy(this, pos.x, pos.y, { type: pos.type });
-      enemy.addCollider(this.ground);
-      enemy.addCollider(this.platforms);
-      enemy.setTarget(this.player);
-
-      // Add to enemy group for corpse collision
-      this.enemyGroup.add(enemy.sprite);
-
-      // Re-apply enemy physics settings that group may have overwritten
-      // World gravity is 0, so we must set per-body gravity
-      enemy.sprite.body.setAllowGravity(true);
-      enemy.sprite.body.setGravityY(PHYSICS.GRAVITY);
-      enemy.sprite.body.setCollideWorldBounds(true);
-
-      if (this.showCombatDebug) {
-        enemy.setCombatDebug(true);
-      }
-
-      this.enemies.push(enemy);
+      // ... enemy setup
     }
-
-    console.log(`Spawned 11 enemies (total: ${this.enemies.length}) - Swarmer x7 (2 packs), Lunger, Shield Bearer, Lobber, Detonator`);
+    */
   }
 
   /**
@@ -483,6 +438,9 @@ export class TestArenaScene extends BaseScene {
    * Called after spawnEnemies() and when respawning
    */
   setupColliders() {
+    // TODO: Colliders need Matter.js migration - temporarily disabled
+    // Matter.js uses collision categories instead of explicit colliders
+
     // Destroy existing colliders if any (for respawn scenarios)
     if (this.enemyEnemyCollider) {
       this.enemyEnemyCollider.destroy();
@@ -497,66 +455,96 @@ export class TestArenaScene extends BaseScene {
       this.enemyCorpseCollider = null;
     }
 
-    // Enemy-enemy collision (solid collision between all enemies)
-    // Mass-based physics: heavier enemies push lighter ones
-    this.enemyEnemyCollider = this.physics.add.collider(
-      this.enemyGroup,
-      this.enemyGroup,
-      null, // no callback needed for basic collision
-      null, // no process callback
-      this
-    );
-
-    // Player-enemy collision (player and enemies cannot walk through each other)
-    // Player mass = 2, swarmers = 1 (player pushes), brutes = 5 (push player)
-    this.playerEnemyCollider = this.physics.add.collider(
-      this.player.sprite,
-      this.enemyGroup,
-      null, // no callback needed for basic collision
-      null, // no process callback
-      this
-    );
-
-    // Enemy-corpse collision
-    // Process callback prevents physics from moving corpses - only step-up/destroy logic applies
-    this.enemyCorpseCollider = this.physics.add.collider(
-      this.enemyGroup,
-      this.corpseManager.corpseGroup,
-      this.handleEnemyCorpseCollision,
-      this.shouldEnemyCollideWithCorpse,
-      this
-    );
-
-    console.log('Colliders setup. Enemy count:', this.enemies.length);
+    console.log('Collider setup skipped - Matter.js uses collision categories');
   }
 
   createArena() {
     const width = this.cameras.main.width;
     const height = this.cameras.main.height;
     const groundY = height - 64;
-    const tileSize = 32;
 
-    // Ground
-    this.ground = this.physics.add.staticGroup();
-    const tilesNeeded = Math.ceil(width / tileSize) + 1;
-    for (let i = 0; i < tilesNeeded; i++) {
-      this.ground.create(i * tileSize + 16, groundY, 'ground_placeholder');
-      this.ground.create(i * tileSize + 16, groundY + 32, 'ground_placeholder');
+    // Store ground bodies for reference
+    this.groundBodies = [];
+    this.platformBodies = [];
+    this.groundVisuals = [];
+    this.platformVisuals = [];
+
+    // Create main ground - single large rectangle
+    const groundHeight = 64;
+    const groundBody = this.matter.add.rectangle(
+      width / 2,
+      groundY + groundHeight / 2,
+      width,
+      groundHeight,
+      createGroundBodyConfig()
+    );
+    this.groundBodies.push(groundBody);
+
+    // Ground visual
+    const groundVisual = this.add.rectangle(
+      width / 2,
+      groundY + groundHeight / 2,
+      width,
+      groundHeight,
+      0x333333
+    );
+    groundVisual.setDepth(0);
+    this.groundVisuals.push(groundVisual);
+
+    // Platforms - Matter.js static rectangles
+    const platformConfigs = [
+      { x: 300, y: groundY - 150, w: 128, h: 20 },
+      { x: 700, y: groundY - 280, w: 128, h: 20 },
+      { x: 1100, y: groundY - 400, w: 128, h: 20 },
+      { x: 200, y: groundY - 450, w: 128, h: 20 },
+    ];
+
+    for (const plat of platformConfigs) {
+      const platBody = this.matter.add.rectangle(
+        plat.x, plat.y, plat.w, plat.h,
+        createPlatformBodyConfig()
+      );
+      this.platformBodies.push(platBody);
+
+      // Platform visual
+      const platVisual = this.add.rectangle(plat.x, plat.y, plat.w, plat.h, 0x444444);
+      platVisual.setDepth(0);
+      this.platformVisuals.push(platVisual);
     }
 
-    // Platforms
-    this.platforms = this.physics.add.staticGroup();
-    this.platforms.create(300, groundY - 150, 'platform_placeholder');
-    this.platforms.create(700, groundY - 280, 'platform_placeholder');
-    this.platforms.create(1100, groundY - 400, 'platform_placeholder');
-    this.platforms.create(200, groundY - 450, 'platform_placeholder');
+    // Side walls - Matter.js static rectangles
+    const wallWidth = 32;
+    const wallHeight = 700; // Tall walls
 
-    // Side walls (start above ground to avoid collision overlap)
-    const wallHeight = 20;
-    for (let i = 1; i <= wallHeight; i++) {
-      this.ground.create(16, groundY - (i * 32), 'ground_placeholder');
-      this.ground.create(width - 16, groundY - (i * 32), 'ground_placeholder');
-    }
+    // Left wall
+    const leftWall = this.matter.add.rectangle(
+      wallWidth / 2,
+      height / 2,
+      wallWidth,
+      wallHeight,
+      createGroundBodyConfig()
+    );
+    this.groundBodies.push(leftWall);
+    const leftWallVisual = this.add.rectangle(wallWidth / 2, height / 2, wallWidth, wallHeight, 0x333333);
+    leftWallVisual.setDepth(0);
+    this.groundVisuals.push(leftWallVisual);
+
+    // Right wall
+    const rightWall = this.matter.add.rectangle(
+      width - wallWidth / 2,
+      height / 2,
+      wallWidth,
+      wallHeight,
+      createGroundBodyConfig()
+    );
+    this.groundBodies.push(rightWall);
+    const rightWallVisual = this.add.rectangle(width - wallWidth / 2, height / 2, wallWidth, wallHeight, 0x333333);
+    rightWallVisual.setDepth(0);
+    this.groundVisuals.push(rightWallVisual);
+
+    // For backward compatibility with code expecting this.ground and this.platforms
+    this.ground = this.groundBodies;
+    this.platforms = this.platformBodies;
   }
 
   createDebugHUD() {

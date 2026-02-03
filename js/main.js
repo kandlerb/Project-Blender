@@ -20,16 +20,15 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
 
-  // Physics
+  // Physics - Matter.js for polygon collision support
   physics: {
-    default: 'arcade',
-    arcade: {
-      gravity: { y: 0 }, // We handle gravity per-body
-      debug: true,  // Enable debug system (visibility controlled per-scene)
-      debugShowBody: true,
-      debugShowStaticBody: true,
-      debugShowVelocity: false,
-      fps: 120,  // Higher physics FPS for better collision detection
+    default: 'matter',
+    matter: {
+      gravity: { y: 1 },      // Matter uses 0-1 scale, 1 ≈ normal gravity
+      debug: false,           // Toggle with backtick key
+      // Performance settings
+      positionIterations: 6,  // Default is 6
+      velocityIterations: 4,  // Default is 4
     },
   },
 
