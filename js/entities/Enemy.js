@@ -3027,11 +3027,12 @@ class SwarmerAttackingState extends State {
   enter(prevState, params) {
     this.activeDuration = this.enemy.config.attackActive || 100;
 
-    // Activate hitbox with swarmer-specific properties
-    this.enemy.attackHitbox.damage = this.enemy.damage;
-    this.enemy.attackHitbox.knockback = { x: 150, y: -50 };
-    this.enemy.attackHitbox.hitstun = 200;
-    this.enemy.attackHitbox.activate();
+    // Activate hitbox with swarmer-specific properties (Matter.js)
+    this.enemy.activateHitbox({
+      damage: this.enemy.damage,
+      knockback: { x: 150, y: -50 },
+      hitstun: 200
+    });
 
     // Show fist visual
     this.enemy.showFist();
@@ -3055,7 +3056,7 @@ class SwarmerAttackingState extends State {
   }
 
   exit(nextState) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
     this.enemy.hideFist(); // Hide fist visual on exit
   }
 

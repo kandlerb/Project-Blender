@@ -1226,8 +1226,8 @@ export class SpinActiveState extends PlayerState {
     const hitstop = spinData?.hitstop || 20;
     const hitbox = spinData?.hitbox || { width: 80, height: 60, offsetX: 40, offsetY: 0 };
 
-    // Activate dual spin hitboxes (one on each side for 360 coverage)
-    this.player.activateAttackHitbox({
+    // Store spin config for re-activation during multi-hit
+    this.spinConfig = {
       damage,
       hitstun,
       hitstop,
@@ -1249,7 +1249,10 @@ export class SpinActiveState extends PlayerState {
           knockback: { x: -knockback.x, y: knockback.y }, // Knockback away from player
         },
       ],
-    });
+    };
+
+    // Activate dual spin hitboxes (one on each side for 360 coverage)
+    this.player.activateAttackHitbox(this.spinConfig);
   }
 
   update(time, delta) {
@@ -1273,11 +1276,11 @@ export class SpinActiveState extends PlayerState {
       this.setVelocityY(0);
     }
 
-    // Reset hitbox tracking periodically for multi-hit (both hitboxes)
+    // Reset hitbox tracking periodically for multi-hit
+    // Re-activating the hitbox in Matter.js clears the hit tracker
     if (stateTime - this.lastTickTime >= this.tickRate) {
       this.lastTickTime = stateTime;
-      this.player.attackHitbox.hasHit.clear();
-      this.player.attackHitboxSecondary.hasHit.clear();
+      this.player.activateAttackHitbox(this.spinConfig);
     }
 
     // Release button to finish
@@ -1559,13 +1562,24 @@ export class BlinkState extends PlayerState {
     const scene = this.player.scene;
 
     // Create a copy of the player sprite as afterimage
-    this.afterimageSprite = scene.add.sprite(
-      this.startPosition.x,
-      this.startPosition.y,
-      this.sprite.texture.key
-    );
+    // Check if sprite is a Rectangle (Matter.js migration) or Sprite
+    if (this.sprite instanceof Phaser.GameObjects.Rectangle) {
+      this.afterimageSprite = scene.add.rectangle(
+        this.startPosition.x,
+        this.startPosition.y,
+        this.sprite.width,
+        this.sprite.height,
+        this.sprite.fillColor
+      );
+    } else {
+      this.afterimageSprite = scene.add.sprite(
+        this.startPosition.x,
+        this.startPosition.y,
+        this.sprite.texture.key
+      );
+      this.afterimageSprite.setFlipX(this.sprite.flipX);
+    }
 
-    this.afterimageSprite.setFlipX(this.sprite.flipX);
     this.afterimageSprite.setAlpha(0.6);
     this.afterimageSprite.setTint(0x4488ff); // Blue tint
     this.afterimageSprite.setDepth(this.sprite.depth - 1);
@@ -1734,7 +1748,12 @@ export class GrappleFireState extends PlayerState {
     // Collect ground and platforms
     if (scene.ground) platforms.push(scene.ground);
     if (scene.platforms) {
-      scene.platforms.getChildren().forEach(p => platforms.push(p));
+      // Handle both Phaser Group (has getChildren) and plain array (Matter.js)
+      if (Array.isArray(scene.platforms)) {
+        scene.platforms.forEach(p => platforms.push(p));
+      } else if (scene.platforms.getChildren) {
+        scene.platforms.getChildren().forEach(p => platforms.push(p));
+      }
     }
 
     // Simple line-rectangle intersection check
@@ -2894,13 +2913,25 @@ export class UltimateState extends PlayerState {
   createAfterimage() {
     const scene = this.player.scene;
 
-    const afterimage = scene.add.sprite(
-      this.sprite.x,
-      this.sprite.y,
-      this.sprite.texture.key
-    );
+    let afterimage;
+    // Check if sprite is a Rectangle (Matter.js migration) or Sprite
+    if (this.sprite instanceof Phaser.GameObjects.Rectangle) {
+      afterimage = scene.add.rectangle(
+        this.sprite.x,
+        this.sprite.y,
+        this.sprite.width,
+        this.sprite.height,
+        this.sprite.fillColor
+      );
+    } else {
+      afterimage = scene.add.sprite(
+        this.sprite.x,
+        this.sprite.y,
+        this.sprite.texture.key
+      );
+      afterimage.setFlipX(this.sprite.flipX);
+    }
 
-    afterimage.setFlipX(this.sprite.flipX);
     afterimage.setAlpha(0.5);
     afterimage.setTint(0xffdd44);
     afterimage.setDepth(this.sprite.depth - 1);
