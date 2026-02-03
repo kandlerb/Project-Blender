@@ -2,6 +2,14 @@ import { StateMachine, State } from '../systems/StateMachine.js';
 import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
 
+// Skeletal animation system
+import { SkeletonInstance } from '../skeleton/SkeletonInstance.js';
+import { createHumanoidSkeleton } from '../skeleton/definitions/humanoid.js';
+import { LineSkin } from '../skeleton/skins/LineSkin.js';
+import { PoseBlender } from '../skeleton/poses/PoseBlender.js';
+import { Ragdoll } from '../skeleton/physics/Ragdoll.js';
+import { BasicEnemyAnimations } from '../data/animations/enemies/index.js';
+
 /**
  * Enemy states (generic)
  */
@@ -319,6 +327,13 @@ export class Enemy {
 
     // Store reference on sprite
     this.sprite.setData('owner', this);
+
+    // Skeletal animation system
+    this.initializeSkeleton(config);
+
+    // Ragdoll state (null until death)
+    this.ragdoll = null;
+    this.isRagdoll = false;
   }
 
   setupPhysics() {
@@ -401,6 +416,115 @@ export class Enemy {
     }
 
     this.hurtbox.activate();
+  }
+
+  /**
+   * Initialize skeletal animation system
+   * @param {object} config - Optional skeleton config
+   */
+  initializeSkeleton(config = {}) {
+    // Create skeleton (enemies use same humanoid skeleton, can vary scale)
+    const skeletonDef = createHumanoidSkeleton();
+    this.skeleton = new SkeletonInstance(skeletonDef, {
+      position: { x: this.sprite.x, y: this.sprite.y }
+    });
+
+    // Apply scale variation for enemy variety
+    const scale = config.skeletonScale || 1;
+    this.skeletonBaseScale = scale;
+
+    // Create skin - enemies are white/gray by default
+    this.skin = new LineSkin(this.skeleton, {
+      lineWidth: config.lineWidth || 2,
+      color: config.skeletonColor || 0xcccccc,
+      jointRadius: 2 * scale,
+      headRadius: 8 * scale
+    });
+    this.skin.initialize(this.scene);
+    this.skin.setDepth(this.sprite.depth + 1);
+
+    // Pose blender for animations
+    this.poseBlender = new PoseBlender(this.skeleton);
+
+    // Visibility flag
+    this.showSkeleton = true;
+
+    // Hide the sprite - skeleton handles visuals now
+    this.sprite.setVisible(false);
+  }
+
+  /**
+   * Update skeleton position, animation, and rendering
+   * @param {number} delta - Time since last frame in ms
+   */
+  updateSkeleton(delta) {
+    if (!this.skeleton) return;
+
+    // If ragdoll, update physics instead of animation
+    if (this.isRagdoll && this.ragdoll) {
+      this.ragdoll.update(delta);
+
+      // Render from ragdoll positions
+      if (this.showSkeleton && this.skin) {
+        const positions = this.ragdoll.getWorldPositions();
+        this.skin.renderFromPositions(positions);
+      }
+      return;
+    }
+
+    // Normal animated skeleton
+    // Sync position to sprite
+    const offsetY = -8; // Adjust for visual alignment
+    this.skeleton.setPosition(this.sprite.x, this.sprite.y + offsetY);
+
+    // Sync facing direction
+    const facingRight = !this.sprite.flipX;
+    this.skeleton.setScale(
+      facingRight ? this.skeletonBaseScale : -this.skeletonBaseScale,
+      this.skeletonBaseScale
+    );
+
+    // Update animation
+    this.poseBlender.update(delta);
+
+    // Render
+    if (this.showSkeleton && this.skin) {
+      this.skin.render();
+    }
+  }
+
+  /**
+   * Play animation on enemy skeleton
+   * @param {Animation} animation - Animation to play
+   * @param {object} options - Playback options
+   * @returns {AnimationLayer|null}
+   */
+  playAnimation(animation, options = {}) {
+    if (this.poseBlender && !this.isRagdoll) {
+      return this.poseBlender.playAnimation(animation, options);
+    }
+    return null;
+  }
+
+  /**
+   * Set skeleton visibility
+   * @param {boolean} visible
+   */
+  setSkeletonVisible(visible) {
+    this.showSkeleton = visible;
+    if (this.skin) {
+      this.skin.setVisible(visible);
+    }
+  }
+
+  /**
+   * Set skeleton color
+   * @param {number} color - Hex color
+   */
+  setSkeletonColor(color) {
+    if (this.skin) {
+      this.skin.setColor(color);
+    }
   }
 
   /**
@@ -883,54 +1007,60 @@ export class Enemy {
   }
 
   update(time, delta) {
-    if (!this.isAlive) return;
+    if (!this.isAlive && !this.isRagdoll) return;
 
-    if (this.hitstunRemaining > 0) {
-      this.hitstunRemaining = Math.max(0, this.hitstunRemaining - delta);
+    // Existing updates (only if alive)
+    if (this.isAlive) {
+      if (this.hitstunRemaining > 0) {
+        this.hitstunRemaining = Math.max(0, this.hitstunRemaining - delta);
+      }
+
+      // Route to behavior-specific AI
+      switch (this.stats.behavior) {
+        case 'lunger':
+          this.updateLungerAI(time, delta);
+          break;
+        case 'shield':
+          this.updateShieldAI(time, delta);
+          break;
+        case 'lobber':
+          this.updateLobberAI(time, delta);
+          break;
+        case 'detonator':
+          this.updateDetonatorAI(time, delta);
+          break;
+        case 'swarmer':
+        case 'brute':
+        default:
+          // Use existing state machine for standard enemies
+          this.stateMachine.update(time, delta);
+          break;
+      }
+
+      this.hurtbox.updatePosition();
+      this.attackHitbox.updatePosition();
+
+      // Update fist visual position
+      if (this.fistVisual) {
+        const facingMult = this.sprite.flipX ? -1 : 1;
+        this.fistVisual.setPosition(
+          this.sprite.x + (this.fistLocalX * facingMult),
+          this.sprite.y + this.fistLocalY
+        );
+        this.drawFist();
+      }
+
+      // Update pack debug visualization for swarmers
+      if (this.config.type === 'SWARMER' && this.packDebugGraphics) {
+        this.updatePackDebug();
+      }
+
+      // Fix any terrain clipping
+      this.fixTerrainClipping();
     }
 
-    // Route to behavior-specific AI
-    switch (this.stats.behavior) {
-      case 'lunger':
-        this.updateLungerAI(time, delta);
-        break;
-      case 'shield':
-        this.updateShieldAI(time, delta);
-        break;
-      case 'lobber':
-        this.updateLobberAI(time, delta);
-        break;
-      case 'detonator':
-        this.updateDetonatorAI(time, delta);
-        break;
-      case 'swarmer':
-      case 'brute':
-      default:
-        // Use existing state machine for standard enemies
-        this.stateMachine.update(time, delta);
-        break;
-    }
-
-    this.hurtbox.updatePosition();
-    this.attackHitbox.updatePosition();
-
-    // Update fist visual position
-    if (this.fistVisual) {
-      const facingMult = this.sprite.flipX ? -1 : 1;
-      this.fistVisual.setPosition(
-        this.sprite.x + (this.fistLocalX * facingMult),
-        this.sprite.y + this.fistLocalY
-      );
-      this.drawFist();
-    }
-
-    // Update pack debug visualization for swarmers
-    if (this.config.type === 'SWARMER' && this.packDebugGraphics) {
-      this.updatePackDebug();
-    }
-
-    // Fix any terrain clipping
-    this.fixTerrainClipping();
+    // Always update skeleton (handles ragdoll too)
+    this.updateSkeleton(delta);
   }
 
   takeDamage(amount, hitData = null) {
@@ -982,7 +1112,7 @@ export class Enemy {
       if (this.stats.behavior === 'detonator' && !this.isExploding) {
         this.startExplosion();
       } else {
-        this.die();
+        this.die(hitData);
       }
     }
   }
@@ -1576,19 +1706,92 @@ export class Enemy {
     this.die();
   }
 
-  die() {
+  /**
+   * Handle enemy death
+   * @param {object} hitData - Optional hit data for death impulse
+   */
+  die(hitData = null) {
+    if (!this.isAlive) return;
+
     this.isAlive = false;
     this.hurtbox.deactivate();
     this.attackHitbox.deactivate();
 
-    // Transition to correct dead state based on enemy type
-    if (this.config.type === 'SWARMER') {
-      this.stateMachine.transition(SWARMER_STATES.DEAD, {}, true);
-    } else {
-      this.stateMachine.transition(ENEMY_STATES.DEAD, {}, true);
+    // Stop any playing animations
+    if (this.poseBlender) {
+      this.poseBlender.stopAllAnimations(0);
     }
 
-    this.scene.events.emit('enemy:killed', { enemy: this });
+    // Convert to ragdoll
+    this.convertToRagdoll(hitData);
+
+    // Emit death event (scene will track for corpse system)
+    this.scene.events.emit('enemy:killed', {
+      enemy: this,
+      ragdoll: this.ragdoll
+    });
+  }
+
+  /**
+   * Convert skeleton to ragdoll physics
+   * @param {object} hitData - Hit data for impulse direction
+   */
+  convertToRagdoll(hitData) {
+    if (!this.skeleton || this.isRagdoll) return;
+
+    // Calculate death impulse from hit data
+    let impulse = { x: 0, y: -150 }; // Default: small upward pop
+
+    if (hitData && hitData.knockback) {
+      // Use knockback direction but amplify for death
+      impulse.x = hitData.knockback.x * 1.5;
+      impulse.y = hitData.knockback.y * 1.2;
+    }
+
+    // Create ragdoll
+    this.ragdoll = new Ragdoll(this.scene, this.skeleton);
+
+    // Activate with impulse
+    this.ragdoll.activate({
+      impulse: impulse,
+      angularImpulse: impulse.x * 0.3,
+      onSettle: (ragdoll) => this.onRagdollSettle(ragdoll)
+    });
+
+    // Add colliders for ground/platforms
+    if (this.scene.ground) {
+      this.ragdoll.addCollider(this.scene.ground);
+    }
+    if (this.scene.platforms) {
+      this.ragdoll.addCollider(this.scene.platforms);
+    }
+
+    // Hide the sprite, show ragdoll
+    this.sprite.setVisible(false);
+    this.sprite.body.enable = false;
+    this.isRagdoll = true;
+
+    // Change skin color to indicate death
+    if (this.skin) {
+      this.skin.setColor(0x888888); // Gray for dead
+    }
+  }
+
+  /**
+   * Called when ragdoll settles
+   * @param {Ragdoll} ragdoll
+   */
+  onRagdollSettle(ragdoll) {
+    // Freeze the ragdoll
+    ragdoll.freeze();
+
+    // Emit corpse ready event for corpse system
+    this.scene.events.emit('corpse:ready', {
+      enemy: this,
+      ragdoll: ragdoll,
+      bounds: ragdoll.getBounds(),
+      center: ragdoll.getCenter()
+    });
   }
 
   addCollider(target) {
@@ -1794,6 +1997,16 @@ export class Enemy {
       this.stateText = null;
     }
 
+    // Clean up skeleton and ragdoll
+    if (this.skin) {
+      this.skin.destroy();
+      this.skin = null;
+    }
+    if (this.ragdoll) {
+      this.ragdoll.destroy();
+      this.ragdoll = null;
+    }
+
     this.sprite.destroy();
   }
 }
@@ -1813,6 +2026,10 @@ class EnemyIdleState extends State {
 
   enter(prevState, params) {
     this.enemy.stop();
+    this.enemy.playAnimation(BasicEnemyAnimations.idle, {
+      layer: 'base',
+      blendDuration: 100,
+    });
   }
 
   update(time, delta) {
@@ -1844,6 +2061,10 @@ class EnemyPatrolState extends State {
 
   enter(prevState, params) {
     // Continue in current direction
+    this.enemy.playAnimation(BasicEnemyAnimations.walk, {
+      layer: 'base',
+      blendDuration: 100,
+    });
   }
 
   update(time, delta) {
@@ -1892,6 +2113,10 @@ class EnemyChaseState extends State {
 
   enter(prevState, params) {
     this.loseTargetTime = 0;
+    this.enemy.playAnimation(BasicEnemyAnimations.walk, {
+      layer: 'base',
+      blendDuration: 80,
+    });
   }
 
   update(time, delta) {
@@ -1953,6 +2178,12 @@ class EnemyAttackState extends State {
 
     // Telegraph - turn red during windup
     this.enemy.sprite.setTint(0xff8888);
+
+    // Play attack animation
+    this.enemy.playAnimation(BasicEnemyAnimations.attack, {
+      layer: 'base',
+      blendDuration: 50,
+    });
   }
 
   update(time, delta) {
@@ -2022,6 +2253,10 @@ class EnemyHitstunState extends State {
 
   enter(prevState, params) {
     this.enemy.attackHitbox.deactivate();
+    this.enemy.playAnimation(BasicEnemyAnimations.hitstun, {
+      layer: 'base',
+      blendDuration: 30,
+    });
   }
 
   update(time, delta) {
@@ -2098,6 +2333,10 @@ class SwarmerIdleState extends State {
     if (this.enemy.stats.color) {
       this.enemy.sprite.setTint(this.enemy.stats.color);
     }
+    this.enemy.playAnimation(BasicEnemyAnimations.idle, {
+      layer: 'base',
+      blendDuration: 100,
+    });
   }
 
   update(time, delta) {
@@ -2132,6 +2371,10 @@ class SwarmerPatrolState extends State {
     if (this.enemy.stats.color) {
       this.enemy.sprite.setTint(this.enemy.stats.color);
     }
+    this.enemy.playAnimation(BasicEnemyAnimations.walk, {
+      layer: 'base',
+      blendDuration: 100,
+    });
   }
 
   update(time, delta) {
@@ -2189,6 +2432,12 @@ class SwarmerAlertState extends State {
 
     // Emit alert event for debugging
     this.enemy.scene.events.emit('swarmer:alert', { enemy: this.enemy });
+
+    // Quick pause animation
+    this.enemy.playAnimation(BasicEnemyAnimations.idle, {
+      layer: 'base',
+      blendDuration: 50,
+    });
   }
 
   update(time, delta) {
@@ -2235,6 +2484,11 @@ class SwarmerChaseState extends State {
 
     // Restore original tint (or slightly brighter for aggression)
     this.enemy.sprite.setTint(this.enemy.stats.color || 0xffaa00);
+
+    this.enemy.playAnimation(BasicEnemyAnimations.walk, {
+      layer: 'base',
+      blendDuration: 80,
+    });
   }
 
   update(time, delta) {
@@ -2303,6 +2557,11 @@ class SwarmerRetreatState extends State {
 
     // Emit retreat event for debugging
     this.enemy.scene.events.emit('swarmer:retreat', { enemy: this.enemy });
+
+    this.enemy.playAnimation(BasicEnemyAnimations.walk, {
+      layer: 'base',
+      blendDuration: 80,
+    });
   }
 
   updateRetreatTarget() {
@@ -2394,6 +2653,12 @@ class SwarmerAttackWindupState extends State {
 
     // Red tint to telegraph
     this.enemy.sprite.setTint(0xff6666);
+
+    // Play attack animation (windup portion)
+    this.enemy.playAnimation(BasicEnemyAnimations.attack, {
+      layer: 'base',
+      blendDuration: 50,
+    });
   }
 
   update(time, delta) {
@@ -2552,6 +2817,11 @@ class SwarmerHitstunState extends State {
         this.enemy.sprite.setTint(0xffccaa);
       }
     });
+
+    this.enemy.playAnimation(BasicEnemyAnimations.hitstun, {
+      layer: 'base',
+      blendDuration: 30,
+    });
   }
 
   update(time, delta) {
@@ -2607,6 +2877,12 @@ class SwarmerLaunchedState extends State {
 
     // Airborne visual
     this.enemy.sprite.setTint(0xffaaaa);
+
+    // Use hitstun animation for airborne
+    this.enemy.playAnimation(BasicEnemyAnimations.hitstun, {
+      layer: 'base',
+      blendDuration: 30,
+    });
   }
 
   update(time, delta) {
@@ -2649,6 +2925,12 @@ class SwarmerDownedState extends State {
 
     // Darker tint while downed
     this.enemy.sprite.setTint(0x886644);
+
+    // Use idle animation while recovering on ground
+    this.enemy.playAnimation(BasicEnemyAnimations.idle, {
+      layer: 'base',
+      blendDuration: 50,
+    });
   }
 
   update(time, delta) {
