@@ -2098,15 +2098,32 @@ export class Enemy {
    * @param {object} hitData - Hit data for impulse direction
    */
   convertToRagdoll(hitData) {
-    if (!this.skeleton || this.isRagdoll) return;
+    if (!this.skeleton || this.isRagdoll) {
+      console.log('Cannot ragdoll: skeleton=', !!this.skeleton, 'isRagdoll=', this.isRagdoll);
+      return;
+    }
+
+    console.log('=== CONVERTING TO RAGDOLL ===');
+    console.log('Enemy position:', this.body.position);
+
+    // CRITICAL: Sync skeleton position to enemy position BEFORE ragdoll
+    // The skeleton needs to be at the correct world position for bodies to spawn there
+    this.skeleton.setPosition(this.body.position.x, this.body.position.y - 8);
+    this.skeleton.computeWorldPositions();
 
     // Calculate death impulse from hit data
-    let impulse = { x: 0, y: -200 };
+    // Note: knockback values are already in Matter.js scale (small values like 6-10)
+    // We need to scale UP for a visible death impulse
+    let impulse = { x: 0, y: -200 };  // Base impulse in "visual" scale
 
     if (hitData && hitData.knockback) {
-      impulse.x = hitData.knockback.x * 2;
-      impulse.y = hitData.knockback.y * 1.5;
+      // knockback is in Matter.js scale (~6), multiply by 60 to get visual scale (~360)
+      // Then the ragdoll will divide by 60 again to get proper Matter.js velocity
+      impulse.x = hitData.knockback.x * 60;
+      impulse.y = Math.min(hitData.knockback.y * 60, -100); // Ensure some upward
     }
+
+    console.log('Death impulse:', impulse);
 
     // Create Matter.js ragdoll
     this.ragdoll = new MatterRagdoll(this.scene, this.skeleton);
@@ -2114,11 +2131,17 @@ export class Enemy {
     // Activate with impulse
     this.ragdoll.activate({
       impulse: impulse,
-      angularImpulse: impulse.x * 0.005,
-      onSettle: (ragdoll) => this.onRagdollSettle(ragdoll)
+      angularImpulse: impulse.x * 0.01,
+      onSettle: (ragdoll) => {
+        console.log('Ragdoll settle callback triggered');
+        this.onRagdollSettle(ragdoll);
+      }
     });
 
     this.isRagdoll = true;
+
+    // Hide sprite
+    this.sprite.setVisible(false);
 
     // Remove Matter.js body from world (ragdoll now handles physics)
     this.scene.matter.world.remove(this.body);
@@ -2127,6 +2150,8 @@ export class Enemy {
     if (this.skin) {
       this.skin.setColor(0x888888);
     }
+
+    console.log('Enemy converted to ragdoll');
   }
 
   /**

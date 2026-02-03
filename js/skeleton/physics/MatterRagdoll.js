@@ -31,9 +31,11 @@ export class MatterRagdoll {
     this.settleTime = 0;
     this.settleThreshold = 500;   // ms of low velocity before settled
     this.onSettleCallback = null;
+    this.minSimulationTime = 0;   // Track time since activation
 
-    // Config
+    // Config - IMPORTANT: isStatic must be false for ragdoll to fall
     this.bodyConfig = {
+      isStatic: false,  // CRITICAL: Must be false for physics simulation
       friction: 0.8,
       frictionAir: 0.02,
       restitution: 0.2,
@@ -70,31 +72,66 @@ export class MatterRagdoll {
    * @param {function} config.onSettle - Callback when ragdoll settles
    */
   activate(config = {}) {
-    if (this.active) return;
+    if (this.active) {
+      console.warn('Ragdoll already active');
+      return;
+    }
+
+    console.log('=== RAGDOLL ACTIVATION ===');
 
     const impulse = config.impulse || { x: 0, y: 0 };
     const angularImpulse = config.angularImpulse || 0;
     this.onSettleCallback = config.onSettle || null;
 
-    // Get current world positions from skeleton
+    console.log('Impulse:', impulse);
+    console.log('Angular impulse:', angularImpulse);
+
+    // CRITICAL: Compute world positions BEFORE creating bodies
     this.skeletonInstance.computeWorldPositions();
     const worldPositions = this.skeletonInstance.worldPositions;
+
+    console.log('Skeleton position:', this.skeletonInstance.position);
+    console.log('World positions count:', worldPositions.size);
+
+    // Debug: Log a few bone positions
+    for (const [boneId, pos] of worldPositions) {
+      if (boneId === 'torso' || boneId === 'head' || boneId === 'pelvis') {
+        console.log(`  ${boneId}: (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}) angle: ${pos.angle.toFixed(2)}`);
+      }
+    }
 
     // Create physics bodies for each bone
     this.createBodies(worldPositions);
 
+    console.log('Bodies created:', this.bodies.size);
+
     // Create joint constraints between connected bones
     this.createConstraints();
+
+    console.log('Constraints created:', this.constraints.length);
 
     // Add composite to world
     this.scene.matter.world.add(this.composite);
 
+    console.log('Composite added to world');
+
     // Apply initial impulse to all bodies
     this.applyImpulse(impulse, angularImpulse);
+
+    // Verify bodies are dynamic (not static)
+    for (const [boneId, body] of this.bodies) {
+      if (body.isStatic) {
+        console.error(`ERROR: Body ${boneId} is STATIC - won't fall!`);
+      }
+    }
 
     this.active = true;
     this.frozen = false;
     this.settleTime = 0;
+    this.minSimulationTime = 0;
+
+    console.log('Ragdoll active:', this.active);
+    console.log('=== END ACTIVATION ===');
   }
 
   /**
@@ -108,9 +145,9 @@ export class MatterRagdoll {
         if (pos) {
           // Create tiny sensor body for constraint anchor
           const body = this.Bodies.circle(pos.x, pos.y, 2, {
-            ...this.bodyConfig,
             isSensor: true,
-            label: `ragdoll_${bone.id}`,
+            isStatic: false,  // IMPORTANT: Must be false even for anchors
+            label: `ragdoll_anchor_${bone.id}`,
           });
           // Prevent Phaser from trying to emit events on this raw body
           body.gameObject = null;
@@ -121,29 +158,48 @@ export class MatterRagdoll {
       }
 
       const pos = worldPositions.get(bone.id);
-      if (!pos) return;
+      if (!pos) {
+        console.warn(`No position for bone: ${bone.id}`);
+        return;
+      }
 
       // Calculate body dimensions
       const length = bone.length;
       const thickness = this.boneThickness[bone.id] || 6;
 
-      // Create capsule-like body (rectangle with rounded ends)
-      // Matter.js doesn't have capsules, so we use rectangle
+      // CRITICAL: isStatic must be false for ragdoll to fall
+      const bodyOptions = {
+        isStatic: false,  // MUST BE FALSE
+        friction: 0.8,
+        frictionAir: 0.02,
+        restitution: 0.2,
+        angle: pos.angle,
+        label: `ragdoll_${bone.id}`,
+        chamfer: { radius: thickness / 3 },
+        collisionFilter: {
+          category: CollisionCategories.CORPSE,
+          mask: CollisionMasks.CORPSE,
+        },
+      };
+
+      // Create rectangle body at bone center
       const body = this.Bodies.rectangle(
         (pos.x + pos.endX) / 2,  // Center X
         (pos.y + pos.endY) / 2,  // Center Y
         length,                   // Width = bone length
         thickness,                // Height = bone thickness
-        {
-          ...this.bodyConfig,
-          label: `ragdoll_${bone.id}`,
-          angle: pos.angle,       // Initial rotation
-          chamfer: { radius: thickness / 3 }, // Rounded corners
-        }
+        bodyOptions
       );
+
+      if (!body) {
+        console.error(`Failed to create body for bone: ${bone.id}`);
+        return;
+      }
 
       // Prevent Phaser from trying to emit events on this raw body
       body.gameObject = null;
+
+      console.log(`Created body: ${bone.id} at (${body.position.x.toFixed(1)}, ${body.position.y.toFixed(1)}) static: ${body.isStatic}`);
 
       // Store reference
       this.bodies.set(bone.id, body);
@@ -221,21 +277,38 @@ export class MatterRagdoll {
    * Apply initial impulse to all bodies
    */
   applyImpulse(impulse, angularImpulse) {
+    console.log('Applying impulse to', this.bodies.size, 'bodies');
+
+    // Matter.js velocity scale is roughly 1/60th of Arcade
+    // If impulse is { x: 300, y: -200 } from Arcade,
+    // Matter.js needs { x: 5, y: -3.3 }
+    const velocityScale = 1 / 60;
+
     for (const [boneId, body] of this.bodies) {
+      if (body.isSensor) continue;
+      if (body.isStatic) {
+        console.warn(`Skipping static body: ${boneId}`);
+        continue;
+      }
+
       // Vary impulse by depth for more dynamic motion
       const depth = this.getBoneDepth(boneId);
       const scale = 1 + depth * 0.1;
       const randomVariance = 0.85 + Math.random() * 0.3;
 
-      // Set velocity
-      this.Body.setVelocity(body, {
-        x: impulse.x * scale * randomVariance / 60, // Scale for Matter.js
-        y: impulse.y * scale * randomVariance / 60,
-      });
+      const vx = impulse.x * velocityScale * scale * randomVariance;
+      const vy = impulse.y * velocityScale * scale * randomVariance;
 
-      // Set angular velocity
-      const angularScale = (Math.random() - 0.5) * 0.5 + 1;
-      this.Body.setAngularVelocity(body, angularImpulse * angularScale / 1000);
+      // Set velocity
+      this.Body.setVelocity(body, { x: vx, y: vy });
+
+      // Angular velocity also needs scaling
+      const angVel = angularImpulse * 0.01 * (Math.random() - 0.5 + 0.5);
+      this.Body.setAngularVelocity(body, angVel);
+
+      if (boneId === 'torso') {
+        console.log(`Torso velocity set to: (${vx.toFixed(2)}, ${vy.toFixed(2)})`);
+      }
     }
   }
 
@@ -258,10 +331,19 @@ export class MatterRagdoll {
   update(delta) {
     if (!this.active || this.frozen) return;
 
-    // Check if settled
+    // Track simulation time
+    this.minSimulationTime += delta;
+
+    // Don't check settle for first 500ms - let physics simulate
+    if (this.minSimulationTime < 500) {
+      return; // Still in initial simulation phase
+    }
+
+    // Now check if settled
     if (this.checkSettled()) {
       this.settleTime += delta;
       if (this.settleTime >= this.settleThreshold) {
+        console.log('Ragdoll settled after', this.minSimulationTime.toFixed(0), 'ms');
         this.onSettle();
       }
     } else {
@@ -273,8 +355,8 @@ export class MatterRagdoll {
    * Check if ragdoll has settled (low velocity)
    */
   checkSettled() {
-    const velocityThreshold = 0.5;
-    const angularThreshold = 0.05;
+    const velocityThreshold = 0.3;  // Lowered threshold for Matter.js scale
+    const angularThreshold = 0.03;
 
     for (const body of this.bodies.values()) {
       if (body.isSensor) continue; // Skip anchor bodies
@@ -283,6 +365,11 @@ export class MatterRagdoll {
         body.velocity.x * body.velocity.x +
         body.velocity.y * body.velocity.y
       );
+
+      // Debug: Log velocity occasionally
+      if (Math.random() < 0.005) {
+        console.log(`Body speed: ${speed.toFixed(3)}, angular: ${Math.abs(body.angularVelocity).toFixed(3)}`);
+      }
 
       if (speed > velocityThreshold) return false;
       if (Math.abs(body.angularVelocity) > angularThreshold) return false;
@@ -295,6 +382,7 @@ export class MatterRagdoll {
    * Called when ragdoll settles
    */
   onSettle() {
+    console.log('Ragdoll settle callback triggered');
     if (this.onSettleCallback) {
       this.onSettleCallback(this);
     }
@@ -306,6 +394,8 @@ export class MatterRagdoll {
   freeze() {
     if (this.frozen) return;
     this.frozen = true;
+
+    console.log('Freezing ragdoll');
 
     for (const body of this.bodies.values()) {
       this.Body.setStatic(body, true);
@@ -486,6 +576,8 @@ export class MatterRagdoll {
    * Clean up
    */
   destroy() {
+    console.log('Destroying ragdoll');
+
     // Remove from world
     if (this.composite) {
       this.scene.matter.world.remove(this.composite);
