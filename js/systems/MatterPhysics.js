@@ -16,6 +16,7 @@ export const CollisionCategories = Object.freeze({
   HITBOX:     0x0040,
   HURTBOX:    0x0080,
   SENSOR:     0x0100,
+  BOSS:       0x0200,
 });
 
 // Pre-built collision masks
@@ -32,9 +33,15 @@ export const CollisionMasks = Object.freeze({
           CollisionCategories.CORPSE |
           CollisionCategories.HITBOX,
 
+  // Boss collides with ground, platforms, player hitbox
+  BOSS:   CollisionCategories.GROUND |
+          CollisionCategories.PLATFORM |
+          CollisionCategories.HITBOX,
+
   // Ground collides with everything physical
   GROUND: CollisionCategories.PLAYER |
           CollisionCategories.ENEMY |
+          CollisionCategories.BOSS |
           CollisionCategories.CORPSE,
 
   // Corpses collide with ground, platforms, other corpses, player, enemies
@@ -141,6 +148,28 @@ export function createCorpseBodyConfig() {
       category: CollisionCategories.CORPSE,
       mask: CollisionMasks.CORPSE,
     },
+  };
+}
+
+/**
+ * Create a boss body configuration
+ * @param {number} width - Body width
+ * @param {number} height - Body height
+ * @returns {object} Matter.js body config
+ */
+export function createBossBodyConfig(width, height) {
+  return {
+    label: 'boss',
+    friction: 0.001,
+    frictionAir: 0.02,
+    frictionStatic: 0.5,
+    restitution: 0,
+    collisionFilter: {
+      category: CollisionCategories.BOSS,
+      mask: CollisionMasks.BOSS,
+    },
+    inertia: Infinity,
+    inverseInertia: 0,
   };
 }
 

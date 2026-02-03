@@ -144,14 +144,11 @@ export class TestArenaScene extends BaseScene {
       }
     });
 
-    // Spawn corpse when enemy dies
+    // Enemy death is handled by Enemy.js which creates MatterRagdoll
+    // The CorpseTerrainManager listens for 'corpse:ready' events from ragdolls
     this.events.on('enemy:died', (data) => {
-      if (this.corpseManager) {
-        this.corpseManager.spawn(data.x, data.y, data.enemyType, {
-          width: data.width,
-          height: data.height || 16,
-        });
-      }
+      // Death handling (ragdoll creation) is done in Enemy.die()
+      // No additional action needed here - CorpseTerrainManager handles terrain
     });
 
     // Boss events
@@ -602,252 +599,51 @@ export class TestArenaScene extends BaseScene {
   }
 
   /**
-   * Handle collision between enemy and corpse
-   * Called after collision resolution
-   * @param {Phaser.Physics.Arcade.Sprite} enemySprite
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
+   * Handle collision between enemy and corpse terrain
+   * Note: With Matter.js, corpse terrain collision is automatic via collision categories
+   * This method can be used for special behaviors like Brute corpse destruction
+   * @param {Enemy} enemy - The enemy
+   * @param {MatterJS.Body} terrainBody - The Matter.js terrain body
    */
-  handleEnemyCorpseCollision(enemySprite, corpseSprite) {
-    const enemy = enemySprite.getData('owner');
-    const corpse = corpseSprite.getData('owner');
+  handleEnemyCorpseCollision(enemy, terrainBody) {
+    // With Matter.js, physical collision is handled automatically via collision masks
+    // This method is for special behaviors only
 
-    if (!enemy || !corpse || corpse.state !== 'settled') return;
+    if (!enemy) return;
 
     // Brutes destroy corpses on contact
     if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
-      this.destroyCorpseWithForce(enemy, corpse);
-      return;
-    }
-
-    // For climbing/blocking enemies, handle standing on corpse
-    const enemyBody = enemySprite.body;
-    const corpseBody = corpseSprite.body;
-
-    const enemyBottom = enemyBody.bottom;
-    const corpseTop = corpseBody.top;
-    const isStandingOn = enemyBottom >= corpseTop - 4 && enemyBottom <= corpseTop + 6;
-
-    if (isStandingOn && enemyBody.velocity.y >= 0) {
-      // Snap enemy to stand on top of corpse
-      enemySprite.y = corpseTop - enemyBody.halfHeight;
-      enemyBody.velocity.y = 0;
-
-      // Mark enemy as grounded for AI/movement purposes
-      enemyBody.blocked.down = true;
+      // Find and remove the corpse from terrain manager
+      if (this.corpseTerrainManager) {
+        this.corpseTerrainManager.removeTerrainByBody(terrainBody);
+      }
     }
   }
 
   /**
-   * Process callback for enemy-corpse collision
-   * Handles step-up positioning for climbing enemies
-   * @param {Phaser.Physics.Arcade.Sprite} enemySprite
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
-   * @returns {boolean} Whether to apply collision physics
-   */
-  shouldEnemyCollideWithCorpse(enemySprite, corpseSprite) {
-    const enemy = enemySprite.getData('owner');
-    const corpse = corpseSprite.getData('owner');
-
-    // Only collide with settled corpses (they have static platform bodies)
-    if (!corpse || corpse.state !== 'settled') {
-      return false;
-    }
-
-    if (!enemy) return true;
-
-    const enemyBody = enemySprite.body;
-    const corpseBody = corpseSprite.body;
-    const enemyBottom = enemyBody.bottom;
-    const corpseTop = corpseBody.top;
-    const heightDiff = enemyBottom - corpseTop;
-
-    // Brutes destroy corpses on contact
-    if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
-      return true; // Collision triggers destruction in handler
-    }
-
-    // Blocking enemies are fully blocked by corpses
-    if (enemy.corpseInteraction === CORPSE_INTERACTION.BLOCK) {
-      // Don't collide if too far below (prevents getting stuck on sides)
-      if (heightDiff > 16) {
-        return false;
-      }
-      return true;
-    }
-
-    // Climbing enemies (CORPSE_INTERACTION.CLIMB)
-    const stepUpHeight = enemy.stepUpHeight || 32;
-
-    // Enemy is above or at corpse top - normal collision for standing/landing
-    if (enemyBottom <= corpseTop + 4) {
-      return true;
-    }
-
-    // Enemy below corpse top but within step-up range - assist step-up
-    const canStepUp = heightDiff > 0 && heightDiff <= stepUpHeight;
-    const isMoving = Math.abs(enemyBody.velocity.x) > 5 || enemyBody.velocity.y !== 0;
-
-    if (canStepUp && isMoving) {
-      // Smoothly step up onto corpse
-      const targetY = corpseTop - enemyBody.halfHeight;
-
-      if (enemySprite.y > targetY + 2) {
-        // Gradual step-up for smoother movement
-        const stepSpeed = 3;
-        enemySprite.y -= stepSpeed;
-
-        // Snap to final position when close
-        if (enemySprite.y <= targetY + stepSpeed) {
-          enemySprite.y = targetY;
-        }
-
-        // Neutralize downward velocity during step-up
-        if (enemyBody.velocity.y > 0) {
-          enemyBody.velocity.y = 0;
-        }
-      }
-      return true;
-    }
-
-    // Enemy too far below - don't collide (prevents getting stuck on sides)
-    if (heightDiff > stepUpHeight) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Destroy a corpse with knockback force (used by Brutes)
+   * Destroy corpse terrain with visual effect
    * @param {Enemy} enemy - The enemy destroying the corpse
-   * @param {Object} corpse - The corpse being destroyed
+   * @param {MatterJS.Body} terrainBody - The terrain body to destroy
    */
-  destroyCorpseWithForce(enemy, corpse) {
-    // Prevent double-destruction
-    if (corpse._beingDestroyed) return;
-    corpse._beingDestroyed = true;
+  destroyCorpseWithEffect(enemy, terrainBody) {
+    if (!terrainBody) return;
 
-    // Determine knockback direction (away from enemy)
-    const direction = corpse.sprite.x > enemy.sprite.x ? 1 : -1;
-    const force = enemy.corpseDestroyForce || 300;
+    const x = terrainBody.position.x;
+    const y = terrainBody.position.y;
 
-    // Re-enable corpse body as dynamic for knockback effect
-    if (corpse.sprite.body) {
-      corpse.sprite.body.enable = true;
-      corpse.sprite.body.moves = true;
-      corpse.sprite.body.setImmovable(false);
-      corpse.sprite.body.setAllowGravity(true);
-      // Restore full body size for flying effect
-      corpse.sprite.body.setSize(corpse.config.width, corpse.config.height);
-      corpse.sprite.body.setOffset(0, 0);
-      // Apply knockback force
-      corpse.sprite.body.setVelocity(direction * force, -200);
+    // Visual feedback - particles
+    if (this.effectsManager) {
+      this.effectsManager.createImpact(x, y, { color: 0x666666, count: 5 });
     }
 
-    // Visual feedback - flash red
-    corpse.sprite.setTint(0xff4444);
-
-    // Destroy after brief delay (shows the knockback)
-    this.time.delayedCall(200, () => {
-      // Emit particles at corpse position if EffectsManager exists
-      if (this.effectsManager) {
-        this.effectsManager.createImpact(
-          corpse.sprite.x,
-          corpse.sprite.y,
-          { color: 0x666666, count: 5 }
-        );
-      }
-      this.corpseManager.remove(corpse);
-    });
+    // Remove from terrain manager
+    if (this.corpseTerrainManager) {
+      this.corpseTerrainManager.removeTerrainByBody(terrainBody);
+    }
   }
 
-  /**
-   * Process callback for player-corpse collision
-   * Enables smooth step-up onto corpse piles
-   * @param {Phaser.Physics.Arcade.Sprite} playerSprite
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
-   * @returns {boolean} Whether to apply collision physics
-   */
-  shouldPlayerCollideWithCorpse(playerSprite, corpseSprite) {
-    const corpse = corpseSprite.getData('owner');
-
-    // Only collide with settled corpses (they have static platform bodies)
-    if (!corpse || corpse.state !== 'settled') {
-      return false;
-    }
-
-    const playerBody = playerSprite.body;
-    const corpseBody = corpseSprite.body;
-
-    // Corpse body is a thin platform at the top, so corpseBody.top is the walking surface
-    const playerBottom = playerBody.bottom;
-    const corpseTop = corpseBody.top;
-    const heightDiff = playerBottom - corpseTop;
-
-    // Player is above or at the corpse top level - normal collision for standing/landing
-    if (playerBottom <= corpseTop + 4) {
-      return true;
-    }
-
-    // Player is below corpse top but within step-up range
-    // Assist by nudging player up onto the platform
-    const canStepUp = heightDiff > 0 && heightDiff <= this.playerStepUpHeight;
-    const isMoving = Math.abs(playerBody.velocity.x) > 5 || playerBody.velocity.y !== 0;
-
-    if (canStepUp && isMoving) {
-      // Smoothly step up: position player on top of corpse
-      const targetY = corpseTop - playerBody.halfHeight;
-
-      if (playerSprite.y > targetY + 2) {
-        // Gradual step-up for smoother feel
-        const stepSpeed = 4;
-        playerSprite.y -= stepSpeed;
-
-        // If close enough, snap to final position
-        if (playerSprite.y <= targetY + stepSpeed) {
-          playerSprite.y = targetY;
-        }
-
-        // Neutralize downward velocity during step-up
-        if (playerBody.velocity.y > 0) {
-          playerBody.velocity.y = 0;
-        }
-      }
-      return true;
-    }
-
-    // Player too far below - don't collide (prevents getting stuck on sides)
-    if (heightDiff > this.playerStepUpHeight) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Handle collision between player and corpse
-   * Called after collision resolution
-   * @param {Phaser.Physics.Arcade.Sprite} playerSprite
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
-   */
-  handlePlayerCorpseCollision(playerSprite, corpseSprite) {
-    const playerBody = playerSprite.body;
-    const corpseBody = corpseSprite.body;
-
-    // Check if player is standing on top of this corpse
-    const playerBottom = playerBody.bottom;
-    const corpseTop = corpseBody.top;
-    const isStandingOn = playerBottom >= corpseTop - 4 && playerBottom <= corpseTop + 6;
-
-    if (isStandingOn && playerBody.velocity.y >= 0) {
-      // Snap player to stand exactly on top for clean landing
-      playerSprite.y = corpseTop - playerBody.halfHeight;
-      playerBody.velocity.y = 0;
-
-      // Mark player as touching ground (for jump detection)
-      playerBody.blocked.down = true;
-    }
-  }
+  // Note: Player-corpse and enemy-corpse collisions are handled automatically by Matter.js
+  // via collision categories defined in MatterPhysics.js. No manual callbacks needed.
 
   updateDebugHUD() {
     const pDebug = this.player.getDebugInfo();
@@ -962,9 +758,13 @@ export class TestArenaScene extends BaseScene {
       this.audioManager.destroy();
       this.audioManager = null;
     }
-    if (this.corpseManager) {
-      this.corpseManager.destroy();
-      this.corpseManager = null;
+    if (this.corpseTerrainManager) {
+      this.corpseTerrainManager.destroy();
+      this.corpseTerrainManager = null;
+    }
+    if (this.corpseRenderer) {
+      this.corpseRenderer.destroy();
+      this.corpseRenderer = null;
     }
   }
 }

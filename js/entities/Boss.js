@@ -1,10 +1,18 @@
 import { COMBAT } from '../utils/combat.js';
 import { PHYSICS } from '../utils/physics.js';
-import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
+import { BOX_TYPE, TEAM } from '../systems/CombatManagerMatter.js';
+import {
+  CollisionCategories,
+  CollisionMasks,
+  createBossBodyConfig,
+  createHurtboxConfig,
+  MatterPhysicsHelper
+} from '../systems/MatterPhysics.js';
 
 /**
  * Boss entity base class
  * Handles phases, attack patterns, and transitions
+ * Uses Matter.js physics
  */
 export class Boss {
   /**
@@ -28,6 +36,10 @@ export class Boss {
     this.damage = config.damage;
     this.isAlive = true;
     this.isInvulnerable = false;
+
+    // Dimensions
+    this.bodyWidth = config.width || 64;
+    this.bodyHeight = config.height || 80;
 
     // Phase system
     this.currentPhase = 0;
@@ -54,39 +66,52 @@ export class Boss {
     this.hitstunRemaining = 0;
     this.hitstunResistance = config.hitstunResistance || 0.3;
 
-    // Create sprite
-    this.sprite = scene.physics.add.sprite(x, y, 'boss_placeholder');
-    this.sprite.setDisplaySize(config.width || 64, config.height || 80);
-    this.sprite.setTint(config.color || 0xff0000);
-    this.body = this.sprite.body;
-    this.body.setCollideWorldBounds(true);
+    // Create visual sprite (no physics, just graphics)
+    this.sprite = scene.add.rectangle(x, y, this.bodyWidth, this.bodyHeight, config.color || 0xff0000);
+    this.sprite.setDepth(5);
 
-    // Apply gravity so boss doesn't float
-    this.body.setGravityY(PHYSICS.GRAVITY);
-    this.body.setMaxVelocityY(PHYSICS.TERMINAL_VELOCITY);
+    // Add compatibility properties for existing code
+    this.sprite.flipX = false;
+    this.sprite.setFlipX = (flip) => {
+      this.sprite.flipX = flip;
+      // Could also flip the sprite visually if needed
+    };
+
+    // Create Matter.js physics body
+    const bodyConfig = createBossBodyConfig(this.bodyWidth, this.bodyHeight);
+    this.body = scene.matter.add.rectangle(
+      x, y,
+      this.bodyWidth,
+      this.bodyHeight,
+      bodyConfig
+    );
+
+    // Store reference to owner on body for collision callbacks
+    this.body.gameObject = this;
+    this.body.label = 'boss';
+
+    // Create Matter.js physics helper
+    this.matterHelper = new MatterPhysicsHelper(scene);
+
+    // Ground contact tracking
+    this.groundContacts = 0;
+    this._isOnGround = false;
+
+    // Setup collision events
+    this.setupCollisionEvents();
+
+    // Terminal velocity (Matter.js scale - roughly divide Arcade by 60)
+    this.maxVelocityY = PHYSICS.TERMINAL_VELOCITY / 60; // ~30
 
     // Health bar (special boss health bar)
     this.createHealthBar();
 
     // Hitbox for attacks (set by subclass)
     this.hitbox = null;
+    this.hitboxBody = null;
 
-    // Create hurtbox so boss can be damaged
-    this.hurtbox = new CombatBox(scene, {
-      owner: this,
-      type: BOX_TYPE.HURTBOX,
-      team: TEAM.ENEMY,
-      width: config.width || 64,
-      height: config.height || 80,
-      offsetX: 0,
-      offsetY: 0,
-    });
-
-    // Register hurtbox with combat manager
-    if (scene.combatManager) {
-      scene.combatManager.register(this.hurtbox);
-    }
-    this.hurtbox.activate();
+    // Create hurtbox (Matter.js sensor)
+    this.createHurtbox();
 
     // Store reference on sprite for combat system
     this.sprite.setData('owner', this);
@@ -94,6 +119,99 @@ export class Boss {
     // Register with scene
     if (scene.currentBoss === undefined) {
       scene.currentBoss = this;
+    }
+  }
+
+  /**
+   * Setup Matter.js collision events
+   */
+  setupCollisionEvents() {
+    this.scene.matter.world.on('collisionstart', (event) => {
+      for (const pair of event.pairs) {
+        this.handleCollisionStart(pair);
+      }
+    });
+
+    this.scene.matter.world.on('collisionend', (event) => {
+      for (const pair of event.pairs) {
+        this.handleCollisionEnd(pair);
+      }
+    });
+  }
+
+  /**
+   * Handle collision start
+   * @param {object} pair - Collision pair
+   */
+  handleCollisionStart(pair) {
+    const { bodyA, bodyB } = pair;
+    const isA = bodyA === this.body;
+    const isB = bodyB === this.body;
+    if (!isA && !isB) return;
+
+    const other = isA ? bodyB : bodyA;
+    const category = other.collisionFilter?.category || 0;
+
+    // Check for ground contact
+    if (category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM)) {
+      // Check if collision is from below (we're on top)
+      const normal = pair.collision.normal;
+      const ny = isA ? normal.y : -normal.y;
+      if (ny < -0.5) {
+        this.groundContacts++;
+        this._isOnGround = true;
+      }
+    }
+  }
+
+  /**
+   * Handle collision end
+   * @param {object} pair - Collision pair
+   */
+  handleCollisionEnd(pair) {
+    const { bodyA, bodyB } = pair;
+    const isA = bodyA === this.body;
+    const isB = bodyB === this.body;
+    if (!isA && !isB) return;
+
+    const other = isA ? bodyB : bodyA;
+    const category = other.collisionFilter?.category || 0;
+
+    if (category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM)) {
+      this.groundContacts = Math.max(0, this.groundContacts - 1);
+      if (this.groundContacts === 0) {
+        this._isOnGround = false;
+      }
+    }
+  }
+
+  /**
+   * Create Matter.js hurtbox sensor
+   */
+  createHurtbox() {
+    const hurtboxConfig = createHurtboxConfig('boss_hurtbox');
+    this.hurtboxBody = this.scene.matter.add.rectangle(
+      this.sprite.x,
+      this.sprite.y,
+      this.bodyWidth,
+      this.bodyHeight,
+      hurtboxConfig
+    );
+
+    // Store reference to owner
+    this.hurtboxBody.gameObject = this;
+
+    // Register hurtbox with combat manager
+    if (this.scene.combatManager) {
+      this.scene.combatManager.registerHurtbox(this.hurtboxBody, {
+        owner: this,
+        team: TEAM.ENEMY,
+      });
+      // Activate hurtbox
+      const hurtboxData = this.scene.combatManager.hurtboxes.get(this.hurtboxBody.id);
+      if (hurtboxData) {
+        hurtboxData.active = true;
+      }
     }
   }
 
@@ -195,6 +313,26 @@ export class Boss {
   update(time, delta) {
     if (!this.isAlive) return;
 
+    // Sync sprite position with physics body
+    this.sprite.x = this.body.position.x;
+    this.sprite.y = this.body.position.y;
+
+    // Sync hurtbox position
+    if (this.hurtboxBody) {
+      this.scene.matter.body.setPosition(this.hurtboxBody, {
+        x: this.body.position.x,
+        y: this.body.position.y
+      });
+    }
+
+    // Clamp vertical velocity (terminal velocity)
+    if (this.body.velocity.y > this.maxVelocityY) {
+      this.scene.matter.body.setVelocity(this.body, {
+        x: this.body.velocity.x,
+        y: this.maxVelocityY
+      });
+    }
+
     // Update timers
     this.stateTimer += delta;
     this.globalCooldown = Math.max(0, this.globalCooldown - delta);
@@ -209,7 +347,7 @@ export class Boss {
       this.hitstunRemaining -= delta;
       if (this.hitstunRemaining <= 0) {
         this.hitstunRemaining = 0;
-        this.sprite.clearTint();
+        this.sprite.setFillStyle(this.config.color || 0xff0000);
       }
       return;
     }
@@ -239,12 +377,7 @@ export class Boss {
     // Face player
     if (this.scene.player && this.state !== 'ATTACKING') {
       this.facingDirection = this.scene.player.sprite.x < this.sprite.x ? -1 : 1;
-      this.sprite.setFlipX(this.facingDirection < 0);
-    }
-
-    // Update hurtbox position
-    if (this.hurtbox) {
-      this.hurtbox.updatePosition();
+      this.sprite.flipX = this.facingDirection < 0;
     }
 
     // Update health bar
@@ -270,12 +403,16 @@ export class Boss {
     const distance = this.getDistanceToPlayer();
     const idealRange = this.config.idealRange || 150;
 
+    // Matter.js velocity scale (divide Arcade by ~60)
+    const chaseSpeed = (this.config.chaseSpeed || 200) / 60; // ~3.3
+    const backSpeed = 100 / 60; // ~1.67
+
     if (distance > idealRange + 50) {
       // Too far - move toward player
-      this.moveTowardPlayer(this.config.chaseSpeed || 200);
+      this.moveTowardPlayer(chaseSpeed);
     } else if (distance < idealRange - 30) {
       // Too close - back away slightly
-      this.body.setVelocityX(-this.facingDirection * 100);
+      this.matterHelper.setVelocityX(this.body, -this.facingDirection * backSpeed);
     } else {
       // In range - stop moving
       this.stopMovement();
@@ -382,7 +519,7 @@ export class Boss {
     // Invulnerable during transition
     if (this.stateTimer >= 2000) {
       this.isInvulnerable = false;
-      this.sprite.clearTint();
+      this.sprite.setFillStyle(this.config.color || 0xff0000);
       this.setState('IDLE');
     }
   }
@@ -426,7 +563,7 @@ export class Boss {
     // Reduced hitstun for bosses
     const baseHitstun = hitData?.hitstun || 100;
     this.hitstunRemaining = baseHitstun * this.hitstunResistance;
-    this.sprite.setTint(0xff8888);
+    this.sprite.setFillStyle(0xff8888);
 
     // Check for phase transition
     this.checkPhaseTransition();
@@ -465,7 +602,7 @@ export class Boss {
     this.setState('PHASE_TRANSITION');
 
     // Visual feedback
-    this.sprite.setTint(0xffff00);
+    this.sprite.setFillStyle(0xffff00);
 
     if (this.scene.effectsManager) {
       this.scene.effectsManager.screenShake(8, 500);
@@ -568,11 +705,11 @@ export class Boss {
 
   /**
    * Move toward player
-   * @param {number} speed
+   * @param {number} speed - Matter.js velocity scale (~2-10)
    */
   moveTowardPlayer(speed) {
     const direction = this.getDirectionToPlayer();
-    this.body.setVelocityX(direction * speed);
+    this.matterHelper.setVelocityX(this.body, direction * speed);
     this.facingDirection = direction;
   }
 
@@ -580,15 +717,15 @@ export class Boss {
    * Stop movement
    */
   stopMovement() {
-    this.body.setVelocityX(0);
+    this.matterHelper.setVelocityX(this.body, 0);
   }
 
   /**
-   * Add collider with target
-   * @param {*} target
+   * Set X velocity (Matter.js scale)
+   * @param {number} vx - X velocity in Matter.js scale
    */
-  addCollider(target) {
-    this.scene.physics.add.collider(this.sprite, target);
+  setVelocityX(vx) {
+    this.matterHelper.setVelocityX(this.body, vx);
   }
 
   /**
@@ -611,12 +748,7 @@ export class Boss {
    * @param {boolean} show - Whether to show debug graphics
    */
   setCombatDebug(show) {
-    if (this.hurtbox) {
-      this.hurtbox.setDebug(show);
-    }
-    if (this.hitbox) {
-      this.hitbox.setDebug(show);
-    }
+    // Combat debug is handled by CombatManagerMatter
   }
 
   /**
@@ -627,17 +759,20 @@ export class Boss {
       this.healthBarContainer.destroy();
     }
     // Unregister hurtbox from combat manager before destroying
-    if (this.hurtbox) {
+    if (this.hurtboxBody) {
       if (this.scene.combatManager) {
-        this.scene.combatManager.unregister(this.hurtbox);
+        this.scene.combatManager.hurtboxes.delete(this.hurtboxBody.id);
       }
-      this.hurtbox.destroy();
+      this.scene.matter.world.remove(this.hurtboxBody);
     }
-    if (this.hitbox) {
+    if (this.hitboxBody) {
       if (this.scene.combatManager) {
-        this.scene.combatManager.unregister(this.hitbox);
+        this.scene.combatManager.hitboxes.delete(this.hitboxBody.id);
       }
-      this.hitbox.destroy();
+      this.scene.matter.world.remove(this.hitboxBody);
+    }
+    if (this.body) {
+      this.scene.matter.world.remove(this.body);
     }
     if (this.sprite) {
       this.sprite.destroy();

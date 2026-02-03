@@ -650,8 +650,9 @@ export class Enemy {
     // Visibility flag
     this.showSkeleton = true;
 
-    // Hide the sprite - skeleton handles visuals now
-    this.sprite.setVisible(false);
+    // Hide the rectangle sprite directly (not using custom setVisible which propagates to skin)
+    // The skeleton/skin handles visuals now
+    this.sprite.visible = false;
   }
 
   /**

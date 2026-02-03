@@ -1,3 +1,13 @@
+/**
+ * @deprecated This file uses Arcade Physics and is no longer used.
+ * The game has migrated to Matter.js. Use the following instead:
+ * - CorpseTerrainManager.js for corpse terrain management
+ * - CorpseRenderer.js for corpse visualization
+ * - MatterRagdoll.js for ragdoll physics
+ *
+ * This file is kept for reference only and may be removed in the future.
+ */
+
 import { PHYSICS } from '../utils/physics.js';
 
 /**
