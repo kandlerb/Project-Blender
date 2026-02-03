@@ -313,7 +313,8 @@ export class Enemy {
     );
 
     // Store reference on body for collision callbacks
-    this.body.gameObject = this;
+    // Note: Use 'owner' not 'gameObject' - Phaser reserves gameObject for internal use
+    this.body.owner = this;
     this.body.label = 'enemy';
 
     // Create visual sprite (no physics, just graphics)
@@ -527,7 +528,7 @@ export class Enemy {
       this.stats.height,
       createHurtboxConfig('enemy_hurtbox')
     );
-    this.hurtboxBody.gameObject = this;
+    this.hurtboxBody.owner = this;
 
     // Create Matter.js sensor for attack hitbox
     this.hitboxBody = this.scene.matter.add.rectangle(
@@ -537,7 +538,7 @@ export class Enemy {
       attackHeight,
       createHitboxConfig('enemy_hitbox')
     );
-    this.hitboxBody.gameObject = this;
+    this.hitboxBody.owner = this;
 
     // Store hitbox data for combat resolution
     this.hitboxData = {

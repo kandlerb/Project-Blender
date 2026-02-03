@@ -46,7 +46,8 @@ export class Player {
     );
 
     // Store owner reference on body for collision callbacks
-    this.body.gameObject = this;
+    // Note: Use 'owner' not 'gameObject' - Phaser reserves gameObject for internal use
+    this.body.owner = this;
     this.body.label = 'player';
 
     // Create visual sprite (no physics, just graphics for compatibility)
@@ -152,7 +153,7 @@ export class Player {
       x, y, this.hurtboxWidth, this.hurtboxHeight,
       createHurtboxConfig('player_hurtbox')
     );
-    this.hurtboxBody.gameObject = this;
+    this.hurtboxBody.owner = this;
 
     // Create Matter.js sensor for primary attack hitbox
     this.hitboxBody = scene.matter.add.rectangle(
@@ -160,7 +161,7 @@ export class Player {
       this.hitboxWidth, this.hitboxHeight,
       createHitboxConfig('player_hitbox')
     );
-    this.hitboxBody.gameObject = this;
+    this.hitboxBody.owner = this;
 
     // Create Matter.js sensor for secondary attack hitbox (spin attacks)
     this.hitboxBodySecondary = scene.matter.add.rectangle(
@@ -168,7 +169,7 @@ export class Player {
       this.hitboxWidth, this.hitboxHeight,
       createHitboxConfig('player_hitbox_secondary')
     );
-    this.hitboxBodySecondary.gameObject = this;
+    this.hitboxBodySecondary.owner = this;
 
     // Store hitbox data for combat resolution
     this.hitboxData = {
