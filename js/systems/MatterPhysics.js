@@ -270,22 +270,33 @@ export class MatterPhysicsHelper {
    * @returns {boolean} True if touching ground below
    */
   isTouchingDown(body) {
+    if (!body) return false;
+
     // Matter.js stores collision pairs, check if any are below
-    const pairs = this.matter.world.engine.pairs.list;
+    const pairs = this.matter.world.engine?.pairs?.list;
+    if (!pairs) return false;
+
     for (const pair of pairs) {
-      if (!pair.isActive) continue;
+      if (!pair?.isActive) continue;
+
+      // Guard against missing bodies (may have been removed)
+      if (!pair.bodyA || !pair.bodyB) continue;
 
       const isBodyA = pair.bodyA === body;
       const isBodyB = pair.bodyB === body;
       if (!isBodyA && !isBodyB) continue;
 
       const other = isBodyA ? pair.bodyB : pair.bodyA;
-      const category = other.collisionFilter.category;
+
+      // Guard against missing collision filter
+      const category = other?.collisionFilter?.category || 0;
 
       // Check if colliding with ground-like surface
       if (category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE)) {
         // Check if collision normal points up (we're on top)
-        const normal = pair.collision.normal;
+        const normal = pair.collision?.normal;
+        if (!normal) continue;
+
         // Normal points from A to B, adjust based on which body we are
         const ny = isBodyA ? normal.y : -normal.y;
         if (ny < -0.5) {  // Normal points upward relative to our body

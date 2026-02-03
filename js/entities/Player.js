@@ -237,11 +237,16 @@ export class Player {
    * @param {object} pair - Collision pair
    */
   handleCollisionStart(pair) {
+    // Guard against invalid pairs (bodies may have been removed)
+    if (!pair || !pair.bodyA || !pair.bodyB) return;
+
     const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
     if (!dominated) return;
 
     const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
-    const category = other.collisionFilter.category;
+
+    // Guard against missing collision filter (body may have been removed)
+    const category = other?.collisionFilter?.category || 0;
 
     // Check if it's a ground-like surface
     if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
@@ -249,6 +254,7 @@ export class Player {
     }
 
     // Check collision normal to determine contact direction
+    if (!pair.collision?.normal) return;
     const normal = pair.collision.normal;
     const ny = pair.bodyA === this.body ? normal.y : -normal.y;
     const nx = pair.bodyA === this.body ? normal.x : -normal.x;
@@ -274,11 +280,16 @@ export class Player {
    * @param {object} pair - Collision pair
    */
   handleCollisionEnd(pair) {
+    // Guard against invalid pairs (bodies may have been removed)
+    if (!pair || !pair.bodyA || !pair.bodyB) return;
+
     const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
     if (!dominated) return;
 
     const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
-    const category = other.collisionFilter.category;
+
+    // Guard against missing collision filter (body may have been removed)
+    const category = other?.collisionFilter?.category || 0;
 
     // Check if it's a ground-like surface
     if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
@@ -286,6 +297,7 @@ export class Player {
     }
 
     // Check collision normal to determine which contact ended
+    if (!pair.collision?.normal) return;
     const normal = pair.collision.normal;
     const ny = pair.bodyA === this.body ? normal.y : -normal.y;
     const nx = pair.bodyA === this.body ? normal.x : -normal.x;

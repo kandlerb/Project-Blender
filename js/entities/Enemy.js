@@ -426,11 +426,16 @@ export class Enemy {
    * @param {object} pair - Collision pair
    */
   handleCollisionStart(pair) {
+    // Guard against invalid pairs (bodies may have been removed)
+    if (!pair || !pair.bodyA || !pair.bodyB) return;
+
     const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
     if (!dominated) return;
 
     const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
-    const category = other.collisionFilter.category;
+
+    // Guard against missing collision filter (body may have been removed)
+    const category = other?.collisionFilter?.category || 0;
 
     // Check if it's a ground-like surface
     if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
@@ -438,6 +443,7 @@ export class Enemy {
     }
 
     // Check collision normal to determine contact direction
+    if (!pair.collision?.normal) return;
     const normal = pair.collision.normal;
     const ny = pair.bodyA === this.body ? normal.y : -normal.y;
     const nx = pair.bodyA === this.body ? normal.x : -normal.x;
@@ -463,16 +469,22 @@ export class Enemy {
    * @param {object} pair - Collision pair
    */
   handleCollisionEnd(pair) {
+    // Guard against invalid pairs (bodies may have been removed)
+    if (!pair || !pair.bodyA || !pair.bodyB) return;
+
     const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
     if (!dominated) return;
 
     const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
-    const category = other.collisionFilter.category;
+
+    // Guard against missing collision filter (body may have been removed)
+    const category = other?.collisionFilter?.category || 0;
 
     if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
       return;
     }
 
+    if (!pair.collision?.normal) return;
     const normal = pair.collision.normal;
     const ny = pair.bodyA === this.body ? normal.y : -normal.y;
     const nx = pair.bodyA === this.body ? normal.x : -normal.x;
@@ -2094,6 +2106,7 @@ export class Enemy {
 
   /**
    * Disable combat bodies - call BEFORE ragdoll creation
+   * Uses deferred removal to prevent stale references in collision callbacks
    */
   disableCombatBodies() {
     console.log('Disabling combat bodies');
@@ -2101,7 +2114,7 @@ export class Enemy {
     // Deactivate attack hitbox
     this.deactivateHitbox();
 
-    // Unregister from combat manager FIRST
+    // Unregister from combat manager FIRST (synchronous, prevents new hits)
     if (this.scene.combatManager) {
       if (this.hitboxBody) {
         if (this.scene.combatManager.deactivateHitbox) {
@@ -2122,14 +2135,27 @@ export class Enemy {
       }
     }
 
-    // Remove from physics world
+    // DEFER body removal to end of frame
+    // This prevents "Cannot read properties of null (reading 'index')" errors
+    // when bodies are removed while Matter.js is still iterating collision pairs
     if (this.hitboxBody) {
-      this.scene.matter.world.remove(this.hitboxBody);
-      this.hitboxBody = null;
+      const hitboxToRemove = this.hitboxBody;
+      this.hitboxBody = null; // Clear reference immediately to prevent reuse
+      this.scene.time.delayedCall(0, () => {
+        if (hitboxToRemove && this.scene?.matter?.world) {
+          this.scene.matter.world.remove(hitboxToRemove);
+        }
+      });
     }
+
     if (this.hurtboxBody) {
-      this.scene.matter.world.remove(this.hurtboxBody);
+      const hurtboxToRemove = this.hurtboxBody;
       this.hurtboxBody = null;
+      this.scene.time.delayedCall(0, () => {
+        if (hurtboxToRemove && this.scene?.matter?.world) {
+          this.scene.matter.world.remove(hurtboxToRemove);
+        }
+      });
     }
   }
 

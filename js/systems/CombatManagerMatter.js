@@ -77,11 +77,15 @@ export class CombatManagerMatter {
    * @param {object} pair - Collision pair
    */
   handleCollision(pair) {
+    // Guard against invalid pairs (bodies may have been removed mid-iteration)
+    if (!pair) return;
     const { bodyA, bodyB } = pair;
+    if (!bodyA || !bodyB) return;
 
     // Check if this is a hitbox-hurtbox collision
-    const catA = bodyA.collisionFilter.category;
-    const catB = bodyB.collisionFilter.category;
+    // Use optional chaining for safety - bodies may have been removed
+    const catA = bodyA.collisionFilter?.category || 0;
+    const catB = bodyB.collisionFilter?.category || 0;
 
     // Hitbox hitting hurtbox
     if (catA === CollisionCategories.HITBOX && catB === CollisionCategories.HURTBOX) {
@@ -160,6 +164,7 @@ export class CombatManagerMatter {
    * @param {MatterJS.BodyType} body
    */
   unregisterHitbox(body) {
+    if (!body) return; // Guard against null body
     this.hitboxes.delete(body.id);
     this.hitTracker.delete(body.id);
   }
@@ -169,6 +174,7 @@ export class CombatManagerMatter {
    * @param {MatterJS.BodyType} body
    */
   unregisterHurtbox(body) {
+    if (!body) return; // Guard against null body
     this.hurtboxes.delete(body.id);
   }
 
@@ -198,6 +204,7 @@ export class CombatManagerMatter {
    * @param {MatterJS.BodyType} body
    */
   deactivateHitbox(body) {
+    if (!body) return; // Guard against null body
     const hitbox = this.hitboxes.get(body.id);
     if (hitbox) {
       hitbox.active = false;
