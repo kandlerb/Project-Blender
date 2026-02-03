@@ -845,6 +845,16 @@ export class Enemy {
   }
 
   /**
+   * Set horizontal velocity directly
+   * @param {number} vx - Velocity (positive = right, negative = left)
+   */
+  setVelocityX(vx) {
+    // Matter.js uses smaller velocity values
+    const matterVx = vx / 60;
+    this.matterHelper.setVelocityX(this.body, matterVx);
+  }
+
+  /**
    * Set vertical velocity
    * @param {number} vy - Velocity (positive = down, negative = up)
    */
@@ -863,6 +873,111 @@ export class Enemy {
       x: this.body.position.x,
       y: this.body.position.y,
     };
+  }
+
+  /**
+   * Get current velocity
+   * @returns {{x: number, y: number}}
+   */
+  getVelocity() {
+    return {
+      x: this.body.velocity.x,
+      y: this.body.velocity.y,
+    };
+  }
+
+  /**
+   * Check if enemy is blocked horizontally (hitting a wall)
+   * @returns {boolean}
+   */
+  isBlockedHorizontally() {
+    return this.wallContactLeft > 0 || this.wallContactRight > 0;
+  }
+
+  /**
+   * Check if blocked on left side
+   * @returns {boolean}
+   */
+  isBlockedLeft() {
+    return this.wallContactLeft > 0;
+  }
+
+  /**
+   * Check if blocked on right side
+   * @returns {boolean}
+   */
+  isBlockedRight() {
+    return this.wallContactRight > 0;
+  }
+
+  /**
+   * Check if there's ground ahead (for edge detection)
+   * Prevents walking off platforms
+   * @returns {boolean}
+   */
+  hasGroundAhead() {
+    const direction = this.facingRight ? 1 : -1;
+    const checkDistance = this.bodyWidth / 2 + 10;
+    const checkDepth = this.bodyHeight / 2 + 20;
+
+    const startX = this.body.position.x + (checkDistance * direction);
+    const startY = this.body.position.y + this.bodyHeight / 2;
+    const endY = startY + checkDepth;
+
+    const allBodies = Phaser.Physics.Matter.Matter.Composite.allBodies(
+      this.scene.matter.world.localWorld
+    );
+
+    const results = Phaser.Physics.Matter.Matter.Query.ray(
+      allBodies,
+      { x: startX, y: startY },
+      { x: startX, y: endY },
+      checkDepth
+    );
+
+    for (const result of results) {
+      const category = result.body.collisionFilter?.category || 0;
+      if (category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Get distance to player
+   * @returns {number}
+   */
+  getDistanceToPlayer() {
+    if (!this.target) return Infinity;
+    const targetPos = this.target.getPosition ? this.target.getPosition() :
+                      { x: this.target.body?.position?.x || this.target.sprite?.x || 0,
+                        y: this.target.body?.position?.y || this.target.sprite?.y || 0 };
+    const dx = targetPos.x - this.body.position.x;
+    const dy = targetPos.y - this.body.position.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  /**
+   * Get direction to player (-1 or 1)
+   * @returns {number}
+   */
+  getDirectionToPlayer() {
+    if (!this.target) return 0;
+    const targetPos = this.target.getPosition ? this.target.getPosition() :
+                      { x: this.target.body?.position?.x || this.target.sprite?.x || 0 };
+    return targetPos.x < this.body.position.x ? -1 : 1;
+  }
+
+  /**
+   * Check if player is in range
+   * @param {number} range - Detection range
+   * @returns {boolean}
+   */
+  canSeePlayer(range = 200) {
+    if (!this.target) return false;
+    return this.getDistanceToPlayer() <= range;
   }
 
   // ============================================
@@ -1128,9 +1243,11 @@ export class Enemy {
     if (this.corpseInteraction !== CORPSE_INTERACTION.CLIMB) return false;
     if (this.stepUpHeight <= 0) return false;
 
-    // Calculate height difference
-    const enemyBottom = this.sprite.body.bottom;
-    const obstacleTop = obstacleSprite.body.top;
+    // Calculate height difference (Matter.js version)
+    const enemyBottom = this.body.position.y + this.bodyHeight / 2;
+    const obstacleTop = obstacleSprite.body ?
+      obstacleSprite.body.position.y - (obstacleSprite.bodyHeight || 0) / 2 :
+      obstacleSprite.y - obstacleSprite.height / 2;
     const heightDiff = enemyBottom - obstacleTop;
 
     // Can step up if obstacle top is within step-up range
@@ -1145,8 +1262,8 @@ export class Enemy {
 
     this.isSteppingUp = true;
 
-    // Gentle upward lift - just enough to clear corpses without a hop
-    this.sprite.body.setVelocityY(-150);
+    // Gentle upward lift - just enough to clear corpses without a hop (Matter.js)
+    this.setVelocityY(-150);
 
     // Short cooldown for smooth traversal over multiple corpses
     this.scene.time.delayedCall(80, () => {
@@ -1842,7 +1959,9 @@ export class Enemy {
     if (this.isExploding) return;
 
     this.isExploding = true;
-    this.sprite.body.setVelocity(0, 0);
+    // Stop movement (Matter.js)
+    this.stop();
+    this.setVelocityY(0);
     this.sprite.setTint(0xffffff);
 
     // Fuse countdown
@@ -2291,10 +2410,10 @@ class EnemyPatrolState extends State {
       this.enemy.patrolDirection = 1;
     }
 
-    // Check for walls/edges
-    if (this.enemy.sprite.body.blocked.left) {
+    // Check for walls/edges (Matter.js version)
+    if (this.enemy.isBlockedLeft()) {
       this.enemy.patrolDirection = 1;
-    } else if (this.enemy.sprite.body.blocked.right) {
+    } else if (this.enemy.isBlockedRight()) {
       this.enemy.patrolDirection = -1;
     }
 
@@ -2412,9 +2531,9 @@ class EnemyAttackState extends State {
         this.enemy.showFist(); // Show fist visual
         this.enemy.sprite.setTint(0xff4444); // Brighter red during attack
 
-        // Lunge forward slightly
-        const direction = this.enemy.sprite.flipX ? -1 : 1;
-        this.enemy.sprite.body.setVelocityX(direction * 150);
+        // Lunge forward slightly (Matter.js)
+        const direction = this.enemy.facingRight ? 1 : -1;
+        this.enemy.setVelocityX(direction * 150);
       }
       return null;
     }
@@ -2496,12 +2615,13 @@ class EnemyDeadState extends State {
 
   enter(prevState, params) {
     // Emit event for corpse spawning - corpse system handles visual persistence
+    const pos = this.enemy.getPosition();
     this.enemy.scene.events.emit('enemy:died', {
-      x: this.enemy.sprite.x,
-      y: this.enemy.sprite.y,
+      x: pos.x,
+      y: pos.y,
       enemyType: this.enemy.config.type || 'SWARMER',
-      width: this.enemy.sprite.body.width,
-      height: this.enemy.sprite.body.height,
+      width: this.enemy.bodyWidth,
+      height: this.enemy.bodyHeight,
     });
 
     // Immediately destroy the enemy - corpse replaces the visual
@@ -2592,7 +2712,8 @@ class SwarmerPatrolState extends State {
     }
 
     // Patrol movement
-    const distanceFromOrigin = this.enemy.sprite.x - this.enemy.patrolOrigin;
+    const pos = this.enemy.getPosition();
+    const distanceFromOrigin = pos.x - this.enemy.patrolOrigin;
 
     // Turn around at patrol limits
     if (distanceFromOrigin > this.enemy.patrolDistance) {
@@ -2601,10 +2722,10 @@ class SwarmerPatrolState extends State {
       this.enemy.patrolDirection = 1;
     }
 
-    // Check for walls
-    if (this.enemy.sprite.body.blocked.left) {
+    // Check for walls (Matter.js version)
+    if (this.enemy.isBlockedLeft()) {
       this.enemy.patrolDirection = 1;
-    } else if (this.enemy.sprite.body.blocked.right) {
+    } else if (this.enemy.isBlockedRight()) {
       this.enemy.patrolDirection = -1;
     }
 
@@ -2918,9 +3039,9 @@ class SwarmerAttackingState extends State {
     // Brighter red during attack
     this.enemy.sprite.setTint(0xff4444);
 
-    // Lunge forward
-    const direction = this.enemy.sprite.flipX ? -1 : 1;
-    this.enemy.sprite.body.setVelocityX(direction * 180);
+    // Lunge forward (Matter.js)
+    const direction = this.enemy.facingRight ? 1 : -1;
+    this.enemy.setVelocityX(direction * 180);
   }
 
   update(time, delta) {
@@ -3039,7 +3160,8 @@ class SwarmerHitstunState extends State {
     }
 
     // Check for launch (hit by launcher while in hitstun)
-    if (this.wasLaunched || (this.enemy.sprite.body.velocity.y < -200 && !this.enemy.sprite.body.blocked.down)) {
+    const vel = this.enemy.getVelocity();
+    if (this.wasLaunched || (vel.y < -3 && !this.enemy.isOnGround)) {
       return SWARMER_STATES.LAUNCHED;
     }
 
@@ -3099,8 +3221,8 @@ class SwarmerLaunchedState extends State {
       return SWARMER_STATES.DEAD;
     }
 
-    // Check if landed
-    if (this.enemy.sprite.body.blocked.down || this.enemy.sprite.body.touching.down) {
+    // Check if landed (Matter.js version)
+    if (this.enemy.isOnGround) {
       return SWARMER_STATES.DOWNED;
     }
 
@@ -3189,12 +3311,13 @@ class SwarmerDeadState extends State {
 
   enter(prevState, params) {
     // Emit event for corpse spawning
+    const pos = this.enemy.getPosition();
     this.enemy.scene.events.emit('enemy:died', {
-      x: this.enemy.sprite.x,
-      y: this.enemy.sprite.y,
+      x: pos.x,
+      y: pos.y,
       enemyType: this.enemy.config.type || 'SWARMER',
-      width: this.enemy.sprite.body.width,
-      height: this.enemy.sprite.body.height,
+      width: this.enemy.bodyWidth,
+      height: this.enemy.bodyHeight,
     });
 
     // Clean up debug graphics
