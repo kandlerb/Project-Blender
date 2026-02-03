@@ -547,7 +547,7 @@ export class Enemy {
     // Store hitbox data for combat resolution
     this.hitboxData = {
       damage: this.damage,
-      knockback: { x: 200, y: -100 },
+      knockback: { x: 4, y: -2 }, // Matter.js scale
       hitstun: 200,
       hitstop: 40,
     };
@@ -1266,8 +1266,8 @@ export class Enemy {
 
     this.isSteppingUp = true;
 
-    // Gentle upward lift - just enough to clear corpses without a hop (Matter.js)
-    this.setVelocityY(-150);
+    // Gentle upward lift - just enough to clear corpses without a hop (Matter.js scale)
+    this.setVelocityY(-3);
 
     // Short cooldown for smooth traversal over multiple corpses
     this.scene.time.delayedCall(80, () => {
@@ -1518,7 +1518,7 @@ export class Enemy {
     if (!this.target || !this.target.takeDamage) return;
     const direction = this.sprite.flipX ? -1 : 1;
     this.target.takeDamage(this.stats.damage, {
-      knockback: { x: direction * 300, y: -150 },
+      knockback: { x: direction * 6, y: -3 }, // Matter.js scale
       hitstun: 200,
     });
   }
@@ -2025,7 +2025,7 @@ export class Enemy {
         const dir = pdx > 0 ? 1 : -1;
 
         scene.player.takeDamage(damage, {
-          knockback: { x: dir * 400 * falloff, y: -300 * falloff },
+          knockback: { x: dir * 8 * falloff, y: -6 * falloff }, // Matter.js scale
           hitstun: 400,
         });
       }
@@ -2049,7 +2049,7 @@ export class Enemy {
             enemy.startExplosion();
           } else {
             enemy.takeDamage(damage, {
-              knockback: { x: (edx / enemyDist) * 300, y: -200 },
+              knockback: { x: (edx / enemyDist) * 6, y: -4 }, // Matter.js scale
               hitstun: 200,
             });
           }
@@ -2535,9 +2535,9 @@ class EnemyAttackState extends State {
         this.enemy.showFist(); // Show fist visual
         this.enemy.sprite.setTint(0xff4444); // Brighter red during attack
 
-        // Lunge forward slightly (Matter.js)
+        // Lunge forward slightly (Matter.js scale)
         const direction = this.enemy.facingRight ? 1 : -1;
-        this.enemy.setVelocityX(direction * 150);
+        this.enemy.setVelocityX(direction * 3);
       }
       return null;
     }
@@ -3031,10 +3031,10 @@ class SwarmerAttackingState extends State {
   enter(prevState, params) {
     this.activeDuration = this.enemy.config.attackActive || 100;
 
-    // Activate hitbox with swarmer-specific properties (Matter.js)
+    // Activate hitbox with swarmer-specific properties (Matter.js scale)
     this.enemy.activateHitbox({
       damage: this.enemy.damage,
-      knockback: { x: 150, y: -50 },
+      knockback: { x: 3, y: -1 },
       hitstun: 200
     });
 
@@ -3044,9 +3044,9 @@ class SwarmerAttackingState extends State {
     // Brighter red during attack
     this.enemy.sprite.setTint(0xff4444);
 
-    // Lunge forward (Matter.js)
+    // Lunge forward (Matter.js scale)
     const direction = this.enemy.facingRight ? 1 : -1;
-    this.enemy.setVelocityX(direction * 180);
+    this.enemy.setVelocityX(direction * 4);
   }
 
   update(time, delta) {

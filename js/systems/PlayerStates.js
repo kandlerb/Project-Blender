@@ -744,7 +744,7 @@ class AttackState extends PlayerState {
           // Fallback hitbox when no weapon data available
           this.player.activateAttackHitbox({
             damage: 10,
-            knockback: { x: 200, y: -100 },
+            knockback: { x: 4, y: -2 }, // Matter.js scale
             hitstun: 150,
             hitstop: 40,
             width: 50,
@@ -919,9 +919,9 @@ export class FlipState extends PlayerState {
     this.perfectWindowStart = 170; // Perfect timing window (apex)
     this.perfectWindowEnd = 220;
 
-    // Movement
-    this.flipSpeed = 450; // Horizontal speed during flip
-    this.flipHeight = 350; // Vertical impulse
+    // Movement (Matter.js scale)
+    this.flipSpeed = 8; // Horizontal speed during flip
+    this.flipHeight = 12; // Vertical impulse
 
     // State tracking
     this.flipDirection = 1;
@@ -1046,8 +1046,8 @@ export class DiveKickState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.DIVE_KICK, stateMachine);
 
-    this.diveSpeed = 800; // Downward velocity
-    this.horizontalSpeed = 200; // Forward momentum
+    this.diveSpeed = 15; // Downward velocity (Matter.js scale)
+    this.horizontalSpeed = 5; // Forward momentum (Matter.js scale)
     this.damage = 20;
     this.hasHit = false;
   }
@@ -1063,7 +1063,7 @@ export class DiveKickState extends PlayerState {
     // Activate hitbox
     this.player.activateAttackHitbox({
       damage: this.damage,
-      knockback: { x: 150, y: 200 }, // Spike enemies down
+      knockback: { x: 3, y: 4 }, // Spike enemies down (Matter.js scale)
       hitstun: 300,
       hitstop: 60,
       width: 40,
@@ -1221,7 +1221,7 @@ export class SpinActiveState extends PlayerState {
     const spinData = this.player.getAttackData('spin');
 
     const damage = spinData?.damage || 5;
-    const knockback = spinData?.knockback || { x: 100, y: -50 };
+    const knockback = spinData?.knockback || { x: 2, y: -1 }; // Matter.js scale
     const hitstun = spinData?.hitstun || 100;
     const hitstop = spinData?.hitstop || 20;
     const hitbox = spinData?.hitbox || { width: 80, height: 60, offsetX: 40, offsetY: 0 };
@@ -1334,7 +1334,7 @@ export class SpinReleaseState extends PlayerState {
 
     const baseDamage = releaseData?.damage || 25;
     const finalDamage = isPerfect ? baseDamage * 1.5 : baseDamage;
-    const knockback = releaseData?.knockback || { x: 400, y: -350 };
+    const knockback = releaseData?.knockback || { x: 8, y: -6 }; // Matter.js scale
     const hitstun = releaseData?.hitstun || 400;
     const baseHitstop = releaseData?.hitstop || 80;
     const hitbox = releaseData?.hitbox || { width: 100, height: 80, offsetX: 50, offsetY: 0 };
@@ -1540,17 +1540,17 @@ export class BlinkState extends PlayerState {
   }
 
   validatePosition() {
-    // Simple bounds check - keep player in world
-    const bounds = this.player.scene.physics.world.bounds;
+    // Simple bounds check - keep player in world (Matter.js)
+    const bounds = this.player.scene.matter.world.localWorld.bounds;
     const halfWidth = this.sprite.width / 2;
     const halfHeight = this.sprite.height / 2;
 
     let x = this.sprite.x;
     let y = this.sprite.y;
 
-    // Clamp to world bounds
-    x = Math.max(bounds.x + halfWidth, Math.min(bounds.right - halfWidth, x));
-    y = Math.max(bounds.y + halfHeight, Math.min(bounds.bottom - halfHeight, y));
+    // Clamp to world bounds (Matter.js uses min/max instead of x/right)
+    x = Math.max(bounds.min.x + halfWidth, Math.min(bounds.max.x - halfWidth, x));
+    y = Math.max(bounds.min.y + halfHeight, Math.min(bounds.max.y - halfHeight, y));
 
     this.sprite.setPosition(x, y);
 
@@ -1780,7 +1780,7 @@ export class GrappleFireState extends PlayerState {
     }
 
     // Method 3: Check world bounds (Matter.js)
-    const worldBounds = scene.matter.world.bounds;
+    const worldBounds = scene.matter.world.localWorld.bounds;
     if (this.hookPosition.x <= worldBounds.min.x ||
         this.hookPosition.x >= worldBounds.max.x ||
         this.hookPosition.y <= worldBounds.min.y ||
@@ -1897,7 +1897,7 @@ export class GrappleTravelState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.GRAPPLE_TRAVEL, stateMachine);
 
-    this.travelSpeed = 1400;
+    this.travelSpeed = 25; // Matter.js scale
     this.arrivalDistance = 25;    // How close before "arrived"
     this.maxTravelTime = 600;     // Safety timeout
 
@@ -2213,9 +2213,9 @@ export class WallSlideState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.WALL_SLIDE, stateMachine);
 
-    this.slideSpeed = 80;           // Max fall speed while sliding
-    this.wallJumpForceX = 400;      // Horizontal force when jumping off
-    this.wallJumpForceY = 450;      // Vertical force when jumping off
+    this.slideSpeed = 2;            // Max fall speed while sliding (Matter.js scale)
+    this.wallJumpForceX = 8;        // Horizontal force when jumping off (Matter.js scale)
+    this.wallJumpForceY = 10;       // Vertical force when jumping off (Matter.js scale)
     this.wallDirection = 0;         // -1 = wall on left, 1 = wall on right
     this.dustTimer = 0;
     this.dustInterval = 150;        // Dust particle interval
@@ -2558,16 +2558,16 @@ export class CounterAttackState extends PlayerState {
         activeTime: 100,
         recoveryTime: 150,
         damage: 35,
-        knockback: { x: 400, y: -200 },
+        knockback: { x: 8, y: -4 }, // Matter.js scale
         hitstun: 450,
         hitstop: 100,
         hitbox: { width: 60, height: 50, offsetX: 35, offsetY: 0 },
       };
     }
 
-    // Dash forward slightly
+    // Dash forward slightly (Matter.js scale)
     const direction = this.sprite.flipX ? -1 : 1;
-    this.setVelocityX(direction * 300);
+    this.setVelocityX(direction * 6);
 
     // Visual flair
     this.sprite.setTint(0xffaa00);
@@ -2888,7 +2888,7 @@ export class UltimateState extends PlayerState {
       // Deal damage
       const hitData = {
         damage: this.damage,
-        knockback: { x: direction * 200, y: -150 },
+        knockback: { x: direction * 4, y: -3 }, // Matter.js scale
         hitstun: 300,
         hitstop: 0, // No hitstop during ultimate (too many hits)
         attacker: this.player,

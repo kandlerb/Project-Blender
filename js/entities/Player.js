@@ -171,16 +171,16 @@ export class Player {
     );
     this.hitboxBodySecondary.owner = this;
 
-    // Store hitbox data for combat resolution
+    // Store hitbox data for combat resolution (Matter.js scale)
     this.hitboxData = {
       damage: 10,
-      knockback: { x: 300, y: -150 },
+      knockback: { x: 6, y: -3 },
       hitstun: 200,
       hitstop: 50,
     };
     this.hitboxDataSecondary = {
       damage: 10,
-      knockback: { x: -300, y: -150 },
+      knockback: { x: -6, y: -3 },
       hitstun: 200,
       hitstop: 50,
     };
@@ -817,7 +817,7 @@ export class Player {
       // Single hitbox attack (normal attacks)
       // Update hitbox data
       this.hitboxData.damage = config.damage || this.hitboxData.damage || 10;
-      this.hitboxData.knockback = config.knockback || this.hitboxData.knockback || { x: 300, y: -150 };
+      this.hitboxData.knockback = config.knockback || this.hitboxData.knockback || { x: 6, y: -3 }; // Matter.js scale
       this.hitboxData.hitstun = config.hitstun || this.hitboxData.hitstun || 200;
       this.hitboxData.hitstop = config.hitstop || this.hitboxData.hitstop || 50;
 
