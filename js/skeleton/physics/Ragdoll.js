@@ -50,11 +50,12 @@ export class Ragdoll {
     const worldPositions = this.originalInstance.worldPositions;
 
     // Create physics body for each bone with length > 0
-    this.skeleton.traverseDepthFirst((bone) => {
-      if (bone.length === 0) return; // Skip zero-length bones (like pelvis)
+    for (const boneId of this.skeleton.getTraversalOrder()) {
+      const bone = this.skeleton.getBone(boneId);
+      if (bone.length === 0) continue; // Skip zero-length bones (like pelvis)
 
       const pos = worldPositions.get(bone.id);
-      if (!pos) return;
+      if (!pos) continue;
 
       // Create a small sprite/rectangle for the physics body
       // Position at bone midpoint
@@ -104,7 +105,7 @@ export class Ragdoll {
         angle: pos.angle, // Current rotation (updated manually)
         parentId: bone.parentId,
       });
-    });
+    }
 
     // Add colliders with ground/platforms if available
     if (this.scene.ground) {
@@ -293,11 +294,12 @@ export class Ragdoll {
 
     // Add zero-length bones (like pelvis) at a reasonable position
     // Use the first child's start position
-    this.skeleton.traverseDepthFirst((bone) => {
+    for (const boneId of this.skeleton.getTraversalOrder()) {
+      const bone = this.skeleton.getBone(boneId);
       if (bone.length === 0 && !positions.has(bone.id)) {
         const children = this.skeleton.getChildren(bone.id);
         if (children.length > 0) {
-          const childPos = positions.get(children[0].id);
+          const childPos = positions.get(children[0]);
           if (childPos) {
             positions.set(bone.id, {
               x: childPos.x,
@@ -309,7 +311,7 @@ export class Ragdoll {
           }
         }
       }
-    });
+    }
 
     return positions;
   }
