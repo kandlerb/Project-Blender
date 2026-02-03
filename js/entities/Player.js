@@ -5,6 +5,12 @@ import { PHYSICS } from '../utils/physics.js';
 import { COMBAT } from '../utils/combat.js';
 import { WeaponManager } from '../weapons/WeaponManager.js';
 
+// Skeletal animation system
+import { SkeletonInstance } from '../skeleton/SkeletonInstance.js';
+import { createHumanoidSkeleton } from '../skeleton/definitions/humanoid.js';
+import { LineSkin } from '../skeleton/skins/LineSkin.js';
+import { PoseBlender } from '../skeleton/poses/PoseBlender.js';
+
 /**
  * Player Entity
  * The legendary warrior - handles all player behavior
@@ -125,6 +131,9 @@ export class Player {
 
     // Store reference on sprite for collision callbacks
     this.sprite.setData('owner', this);
+
+    // Initialize skeletal animation system
+    this.initializeSkeleton();
   }
 
   /**
@@ -146,6 +155,36 @@ export class Player {
     // Set mass for player-enemy collision physics
     // Player mass = 2: Brutes (mass 5) push player slightly, swarmers (mass 1) don't
     body.mass = 2;
+  }
+
+  /**
+   * Initialize skeletal animation system
+   */
+  initializeSkeleton() {
+    // Create skeleton instance
+    const skeletonDef = createHumanoidSkeleton();
+    this.skeletonInstance = new SkeletonInstance(skeletonDef, {
+      position: { x: this.sprite.x, y: this.sprite.y }
+    });
+
+    // Create skin renderer
+    this.skin = new LineSkin(this.skeletonInstance, {
+      lineWidth: 3,
+      color: 0x00ffcc,      // Cyan for visibility during testing
+      jointRadius: 3,
+      headRadius: 10
+    });
+    this.skin.initialize(this.scene);
+    this.skin.setDepth(this.sprite.depth + 1); // Render above sprite
+
+    // Create pose blender for animation control
+    this.poseBlender = new PoseBlender(this.skeletonInstance);
+
+    // Flag to toggle skeleton visibility (for testing)
+    this.showSkeleton = true;
+
+    // Hide the placeholder sprite - skeleton handles visuals now
+    this.sprite.setVisible(false);
   }
 
   /**
@@ -177,6 +216,35 @@ export class Player {
 
     // Fix any terrain clipping
     this.fixTerrainClipping();
+
+    // Update skeletal animation
+    this.updateSkeleton(delta);
+  }
+
+  /**
+   * Update skeleton position, animation, and rendering
+   * @param {number} delta - Time since last frame in ms
+   */
+  updateSkeleton(delta) {
+    if (!this.skeletonInstance) return;
+
+    // Sync skeleton position to sprite (physics body is source of truth)
+    // Offset Y so skeleton's pelvis aligns with sprite center
+    const offsetY = -10; // Adjust based on visual alignment
+    this.skeletonInstance.setPosition(this.sprite.x, this.sprite.y + offsetY);
+
+    // Sync facing direction
+    this.skeletonInstance.setScale(this.facingRight ? 1 : -1, 1);
+
+    // Update animation blender
+    if (this.poseBlender) {
+      this.poseBlender.update(delta);
+    }
+
+    // Render skeleton
+    if (this.showSkeleton && this.skin) {
+      this.skin.render();
+    }
   }
 
   /**
@@ -397,25 +465,61 @@ export class Player {
     };
   }
 
+  // ==================== Skeleton Animation Methods ====================
+
+  /**
+   * Play animation on the skeleton
+   * @param {Animation} animation - Animation to play
+   * @param {object} options - Playback options (see PoseBlender.playAnimation)
+   * @returns {AnimationLayer|null}
+   */
+  playSkeletonAnimation(animation, options = {}) {
+    if (this.poseBlender) {
+      return this.poseBlender.playAnimation(animation, options);
+    }
+    return null;
+  }
+
+  /**
+   * Stop animation on a layer
+   * @param {string} layerName - Layer to stop
+   * @param {number} blendDuration - Blend out duration in ms
+   */
+  stopSkeletonAnimation(layerName, blendDuration = 0) {
+    if (this.poseBlender) {
+      this.poseBlender.stopAnimation(layerName, blendDuration);
+    }
+  }
+
+  /**
+   * Toggle skeleton visibility (for debugging)
+   * @param {boolean} visible
+   */
+  setSkeletonVisible(visible) {
+    this.showSkeleton = visible;
+    if (this.skin) {
+      this.skin.setVisible(visible);
+    }
+  }
+
+  /**
+   * Set skeleton color (for debugging/effects)
+   * @param {number} color - Hex color
+   */
+  setSkeletonColor(color) {
+    if (this.skin) {
+      this.skin.setColor(color);
+    }
+  }
+
   /**
    * Draw the fist visual indicator(s)
+   * Note: Disabled now that skeleton handles attack visuals
    */
   drawFist() {
-    const size = 12; // Fist size
-
-    // First fist
+    // Clear fist graphics - skeleton animations handle attack visuals now
     this.fistVisual.clear();
-    if (this.fistVisible) {
-      this.fistVisual.fillStyle(this.color, 0.9);
-      this.fistVisual.fillRect(-size / 2, -size / 2, size, size);
-    }
-
-    // Second fist (for spin attacks)
     this.fistVisual2.clear();
-    if (this.fistVisible2) {
-      this.fistVisual2.fillStyle(this.color, 0.9);
-      this.fistVisual2.fillRect(-size / 2, -size / 2, size, size);
-    }
   }
 
   /**
@@ -730,6 +834,14 @@ export class Player {
       this.fistVisual2.destroy();
       this.fistVisual2 = null;
     }
+
+    // Clean up skeleton
+    if (this.skin) {
+      this.skin.destroy();
+      this.skin = null;
+    }
+    this.skeletonInstance = null;
+    this.poseBlender = null;
 
     this.sprite.destroy();
   }
