@@ -2,7 +2,7 @@ import { BaseScene } from './BaseScene.js';
 import { Player } from '../entities/Player.js';
 import { Enemy, CORPSE_INTERACTION } from '../entities/Enemy.js';
 import { TonfaWarden } from '../entities/bosses/TonfaWarden.js';
-import { CombatManager } from '../systems/CombatManager.js';
+import { CombatManagerMatter } from '../systems/CombatManagerMatter.js';
 import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
 import { AudioManager } from '../systems/AudioManager.js';
@@ -57,7 +57,7 @@ export class TestArenaScene extends BaseScene {
 
     // Create managers BEFORE entities
     this.timeManager = new TimeManager(this);
-    this.combatManager = new CombatManager(this);
+    this.combatManager = new CombatManagerMatter(this);
     this.combatManager.setTimeManager(this.timeManager);
     this.effectsManager = new EffectsManager(this);
     this.audioManager = new AudioManager(this);
@@ -68,18 +68,18 @@ export class TestArenaScene extends BaseScene {
     // Create arena first (needed for platformLayer)
     this.createArena();
 
-    // Create corpse manager with platform layer for grid ground detection
-    // Note: Corpse manager needs updating for Matter.js but basic functionality preserved
+    // TODO: CorpseManager needs Matter.js migration - temporarily disabled
+    // CorpseManager uses Arcade physics which is no longer available
+    this.corpseManager = null;
+    /*
     this.corpseManager = new CorpseManager(this, {
       platformLayer: this.groundBodies,
       maxCorpses: Infinity,
       cleanupMode: 'none',
       decayEnabled: false,
     });
-
-    // Set terrain for corpse-platform collision during falling
-    // Note: Corpse manager terrain may need Matter.js updates
     this.corpseManager.setTerrain(this.groundBodies, this.platformBodies);
+    */
 
     // Note: Corpse-to-corpse collision is now handled by grid snapping
     // No physics-based corpse stacking needed
@@ -90,11 +90,6 @@ export class TestArenaScene extends BaseScene {
     // Create player
     this.player = new Player(this, 300, 400);
     // Matter.js collisions are automatic via collision categories - no addCollider needed
-    this.player.addCollider(this.groundBodies);
-    this.player.addCollider(this.platformBodies);
-
-    // Note: Player-corpse collision handled via collision categories in Matter.js
-    this.playerStepUpHeight = 32; // For future step-up handling
 
     // Expose for console debugging
     window.player = this.player;
@@ -154,22 +149,21 @@ export class TestArenaScene extends BaseScene {
         this.audioManager.playSFX(SOUNDS.ENEMY_DEATH);
       }
 
-      // Remove from array and enemy group
+      // Remove from array
       const index = this.enemies.indexOf(data.enemy);
       if (index > -1) {
         this.enemies.splice(index, 1);
-      }
-      if (data.enemy.sprite && this.enemyGroup.contains(data.enemy.sprite)) {
-        this.enemyGroup.remove(data.enemy.sprite, true, true);
       }
     });
 
     // Spawn corpse when enemy dies
     this.events.on('enemy:died', (data) => {
-      this.corpseManager.spawn(data.x, data.y, data.enemyType, {
-        width: data.width,
-        height: data.height || 16,
-      });
+      if (this.corpseManager) {
+        this.corpseManager.spawn(data.x, data.y, data.enemyType, {
+          width: data.width,
+          height: data.height || 16,
+        });
+      }
     });
 
     // Boss events
@@ -272,6 +266,10 @@ export class TestArenaScene extends BaseScene {
 
     // Spawn test corpse at player position (8 key - avoids conflict with P=PAUSE gameplay key)
     this.input.keyboard.on('keydown-EIGHT', () => {
+      if (!this.corpseManager) {
+        console.log('CorpseManager disabled - requires Matter.js migration');
+        return;
+      }
       const pos = this.player.getPosition();
       // Spawn slightly above player so it falls
       this.corpseManager.spawn(pos.x, pos.y - 20, 'TEST', {
@@ -283,12 +281,20 @@ export class TestArenaScene extends BaseScene {
 
     // Toggle grid debug visualization
     this.input.keyboard.on('keydown-G', () => {
+      if (!this.corpseManager) {
+        console.log('CorpseManager disabled - requires Matter.js migration');
+        return;
+      }
       const enabled = this.corpseManager.toggleGridDebug();
       console.log(`Corpse grid debug: ${enabled ? 'ON' : 'OFF'}`);
     });
 
     // Dump grid state (9 key - avoids conflict with D=MOVE_RIGHT gameplay key)
     this.input.keyboard.on('keydown-NINE', () => {
+      if (!this.corpseManager) {
+        console.log('CorpseManager disabled - requires Matter.js migration');
+        return;
+      }
       const grid = this.corpseManager.grid;
       const corpses = this.corpseManager.corpses || [];
 
@@ -404,10 +410,6 @@ export class TestArenaScene extends BaseScene {
   }
 
   spawnEnemies() {
-    // TODO: Enemies need Matter.js migration - temporarily disabled
-    console.log('Enemy spawning disabled - requires Matter.js migration');
-    console.log('Use Matter.js physics debug (`) to verify player collision works');
-
     // Clear existing projectiles to avoid stale references
     if (this.enemyProjectiles) {
       for (const proj of this.enemyProjectiles) {
@@ -418,19 +420,21 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemyProjectiles = [];
 
-    // NOTE: Enemy spawning disabled until Enemy class is migrated to Matter.js
-    // The following code uses Arcade physics which is no longer available
-    /*
+    // Spawn points for initial enemies
     const spawnPoints = [
       { x: 500, y: 400, type: 'SWARMER' },
-      // ... more spawn points
+      { x: 600, y: 400, type: 'SWARMER' },
+      { x: 700, y: 400, type: 'SWARMER' },
+      { x: 900, y: 400, type: 'BRUTE' },
     ];
 
     for (const pos of spawnPoints) {
       const enemy = new Enemy(this, pos.x, pos.y, { type: pos.type });
-      // ... enemy setup
+      enemy.setTarget(this.player);
+      this.enemies.push(enemy);
     }
-    */
+
+    console.log(`Spawned ${this.enemies.length} enemies`);
   }
 
   /**
@@ -589,9 +593,11 @@ export class TestArenaScene extends BaseScene {
       // Update combat manager
       this.combatManager.update(time, scaledDelta);
 
-      // Update corpse manager
-      this.corpseManager.update(time, scaledDelta);
-      this.corpseManager.setReferencePosition(this.player.sprite.x, this.player.sprite.y);
+      // Update corpse manager (if available)
+      if (this.corpseManager) {
+        this.corpseManager.update(time, scaledDelta);
+        this.corpseManager.setReferencePosition(this.player.body.position.x, this.player.body.position.y);
+      }
 
       // Check enemy projectiles
       this.updateEnemyProjectiles();

@@ -1,6 +1,5 @@
 import { StateMachine } from '../systems/StateMachine.js';
 import { createPlayerStates, PLAYER_STATES } from '../systems/PlayerStates.js';
-import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
 import { COMBAT } from '../utils/combat.js';
 import { WeaponManager } from '../weapons/WeaponManager.js';
@@ -8,8 +7,11 @@ import {
   CollisionCategories,
   CollisionMasks,
   createPlayerBodyConfig,
+  createHitboxConfig,
+  createHurtboxConfig,
   MatterPhysicsHelper
 } from '../systems/MatterPhysics.js';
+import { BOX_TYPE, TEAM } from '../systems/CombatManagerMatter.js';
 
 // Skeletal animation system
 import { SkeletonInstance } from '../skeleton/SkeletonInstance.js';
@@ -131,57 +133,78 @@ export class Player {
     // Weapon system
     this.weaponManager = new WeaponManager(this);
 
-    // Combat boxes
-    this.hurtbox = new CombatBox(scene, {
-      owner: this,
-      type: BOX_TYPE.HURTBOX,
-      team: TEAM.PLAYER,
-      width: 28,
-      height: 44,
-      offsetX: 0,
-      offsetY: 0,
-    });
+    // Combat boxes - Matter.js sensors
+    // Hurtbox dimensions
+    this.hurtboxWidth = 28;
+    this.hurtboxHeight = 44;
 
-    // Primary attack hitbox (activated during attacks)
-    this.attackHitbox = new CombatBox(scene, {
-      owner: this,
-      type: BOX_TYPE.HITBOX,
-      team: TEAM.PLAYER,
-      width: 50,
-      height: 40,
-      offsetX: 35, // In front of player
-      offsetY: -5,
+    // Hitbox dimensions
+    this.hitboxWidth = 50;
+    this.hitboxHeight = 40;
+    this.hitboxOffsetX = 35;
+    this.hitboxOffsetY = -5;
+
+    // Secondary hitbox offset (behind player)
+    this.hitboxSecondaryOffsetX = -35;
+
+    // Create Matter.js sensor for hurtbox
+    this.hurtboxBody = scene.matter.add.rectangle(
+      x, y, this.hurtboxWidth, this.hurtboxHeight,
+      createHurtboxConfig('player_hurtbox')
+    );
+    this.hurtboxBody.gameObject = this;
+
+    // Create Matter.js sensor for primary attack hitbox
+    this.hitboxBody = scene.matter.add.rectangle(
+      x + this.hitboxOffsetX, y + this.hitboxOffsetY,
+      this.hitboxWidth, this.hitboxHeight,
+      createHitboxConfig('player_hitbox')
+    );
+    this.hitboxBody.gameObject = this;
+
+    // Create Matter.js sensor for secondary attack hitbox (spin attacks)
+    this.hitboxBodySecondary = scene.matter.add.rectangle(
+      x + this.hitboxSecondaryOffsetX, y + this.hitboxOffsetY,
+      this.hitboxWidth, this.hitboxHeight,
+      createHitboxConfig('player_hitbox_secondary')
+    );
+    this.hitboxBodySecondary.gameObject = this;
+
+    // Store hitbox data for combat resolution
+    this.hitboxData = {
       damage: 10,
       knockback: { x: 300, y: -150 },
       hitstun: 200,
       hitstop: 50,
-    });
-
-    // Secondary attack hitbox (for attacks that hit both sides, like spin)
-    this.attackHitboxSecondary = new CombatBox(scene, {
-      owner: this,
-      type: BOX_TYPE.HITBOX,
-      team: TEAM.PLAYER,
-      width: 50,
-      height: 40,
-      offsetX: -35, // Behind player
-      offsetY: -5,
+    };
+    this.hitboxDataSecondary = {
       damage: 10,
-      knockback: { x: -300, y: -150 }, // Knockback in opposite direction
+      knockback: { x: -300, y: -150 },
       hitstun: 200,
       hitstop: 50,
-      followFacing: false, // Don't flip with facing - stay on opposite side
-    });
+    };
 
     // Register with combat manager if available
     if (scene.combatManager) {
-      scene.combatManager.register(this.hurtbox);
-      scene.combatManager.register(this.attackHitbox);
-      scene.combatManager.register(this.attackHitboxSecondary);
+      scene.combatManager.registerHurtbox(this.hurtboxBody, {
+        owner: this,
+        team: TEAM.PLAYER,
+      });
+      scene.combatManager.registerHitbox(this.hitboxBody, {
+        owner: this,
+        team: TEAM.PLAYER,
+        ...this.hitboxData,
+      });
+      scene.combatManager.registerHitbox(this.hitboxBodySecondary, {
+        owner: this,
+        team: TEAM.PLAYER,
+        ...this.hitboxDataSecondary,
+      });
     }
 
-    // Hurtbox always active
-    this.hurtbox.activate();
+    // Hitboxes start inactive
+    this.hitboxActive = false;
+    this.hitboxSecondaryActive = false;
 
     // Store reference on sprite for collision callbacks
     this.sprite.setData('owner', this);
@@ -363,15 +386,30 @@ export class Player {
    * Sync hitboxes to body position
    */
   updateHitboxes() {
-    if (this.hurtbox) {
-      this.hurtbox.setPosition(this.body.position.x, this.body.position.y);
+    // Update hurtbox position
+    if (this.hurtboxBody) {
+      this.scene.matter.body.setPosition(this.hurtboxBody, {
+        x: this.body.position.x,
+        y: this.body.position.y,
+      });
     }
-    if (this.attackHitbox) {
-      // Hitboxes update themselves based on owner position
-      this.attackHitbox.updatePosition();
+
+    // Update hitbox positions (offset based on facing direction)
+    const facingMult = this.facingRight ? 1 : -1;
+
+    if (this.hitboxBody) {
+      this.scene.matter.body.setPosition(this.hitboxBody, {
+        x: this.body.position.x + (this.hitboxOffsetX * facingMult),
+        y: this.body.position.y + this.hitboxOffsetY,
+      });
     }
-    if (this.attackHitboxSecondary) {
-      this.attackHitboxSecondary.updatePosition();
+
+    if (this.hitboxBodySecondary) {
+      // Secondary hitbox stays on opposite side
+      this.scene.matter.body.setPosition(this.hitboxBodySecondary, {
+        x: this.body.position.x + this.hitboxSecondaryOffsetX, // Note: no facingMult - stays on back side
+        y: this.body.position.y + this.hitboxOffsetY,
+      });
     }
   }
 
@@ -704,57 +742,40 @@ export class Player {
     // Check if this is a multi-hitbox attack
     if (config.hitboxes && Array.isArray(config.hitboxes)) {
       // Multi-hitbox attack (like spin that hits both sides)
-      const hitboxTargets = [this.attackHitbox, this.attackHitboxSecondary];
+      const hitboxTargets = [this.hitboxBody, this.hitboxBodySecondary];
+      const hitboxDataTargets = [this.hitboxData, this.hitboxDataSecondary];
 
       config.hitboxes.forEach((hitboxConfig, index) => {
         if (index >= hitboxTargets.length) return; // Only support 2 hitboxes for now
 
-        const hitbox = hitboxTargets[index];
-        const hbKnockback = hitboxConfig.knockback || config.knockback || { x: 300, y: -150 };
+        const hitboxBody = hitboxTargets[index];
+        const hitboxData = hitboxDataTargets[index];
+        const hbKnockback = hitboxConfig.knockback || config.knockback || hitboxData.knockback;
 
-        // For symmetric multi-hitbox attacks (like spin), disable followFacing
-        // so both hitboxes maintain their fixed positions relative to the player
-        // regardless of facing direction
-        hitbox.followFacing = false;
+        // Update hitbox data
+        hitboxData.damage = config.damage || hitboxData.damage || 10;
+        hitboxData.knockback = hbKnockback;
+        hitboxData.hitstun = config.hitstun || hitboxData.hitstun || 200;
+        hitboxData.hitstop = config.hitstop || hitboxData.hitstop || 50;
 
-        hitbox.activate({
-          damage: config.damage || 10,
-          knockback: hbKnockback,
-          hitstun: config.hitstun || 200,
-          hitstop: config.hitstop || 50,
-        });
-
-        // Update dimensions
-        const width = hitboxConfig.width || config.width;
-        const height = hitboxConfig.height || config.height;
-        if (width) {
-          hitbox.width = width;
-          hitbox.zone.body.setSize(width, hitbox.height);
+        // Activate through combat manager
+        if (this.scene.combatManager) {
+          this.scene.combatManager.activateHitbox(hitboxBody, hitboxData);
         }
-        if (height) {
-          hitbox.height = height;
-          hitbox.zone.body.setSize(hitbox.width, height);
-        }
-        if (hitboxConfig.offsetX !== undefined) {
-          hitbox.offsetX = hitboxConfig.offsetX;
-        }
-        if (hitboxConfig.offsetY !== undefined) {
-          hitbox.offsetY = hitboxConfig.offsetY;
-        }
-
-        // Update position immediately with new offset
-        hitbox.updatePosition();
       });
+
+      this.hitboxActive = true;
+      this.hitboxSecondaryActive = true;
 
       // For multi-hitbox attacks, animate both fists (dual-sided spin)
       const primaryConfig = config.hitboxes[0] || {};
       const secondaryConfig = config.hitboxes[1] || {};
 
       // First fist (uses facingMult in update) - front side
-      const primaryWidth = primaryConfig.width || config.width || this.attackHitbox.width;
-      const primaryHeight = primaryConfig.height || config.height || this.attackHitbox.height;
-      const primaryOffsetX = primaryConfig.offsetX !== undefined ? primaryConfig.offsetX : (config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX);
-      const primaryOffsetY = primaryConfig.offsetY !== undefined ? primaryConfig.offsetY : (config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY);
+      const primaryWidth = primaryConfig.width || config.width || this.hitboxWidth;
+      const primaryHeight = primaryConfig.height || config.height || this.hitboxHeight;
+      const primaryOffsetX = primaryConfig.offsetX !== undefined ? primaryConfig.offsetX : (config.offsetX !== undefined ? config.offsetX : this.hitboxOffsetX);
+      const primaryOffsetY = primaryConfig.offsetY !== undefined ? primaryConfig.offsetY : (config.offsetY !== undefined ? config.offsetY : this.hitboxOffsetY);
 
       this.animateFist({
         width: primaryWidth,
@@ -765,8 +786,8 @@ export class Player {
 
       // Second fist (no facingMult - raw position) - back side
       if (config.hitboxes.length >= 2) {
-        const secondaryWidth = secondaryConfig.width || config.width || this.attackHitboxSecondary.width;
-        const secondaryHeight = secondaryConfig.height || config.height || this.attackHitboxSecondary.height;
+        const secondaryWidth = secondaryConfig.width || config.width || this.hitboxWidth;
+        const secondaryHeight = secondaryConfig.height || config.height || this.hitboxHeight;
         const secondaryOffsetX = secondaryConfig.offsetX !== undefined ? secondaryConfig.offsetX : -primaryOffsetX;
         const secondaryOffsetY = secondaryConfig.offsetY !== undefined ? secondaryConfig.offsetY : primaryOffsetY;
 
@@ -793,38 +814,32 @@ export class Player {
       }
     } else {
       // Single hitbox attack (normal attacks)
-      this.attackHitbox.activate({
-        damage: config.damage || 10,
-        knockback: config.knockback || { x: 300, y: -150 },
-        hitstun: config.hitstun || 200,
-        hitstop: config.hitstop || 50,
-      });
+      // Update hitbox data
+      this.hitboxData.damage = config.damage || this.hitboxData.damage || 10;
+      this.hitboxData.knockback = config.knockback || this.hitboxData.knockback || { x: 300, y: -150 };
+      this.hitboxData.hitstun = config.hitstun || this.hitboxData.hitstun || 200;
+      this.hitboxData.hitstop = config.hitstop || this.hitboxData.hitstop || 50;
 
-      // Update dimensions if provided
-      if (config.width) {
-        this.attackHitbox.width = config.width;
-        this.attackHitbox.zone.body.setSize(config.width, this.attackHitbox.height);
+      // Activate through combat manager
+      if (this.scene.combatManager) {
+        this.scene.combatManager.activateHitbox(this.hitboxBody, this.hitboxData);
       }
-      if (config.height) {
-        this.attackHitbox.height = config.height;
-        this.attackHitbox.zone.body.setSize(this.attackHitbox.width, config.height);
-      }
+      this.hitboxActive = true;
+
+      // Update hitbox offset if provided
       if (config.offsetX !== undefined) {
-        this.attackHitbox.offsetX = config.offsetX;
+        this.hitboxOffsetX = config.offsetX;
       }
       if (config.offsetY !== undefined) {
-        this.attackHitbox.offsetY = config.offsetY;
+        this.hitboxOffsetY = config.offsetY;
       }
-
-      // Update position immediately with new offset
-      this.attackHitbox.updatePosition();
 
       // Animate fist from inner edge to outer edge of hitbox
       this.animateFist({
-        width: config.width || this.attackHitbox.width,
-        height: config.height || this.attackHitbox.height,
-        offsetX: config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX,
-        offsetY: config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY,
+        width: config.width || this.hitboxWidth,
+        height: config.height || this.hitboxHeight,
+        offsetX: config.offsetX !== undefined ? config.offsetX : this.hitboxOffsetX,
+        offsetY: config.offsetY !== undefined ? config.offsetY : this.hitboxOffsetY,
       });
 
       // Make sure second fist is hidden for single attacks
@@ -891,12 +906,13 @@ export class Player {
    * Deactivate attack hitbox(es)
    */
   deactivateAttackHitbox() {
-    this.attackHitbox.deactivate();
-    this.attackHitboxSecondary.deactivate();
-
-    // Restore followFacing to default states for next attack
-    this.attackHitbox.followFacing = true; // Primary follows facing (for directional attacks)
-    this.attackHitboxSecondary.followFacing = false; // Secondary stays on opposite side
+    // Deactivate through combat manager
+    if (this.scene.combatManager) {
+      this.scene.combatManager.deactivateHitbox(this.hitboxBody);
+      this.scene.combatManager.deactivateHitbox(this.hitboxBodySecondary);
+    }
+    this.hitboxActive = false;
+    this.hitboxSecondaryActive = false;
 
     // Retract first fist
     if (this.fistTween) {
@@ -938,9 +954,10 @@ export class Player {
    * @param {boolean} show
    */
   setCombatDebug(show) {
-    this.hurtbox.setDebug(show);
-    this.attackHitbox.setDebug(show);
-    this.attackHitboxSecondary.setDebug(show);
+    // Combat debug is handled by CombatManagerMatter
+    if (this.scene.combatManager && this.scene.combatManager.setDebug) {
+      this.scene.combatManager.setDebug(show);
+    }
   }
 
   /**

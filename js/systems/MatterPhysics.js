@@ -163,6 +163,38 @@ export function createSensorConfig(label, category, mask) {
 }
 
 /**
+ * Create a hitbox sensor configuration
+ * @param {string} label - Body label (e.g., 'player_hitbox', 'enemy_hitbox')
+ * @returns {object} Matter.js body config
+ */
+export function createHitboxConfig(label = 'hitbox') {
+  return {
+    label: label,
+    isSensor: true,
+    collisionFilter: {
+      category: CollisionCategories.HITBOX,
+      mask: CollisionMasks.HITBOX,
+    },
+  };
+}
+
+/**
+ * Create a hurtbox sensor configuration
+ * @param {string} label - Body label (e.g., 'player_hurtbox', 'enemy_hurtbox')
+ * @returns {object} Matter.js body config
+ */
+export function createHurtboxConfig(label = 'hurtbox') {
+  return {
+    label: label,
+    isSensor: true,
+    collisionFilter: {
+      category: CollisionCategories.HURTBOX,
+      mask: CollisionMasks.HURTBOX,
+    },
+  };
+}
+
+/**
  * MatterPhysicsHelper - Attached to scene for easy access
  * Provides convenience methods for common physics operations
  */
