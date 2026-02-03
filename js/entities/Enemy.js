@@ -15,7 +15,7 @@ import { SkeletonInstance } from '../skeleton/SkeletonInstance.js';
 import { createHumanoidSkeleton } from '../skeleton/definitions/humanoid.js';
 import { LineSkin } from '../skeleton/skins/LineSkin.js';
 import { PoseBlender } from '../skeleton/poses/PoseBlender.js';
-import { Ragdoll } from '../skeleton/physics/Ragdoll.js';
+import { MatterRagdoll } from '../skeleton/physics/MatterRagdoll.js';
 import { BasicEnemyAnimations } from '../data/animations/enemies/index.js';
 
 /**
@@ -656,7 +656,7 @@ export class Enemy {
   updateSkeleton(delta) {
     if (!this.skeleton) return;
 
-    // If ragdoll, update physics instead of animation
+    // If ragdoll, update physics and render from ragdoll positions
     if (this.isRagdoll && this.ragdoll) {
       this.ragdoll.update(delta);
 
@@ -669,19 +669,20 @@ export class Enemy {
     }
 
     // Normal animated skeleton
-    // Sync position to sprite
     const offsetY = -8; // Adjust for visual alignment
-    this.skeleton.setPosition(this.sprite.x, this.sprite.y + offsetY);
+    this.skeleton.setPosition(this.body.position.x, this.body.position.y + offsetY);
 
     // Sync facing direction
-    const facingRight = !this.sprite.flipX;
+    const facingRight = this.facingRight;
     this.skeleton.setScale(
       facingRight ? this.skeletonBaseScale : -this.skeletonBaseScale,
       this.skeletonBaseScale
     );
 
     // Update animation
-    this.poseBlender.update(delta);
+    if (this.poseBlender) {
+      this.poseBlender.update(delta);
+    }
 
     // Render
     if (this.showSkeleton && this.skin) {
@@ -1967,67 +1968,60 @@ export class Enemy {
   }
 
   /**
-   * Convert skeleton to ragdoll physics
+   * Convert to ragdoll physics using Matter.js
    * @param {object} hitData - Hit data for impulse direction
    */
   convertToRagdoll(hitData) {
     if (!this.skeleton || this.isRagdoll) return;
 
     // Calculate death impulse from hit data
-    let impulse = { x: 0, y: -150 }; // Default: small upward pop
+    let impulse = { x: 0, y: -200 };
 
     if (hitData && hitData.knockback) {
-      // Use knockback direction but amplify for death
-      impulse.x = hitData.knockback.x * 1.5;
-      impulse.y = hitData.knockback.y * 1.2;
+      impulse.x = hitData.knockback.x * 2;
+      impulse.y = hitData.knockback.y * 1.5;
     }
 
-    // Create ragdoll
-    this.ragdoll = new Ragdoll(this.scene, this.skeleton);
+    // Create Matter.js ragdoll
+    this.ragdoll = new MatterRagdoll(this.scene, this.skeleton);
 
     // Activate with impulse
     this.ragdoll.activate({
       impulse: impulse,
-      angularImpulse: impulse.x * 0.3,
+      angularImpulse: impulse.x * 0.005,
       onSettle: (ragdoll) => this.onRagdollSettle(ragdoll)
     });
 
-    // Add colliders for ground/platforms
-    if (this.scene.ground) {
-      this.ragdoll.addCollider(this.scene.ground);
-    }
-    if (this.scene.platforms) {
-      this.ragdoll.addCollider(this.scene.platforms);
-    }
-
-    // Hide the sprite and disable Matter.js body
-    if (this.skin) {
-      this.skin.setVisible(false);
-    }
-    // Remove Matter.js body from world
-    this.scene.matter.world.remove(this.body);
     this.isRagdoll = true;
+
+    // Remove Matter.js body from world (ragdoll now handles physics)
+    this.scene.matter.world.remove(this.body);
 
     // Change skin color to indicate death
     if (this.skin) {
-      this.skin.setColor(0x888888); // Gray for dead
+      this.skin.setColor(0x888888);
     }
   }
 
   /**
    * Called when ragdoll settles
-   * @param {Ragdoll} ragdoll
+   * @param {MatterRagdoll} ragdoll
    */
   onRagdollSettle(ragdoll) {
-    // Freeze the ragdoll
+    // Freeze the ragdoll (converts bodies to static)
     ragdoll.freeze();
 
-    // Emit corpse ready event for corpse system
+    // Get silhouette for terrain
+    const silhouette = ragdoll.generateSilhouetteVertices();
+
+    // Emit corpse ready event
     this.scene.events.emit('corpse:ready', {
       enemy: this,
       ragdoll: ragdoll,
       bounds: ragdoll.getBounds(),
-      center: ragdoll.getCenter()
+      center: ragdoll.getCenter(),
+      silhouette: silhouette,
+      bodies: ragdoll.getBodies(),
     });
   }
 
@@ -2167,8 +2161,8 @@ export class Enemy {
       }
     }
 
-    // Remove Matter.js bodies
-    if (this.body) {
+    // Remove Matter.js bodies (only if not ragdoll - ragdoll handles its own cleanup)
+    if (this.body && !this.isRagdoll) {
       this.scene.matter.world.remove(this.body);
     }
     if (this.hurtboxBody) {
@@ -2176,6 +2170,12 @@ export class Enemy {
     }
     if (this.hitboxBody) {
       this.scene.matter.world.remove(this.hitboxBody);
+    }
+
+    // Clean up ragdoll
+    if (this.ragdoll) {
+      this.ragdoll.destroy();
+      this.ragdoll = null;
     }
 
     // Clean up fist visual
@@ -2198,16 +2198,13 @@ export class Enemy {
       this.stateText = null;
     }
 
-    // Clean up skeleton and ragdoll
+    // Clean up skeleton skin
     if (this.skin) {
       this.skin.destroy();
       this.skin = null;
     }
-    if (this.ragdoll) {
-      this.ragdoll.destroy();
-      this.ragdoll = null;
-    }
 
+    // Visual sprite
     if (this.sprite) {
       this.sprite.destroy();
     }
