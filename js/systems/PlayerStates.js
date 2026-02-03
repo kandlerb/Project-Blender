@@ -1540,17 +1540,17 @@ export class BlinkState extends PlayerState {
   }
 
   validatePosition() {
-    // Simple bounds check - keep player in world (Matter.js)
-    const bounds = this.player.scene.matter.world.localWorld.bounds;
+    // Simple bounds check - keep player in world (Game Config dimensions)
+    const { width, height } = this.player.scene.game.config;
     const halfWidth = this.sprite.width / 2;
     const halfHeight = this.sprite.height / 2;
 
     let x = this.sprite.x;
     let y = this.sprite.y;
 
-    // Clamp to world bounds (Matter.js uses min/max instead of x/right)
-    x = Math.max(bounds.min.x + halfWidth, Math.min(bounds.max.x - halfWidth, x));
-    y = Math.max(bounds.min.y + halfHeight, Math.min(bounds.max.y - halfHeight, y));
+    // Clamp to game bounds
+    x = Math.max(halfWidth, Math.min(width - halfWidth, x));
+    y = Math.max(halfHeight, Math.min(height - halfHeight, y));
 
     this.sprite.setPosition(x, y);
 
@@ -1779,16 +1779,16 @@ export class GrappleFireState extends PlayerState {
       }
     }
 
-    // Method 3: Check world bounds (Matter.js)
-    const worldBounds = scene.matter.world.localWorld.bounds;
-    if (this.hookPosition.x <= worldBounds.min.x ||
-        this.hookPosition.x >= worldBounds.max.x ||
-        this.hookPosition.y <= worldBounds.min.y ||
-        this.hookPosition.y >= worldBounds.max.y) {
+    // Method 3: Check world bounds (Game Config)
+    const { width, height } = scene.game.config;
+    if (this.hookPosition.x <= 0 ||
+        this.hookPosition.x >= width ||
+        this.hookPosition.y <= 0 ||
+        this.hookPosition.y >= height) {
       // Clamp to world edge
       return {
-        x: Math.max(worldBounds.min.x, Math.min(worldBounds.max.x, this.hookPosition.x)),
-        y: Math.max(worldBounds.min.y, Math.min(worldBounds.max.y, this.hookPosition.y)),
+        x: Math.max(0, Math.min(width, this.hookPosition.x)),
+        y: Math.max(0, Math.min(height, this.hookPosition.y)),
       };
     }
 
