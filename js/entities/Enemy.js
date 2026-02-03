@@ -2008,11 +2008,17 @@ export class Enemy {
    * @param {MatterRagdoll} ragdoll
    */
   onRagdollSettle(ragdoll) {
-    // Freeze the ragdoll (converts bodies to static)
+    // Freeze physics
     ragdoll.freeze();
 
-    // Get silhouette for terrain
+    // Get silhouette for potential future merging
     const silhouette = ragdoll.generateSilhouetteVertices();
+
+    // Transfer skin to corpse renderer (don't destroy it)
+    if (this.scene.corpseRenderer && this.skin) {
+      this.scene.corpseRenderer.addCorpse(this.skin, ragdoll);
+      this.skin = null; // Transfer ownership
+    }
 
     // Emit corpse ready event
     this.scene.events.emit('corpse:ready', {
@@ -2172,11 +2178,12 @@ export class Enemy {
       this.scene.matter.world.remove(this.hitboxBody);
     }
 
-    // Clean up ragdoll
-    if (this.ragdoll) {
+    // Note: ragdoll and skin may be managed by corpse system now
+    // Only destroy ragdoll if we still own it (not frozen = not transferred)
+    if (this.ragdoll && !this.ragdoll.frozen) {
       this.ragdoll.destroy();
-      this.ragdoll = null;
     }
+    this.ragdoll = null;
 
     // Clean up fist visual
     if (this.fistTween) {
@@ -2198,7 +2205,7 @@ export class Enemy {
       this.stateText = null;
     }
 
-    // Clean up skeleton skin
+    // Clean up skeleton skin (only if not transferred to corpse renderer)
     if (this.skin) {
       this.skin.destroy();
       this.skin = null;

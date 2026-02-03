@@ -6,7 +6,8 @@ import { CombatManagerMatter } from '../systems/CombatManagerMatter.js';
 import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
 import { AudioManager } from '../systems/AudioManager.js';
-import { CorpseManager } from '../systems/CorpseManager.js';
+import { CorpseTerrainManager } from '../systems/CorpseTerrainManager.js';
+import { CorpseRenderer } from '../systems/CorpseRenderer.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
@@ -41,9 +42,11 @@ export class TestArenaScene extends BaseScene {
     this.timeManager = null;
     this.effectsManager = null;
     this.audioManager = null;
-    this.corpseManager = null;
+    this.corpseTerrainManager = null;
+    this.corpseRenderer = null;
     this.hud = null;
     this.showCombatDebug = false;
+    this._showCorpseDebug = false;
 
     // Collider references for cleanup/reset
     this.enemyEnemyCollider = null;
@@ -68,24 +71,9 @@ export class TestArenaScene extends BaseScene {
     // Create arena first (needed for platformLayer)
     this.createArena();
 
-    // TODO: CorpseManager needs Matter.js migration - temporarily disabled
-    // CorpseManager uses Arcade physics which is no longer available
-    this.corpseManager = null;
-    /*
-    this.corpseManager = new CorpseManager(this, {
-      platformLayer: this.groundBodies,
-      maxCorpses: Infinity,
-      cleanupMode: 'none',
-      decayEnabled: false,
-    });
-    this.corpseManager.setTerrain(this.groundBodies, this.platformBodies);
-    */
-
-    // Note: Corpse-to-corpse collision is now handled by grid snapping
-    // No physics-based corpse stacking needed
-
-    // Note: Enemy group and Arcade colliders removed - Matter.js uses collision categories
-    // Enemies will need individual Matter.js migration
+    // Create corpse systems (Matter.js based)
+    this.corpseTerrainManager = new CorpseTerrainManager(this);
+    this.corpseRenderer = new CorpseRenderer(this);
 
     // Create player
     this.player = new Player(this, 300, 400);
@@ -264,87 +252,49 @@ export class TestArenaScene extends BaseScene {
       }
     });
 
-    // Spawn test corpse at player position (8 key - avoids conflict with P=PAUSE gameplay key)
-    this.input.keyboard.on('keydown-EIGHT', () => {
-      if (!this.corpseManager) {
-        console.log('CorpseManager disabled - requires Matter.js migration');
-        return;
-      }
-      const pos = this.player.getPosition();
-      // Spawn slightly above player so it falls
-      this.corpseManager.spawn(pos.x, pos.y - 20, 'TEST', {
-        width: 24,
-        height: 16,
-      });
-      console.log(`Corpses: ${this.corpseManager.getCount()}`);
-    });
-
-    // Toggle grid debug visualization
-    this.input.keyboard.on('keydown-G', () => {
-      if (!this.corpseManager) {
-        console.log('CorpseManager disabled - requires Matter.js migration');
-        return;
-      }
-      const enabled = this.corpseManager.toggleGridDebug();
-      console.log(`Corpse grid debug: ${enabled ? 'ON' : 'OFF'}`);
-    });
-
-    // Dump grid state (9 key - avoids conflict with D=MOVE_RIGHT gameplay key)
-    this.input.keyboard.on('keydown-NINE', () => {
-      if (!this.corpseManager) {
-        console.log('CorpseManager disabled - requires Matter.js migration');
-        return;
-      }
-      const grid = this.corpseManager.grid;
-      const corpses = this.corpseManager.corpses || [];
-
-      // Count states and mismatches
-      let settled = 0, falling = 0, snapping = 0, mismatches = 0;
-      const mismatchDetails = [];
-
-      for (const corpse of corpses) {
-        if (!corpse.sprite || !corpse.sprite.active) continue;
-
-        if (corpse.state === 'settled') settled++;
-        else if (corpse.state === 'falling') falling++;
-        else if (corpse.state === 'snapping') snapping++;
-
-        // Check for position mismatches (only for settled corpses)
-        if (corpse.state === 'settled' && corpse.gridCell && grid) {
-          const actualGridPos = grid.worldToGrid(corpse.sprite.x, corpse.sprite.y);
-          if (actualGridPos.col !== corpse.gridCell.col || actualGridPos.row !== corpse.gridCell.row) {
-            mismatches++;
-            mismatchDetails.push(`  #${corpse.id}: at (${actualGridPos.col},${actualGridPos.row}) claimed (${corpse.gridCell.col},${corpse.gridCell.row})`);
-          }
-        }
-      }
-
-      // Compact output
-      console.log(`\n=== Corpse Grid Dump ===`);
-      console.log(`Corpses: ${corpses.length} (settled:${settled} falling:${falling} snapping:${snapping})`);
-      console.log(`Grid cells: ${grid ? grid.getOccupiedCount() : 0}`);
-
-      if (mismatches > 0) {
-        console.log(`⚠️ MISMATCHES: ${mismatches}`);
-        mismatchDetails.forEach(d => console.log(d));
-      }
-
-      // Print compact ASCII grid
-      if (grid && grid.getOccupiedCount() > 0) {
-        grid.debugPrintOccupiedCells();
-      }
-
-      console.log('');
-    });
-
-    // AI debug dump (7 key)
+    // Toggle corpse terrain debug (7 key)
     this.input.keyboard.on('keydown-SEVEN', () => {
+      this._showCorpseDebug = !this._showCorpseDebug;
+      if (this._showCorpseDebug && this.corpseTerrainManager) {
+        this.corpseTerrainManager.debugHighlightTerrain(0xff0000, 0.3);
+      } else if (this.corpseTerrainManager) {
+        this.corpseTerrainManager.clearDebugGraphics();
+      }
+      console.log('Corpse terrain debug:', this._showCorpseDebug);
+    });
+
+    // Clear all corpses (8 key)
+    this.input.keyboard.on('keydown-EIGHT', () => {
+      if (this.corpseTerrainManager) {
+        this.corpseTerrainManager.clearAllCorpses();
+      }
+      if (this.corpseRenderer) {
+        this.corpseRenderer.clear();
+      }
+      console.log('Cleared all corpses');
+    });
+
+    // Toggle grid debug visualization (G key - now shows Matter.js physics debug)
+    this.input.keyboard.on('keydown-G', () => {
+      // G now just shows info about corpses
+      if (this.corpseTerrainManager) {
+        console.log(`Corpse count: ${this.corpseTerrainManager.getCorpseCount()}`);
+        console.log(`Terrain bodies: ${this.corpseTerrainManager.getTerrainBodyCount()}`);
+      }
+    });
+
+    // AI debug dump (9 key)
+    this.input.keyboard.on('keydown-NINE', () => {
       console.log('--- ENEMY AI DEBUG ---');
       for (const enemy of this.enemies) {
         enemy.debugAI();
       }
       if (this.currentBoss && this.currentBoss.isAlive) {
         console.log(`[BOSS] HP: ${this.currentBoss.health}/${this.currentBoss.maxHealth}`);
+      }
+      if (this.corpseTerrainManager) {
+        console.log(`Corpses: ${this.corpseTerrainManager.getCorpseCount()}`);
+        console.log(`Terrain bodies: ${this.corpseTerrainManager.getTerrainBodyCount()}`);
       }
       console.log('----------------------');
     });
@@ -593,10 +543,14 @@ export class TestArenaScene extends BaseScene {
       // Update combat manager
       this.combatManager.update(time, scaledDelta);
 
-      // Update corpse manager (if available)
-      if (this.corpseManager) {
-        this.corpseManager.update(time, scaledDelta);
-        this.corpseManager.setReferencePosition(this.player.body.position.x, this.player.body.position.y);
+      // Update corpse terrain manager
+      if (this.corpseTerrainManager) {
+        this.corpseTerrainManager.update(time, scaledDelta);
+      }
+
+      // Render corpse visuals
+      if (this.corpseRenderer) {
+        this.corpseRenderer.render();
       }
 
       // Check enemy projectiles
@@ -899,7 +853,10 @@ export class TestArenaScene extends BaseScene {
     const pDebug = this.player.getDebugInfo();
     const timeDebug = this.timeManager.getDebugInfo();
     const hudStats = this.hud.getStats();
-    const corpseStats = this.corpseManager.getStats();
+
+    // Get corpse stats from terrain manager
+    const corpseCount = this.corpseTerrainManager ? this.corpseTerrainManager.getCorpseCount() : 0;
+    const terrainBodies = this.corpseTerrainManager ? this.corpseTerrainManager.getTerrainBodyCount() : 0;
 
     const lines = [
       'PROJECT BLENDER - Test Arena',
@@ -910,8 +867,8 @@ export class TestArenaScene extends BaseScene {
       '',
       `Combo: ${hudStats.combo}`,
       `Kills: ${hudStats.kills}`,
-      `Enemies: ${this.enemies.length}`,
-      `Corpses: ${corpseStats.total} (F:${corpseStats.falling} S:${corpseStats.snapping} D:${corpseStats.settled})`,
+      `Enemies: ${this.enemies.filter(e => e.isAlive).length}`,
+      `Corpses: ${corpseCount} (terrain: ${terrainBodies})`,
     ];
 
     // Add boss info if present
@@ -926,7 +883,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | 7 - AI Debug | G - Grid | 0 - Mute');
+    lines.push('R - Respawn | B - Boss | 7 - Corpse Debug | 8 - Clear | 0 - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
