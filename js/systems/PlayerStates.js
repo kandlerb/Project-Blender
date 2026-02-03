@@ -1488,7 +1488,7 @@ export class BlinkState extends PlayerState {
     this.setInvulnerable(true);
 
     // Disable physics body during blink (phase through everything)
-    this.body.enable = false;
+    this.player.scene.matter.world.remove(this.body);
 
     // Make sprite semi-transparent during blink
     this.sprite.setAlpha(0.3);
@@ -1522,7 +1522,7 @@ export class BlinkState extends PlayerState {
 
   finishBlink() {
     // Re-enable physics
-    this.body.enable = true;
+    this.player.scene.matter.world.add(this.body);
 
     // Check if target position is valid (not inside wall)
     // If invalid, push player to nearest valid position
@@ -1608,7 +1608,10 @@ export class BlinkState extends PlayerState {
   exit(nextState) {
     this.setInvulnerable(false);
     this.sprite.setAlpha(1);
-    this.body.enable = true;
+    // Re-enable physics if not already in world (safety check)
+    if (!this.player.scene.matter.world.has(this.body)) {
+      this.player.scene.matter.world.add(this.body);
+    }
 
     // Afterimage cleanup handled by tween
   }
@@ -1908,8 +1911,8 @@ export class GrappleTravelState extends PlayerState {
   }
 
   enter(prevState, params) {
-    // Disable gravity during travel
-    this.body.setAllowGravity(false);
+    // Disable gravity during travel (Matter.js)
+    this.body.ignoreGravity = true;
 
     // Cancel any existing velocity
     this.setVelocity(0, 0);
@@ -1983,16 +1986,16 @@ export class GrappleTravelState extends PlayerState {
   }
 
   finishGrapple() {
-    this.body.setAllowGravity(true);
+    this.body.ignoreGravity = false;
 
-    // Preserve some momentum based on input
+    // Preserve some momentum based on input (Matter.js scale)
     const inputH = this.input.getHorizontalAxis();
-    let exitVelX = inputH * 200;
-    let exitVelY = -150; // Small upward boost
+    let exitVelX = inputH * 5;
+    let exitVelY = -3; // Small upward boost
 
     // If grappling upward, give more upward boost
     if (this.targetPoint.y < this.sprite.y - 50) {
-      exitVelY = -250;
+      exitVelY = -5; // Matter.js scale
     }
 
     this.setVelocity(exitVelX, exitVelY);
@@ -2014,7 +2017,7 @@ export class GrappleTravelState extends PlayerState {
   }
 
   exit(nextState) {
-    this.body.setAllowGravity(true);
+    this.body.ignoreGravity = false;
 
     if (this.hookGraphics) {
       this.hookGraphics.destroy();
@@ -2778,7 +2781,7 @@ export class UltimateState extends PlayerState {
 
     // Stop movement
     this.setVelocity(0, 0);
-    this.body.setAllowGravity(false);
+    this.body.ignoreGravity = true;
 
     // Visual: glow effect
     this.sprite.setTint(0xffdd44);
@@ -2959,7 +2962,7 @@ export class UltimateState extends PlayerState {
     }
 
     // Return to normal
-    this.body.setAllowGravity(true);
+    this.body.ignoreGravity = false;
 
     if (this.isOnFloor()) {
       return PLAYER_STATES.IDLE;
@@ -2971,7 +2974,7 @@ export class UltimateState extends PlayerState {
     this.setInvulnerable(false);
     this.sprite.clearTint();
     this.sprite.setScale(1);
-    this.body.setAllowGravity(true);
+    this.body.ignoreGravity = false;
 
     // End time slow
     if (this.player.scene.timeManager) {
