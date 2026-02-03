@@ -520,6 +520,10 @@ export class Enemy {
     const attackHeight = Math.max(30, this.stats.height * 0.7);
     this.attackOffset = Math.max(25, this.stats.width * 0.6);
 
+    // Store dimensions for showFist (attackHitbox was removed in Matter.js migration)
+    this.attackHitboxWidth = attackWidth;
+    this.attackHitboxHeight = attackHeight;
+
     // Create Matter.js sensor for hurtbox
     this.hurtboxBody = this.scene.matter.add.rectangle(
       this.body.position.x,
@@ -1289,10 +1293,10 @@ export class Enemy {
    * @param {object} config - Optional hitbox config override
    */
   showFist(config = {}) {
-    const width = config.width || this.attackHitbox.width;
-    const height = config.height || this.attackHitbox.height;
-    const offsetX = config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX;
-    const offsetY = config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY;
+    const width = config.width || this.attackHitboxWidth || 40;
+    const height = config.height || this.attackHitboxHeight || 40;
+    const offsetX = config.offsetX !== undefined ? config.offsetX : (this.attackOffset || 25);
+    const offsetY = config.offsetY !== undefined ? config.offsetY : 0;
 
     const isVerticalAttack = Math.abs(offsetY) > Math.abs(offsetX);
 

@@ -1207,7 +1207,7 @@ export class SpinActiveState extends PlayerState {
 
     this.maxSpinDuration = 2000; // Max time can spin
     this.tickRate = 150; // MS between damage ticks
-    this.spinSpeed = 200; // Movement speed while spinning
+    this.spinSpeed = 5; // Movement speed while spinning (Matter.js scale)
 
     this.lastTickTime = 0;
     this.totalRotation = 0;
@@ -1581,7 +1581,12 @@ export class BlinkState extends PlayerState {
     }
 
     this.afterimageSprite.setAlpha(0.6);
-    this.afterimageSprite.setTint(0x4488ff); // Blue tint
+    // Apply color - use setTint for Sprites, setFillStyle for Rectangles
+    if (this.afterimageSprite.setTint) {
+      this.afterimageSprite.setTint(0x4488ff);
+    } else if (this.afterimageSprite.setFillStyle) {
+      this.afterimageSprite.setFillStyle(0x4488ff, 0.6);
+    }
     this.afterimageSprite.setDepth(this.sprite.depth - 1);
 
     // Fade out afterimage
@@ -1774,16 +1779,16 @@ export class GrappleFireState extends PlayerState {
       }
     }
 
-    // Method 3: Check world bounds
-    const worldBounds = scene.physics.world.bounds;
-    if (this.hookPosition.x <= worldBounds.left ||
-        this.hookPosition.x >= worldBounds.right ||
-        this.hookPosition.y <= worldBounds.top ||
-        this.hookPosition.y >= worldBounds.bottom) {
+    // Method 3: Check world bounds (Matter.js)
+    const worldBounds = scene.matter.world.bounds;
+    if (this.hookPosition.x <= worldBounds.min.x ||
+        this.hookPosition.x >= worldBounds.max.x ||
+        this.hookPosition.y <= worldBounds.min.y ||
+        this.hookPosition.y >= worldBounds.max.y) {
       // Clamp to world edge
       return {
-        x: Math.max(worldBounds.left, Math.min(worldBounds.right, this.hookPosition.x)),
-        y: Math.max(worldBounds.top, Math.min(worldBounds.bottom, this.hookPosition.y)),
+        x: Math.max(worldBounds.min.x, Math.min(worldBounds.max.x, this.hookPosition.x)),
+        y: Math.max(worldBounds.min.y, Math.min(worldBounds.max.y, this.hookPosition.y)),
       };
     }
 
