@@ -112,6 +112,8 @@ export class MatterRagdoll {
             isSensor: true,
             label: `ragdoll_${bone.id}`,
           });
+          // Prevent Phaser from trying to emit events on this raw body
+          body.gameObject = null;
           this.bodies.set(bone.id, body);
           this.Composite.add(this.composite, body);
         }
@@ -139,6 +141,9 @@ export class MatterRagdoll {
           chamfer: { radius: thickness / 3 }, // Rounded corners
         }
       );
+
+      // Prevent Phaser from trying to emit events on this raw body
+      body.gameObject = null;
 
       // Store reference
       this.bodies.set(bone.id, body);

@@ -122,6 +122,9 @@ export class CorpseTerrainManager {
       );
 
       if (terrainBody) {
+        // Prevent Phaser from trying to emit events on this raw body
+        terrainBody.gameObject = null;
+
         // Add to composite
         this.Composite.add(this.terrainComposite, terrainBody);
         this.terrainBodies.add(terrainBody);
