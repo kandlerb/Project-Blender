@@ -82,10 +82,14 @@ export class CombatManagerMatter {
     const { bodyA, bodyB } = pair;
     if (!bodyA || !bodyB) return;
 
-    // Check if this is a hitbox-hurtbox collision
-    // Use optional chaining for safety - bodies may have been removed
+    // Guard against bodies with disabled collision filters (being removed)
+    // Category of 0 means the body is queued for removal
     const catA = bodyA.collisionFilter?.category || 0;
     const catB = bodyB.collisionFilter?.category || 0;
+    if (catA === 0 || catB === 0) return;
+
+    // Guard against bodies without valid vertices (corrupted/removed)
+    if (!bodyA.vertices?.length || !bodyB.vertices?.length) return;
 
     // Hitbox hitting hurtbox
     if (catA === CollisionCategories.HITBOX && catB === CollisionCategories.HURTBOX) {

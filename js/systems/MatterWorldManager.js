@@ -3,6 +3,9 @@
  *
  * Matter.js crashes if bodies are added or removed during collision iteration.
  * This manager queues modifications and applies them after the physics update.
+ *
+ * Additionally, it clears stale collision pairs before removing bodies to prevent
+ * "Cannot read properties of undefined (reading 'index')" errors in _findSupports.
  */
 export class MatterWorldManager {
   constructor(scene) {
@@ -54,11 +57,89 @@ export class MatterWorldManager {
   }
 
   /**
+   * Clear all collision pairs involving a specific body
+   * This prevents stale pair data from causing errors in the next physics step
+   * @param {MatterJS.BodyType} body - The body to clear pairs for
+   */
+  clearPairsForBody(body) {
+    if (!body) return;
+
+    const engine = this.matter.world.engine;
+    if (!engine || !engine.pairs) return;
+
+    const pairs = engine.pairs;
+    const pairsToRemove = [];
+
+    // Find all pairs involving this body
+    if (pairs.table) {
+      for (const id in pairs.table) {
+        const pair = pairs.table[id];
+        if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+          pairsToRemove.push(id);
+        }
+      }
+    }
+
+    // Remove the pairs from both table and list
+    for (const id of pairsToRemove) {
+      const pair = pairs.table[id];
+      if (pair) {
+        // Remove from list
+        if (pairs.list) {
+          const listIndex = pairs.list.indexOf(pair);
+          if (listIndex !== -1) {
+            pairs.list.splice(listIndex, 1);
+          }
+        }
+        // Remove from table
+        delete pairs.table[id];
+      }
+    }
+
+    // Also clear from collisionActive pairs if they exist
+    if (pairs.collisionActive) {
+      for (let i = pairs.collisionActive.length - 1; i >= 0; i--) {
+        const pair = pairs.collisionActive[i];
+        if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+          pairs.collisionActive.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  /**
+   * Clear collision pairs for all bodies in a composite
+   * @param {MatterJS.Composite} composite - The composite to clear pairs for
+   */
+  clearPairsForComposite(composite) {
+    if (!composite) return;
+
+    // Get all bodies in the composite recursively
+    const Matter = Phaser.Physics.Matter.Matter;
+    const allBodies = Matter.Composite.allBodies(composite);
+
+    for (const body of allBodies) {
+      this.clearPairsForBody(body);
+    }
+  }
+
+  /**
    * Execute a removal operation
+   * @param {MatterJS.BodyType|MatterJS.Composite} item - Body or composite to remove
    */
   executeRemove(item) {
     try {
       if (item && this.matter?.world) {
+        // Check if item is a composite or body
+        if (item.type === 'composite') {
+          // Clear pairs for all bodies in composite BEFORE removing
+          this.clearPairsForComposite(item);
+        } else {
+          // Clear pairs for single body BEFORE removing
+          this.clearPairsForBody(item);
+        }
+
+        // Now remove from world
         this.matter.world.remove(item);
       }
     } catch (e) {
@@ -107,10 +188,29 @@ export class MatterWorldManager {
   /**
    * Safely remove a body or composite from the world
    * If called during physics update, defers until after update completes
+   * Immediately disables collision filter to prevent new pairs being created
    * @param {MatterJS.BodyType|MatterJS.Composite} item - Body or composite to remove
    */
   safeRemove(item) {
     if (!item) return;
+
+    // Immediately disable collisions to prevent new pairs being created
+    // This is critical - even if removal is deferred, we don't want new collisions
+    if (item.type === 'composite') {
+      // Disable collisions for all bodies in composite
+      const Matter = Phaser.Physics.Matter.Matter;
+      const allBodies = Matter.Composite.allBodies(item);
+      for (const body of allBodies) {
+        if (body.collisionFilter) {
+          body.collisionFilter.mask = 0;
+          body.collisionFilter.category = 0;
+        }
+      }
+    } else if (item.collisionFilter) {
+      // Single body
+      item.collisionFilter.mask = 0;
+      item.collisionFilter.category = 0;
+    }
 
     if (this.isUpdating) {
       // Queue for later

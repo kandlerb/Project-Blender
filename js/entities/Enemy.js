@@ -429,13 +429,17 @@ export class Enemy {
     // Guard against invalid pairs (bodies may have been removed)
     if (!pair || !pair.bodyA || !pair.bodyB) return;
 
+    // Guard against our own body being removed (category set to 0)
+    if (!this.body || this.body.collisionFilter?.category === 0) return;
+
     const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
     if (!dominated) return;
 
     const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
 
-    // Guard against missing collision filter (body may have been removed)
+    // Guard against missing/disabled collision filter (body may be removed)
     const category = other?.collisionFilter?.category || 0;
+    if (category === 0) return;
 
     // Check if it's a ground-like surface
     if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
@@ -472,13 +476,17 @@ export class Enemy {
     // Guard against invalid pairs (bodies may have been removed)
     if (!pair || !pair.bodyA || !pair.bodyB) return;
 
+    // Guard against our own body being removed (category set to 0)
+    if (!this.body || this.body.collisionFilter?.category === 0) return;
+
     const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
     if (!dominated) return;
 
     const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
 
-    // Guard against missing collision filter (body may have been removed)
+    // Guard against missing/disabled collision filter (body may be removed)
     const category = other?.collisionFilter?.category || 0;
+    if (category === 0) return;
 
     if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
       return;
@@ -2106,17 +2114,38 @@ export class Enemy {
 
   /**
    * Safely remove a Matter.js body using world manager or fallback
+   * Immediately disables collision filter to prevent new pairs
    * @param {MatterJS.BodyType} body - The body to remove
    */
   safeRemoveBody(body) {
     if (!body) return;
 
+    // Immediately disable collisions to prevent new pairs being created
+    if (body.collisionFilter) {
+      body.collisionFilter.mask = 0;
+      body.collisionFilter.category = 0;
+    }
+
     if (this.scene?.worldManager) {
       this.scene.worldManager.safeRemove(body);
     } else if (this.scene?.matter?.world) {
-      // Fallback to afterupdate
+      // Fallback to afterupdate with pair cleanup
       this.scene.matter.world.once('afterupdate', () => {
         try {
+          // Clear collision pairs for this body before removal
+          const engine = this.scene.matter.world.engine;
+          if (engine?.pairs?.table) {
+            for (const id in engine.pairs.table) {
+              const pair = engine.pairs.table[id];
+              if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+                delete engine.pairs.table[id];
+                if (engine.pairs.list) {
+                  const idx = engine.pairs.list.indexOf(pair);
+                  if (idx !== -1) engine.pairs.list.splice(idx, 1);
+                }
+              }
+            }
+          }
           this.scene.matter.world.remove(body);
         } catch (e) {
           // Body may already be removed, ignore

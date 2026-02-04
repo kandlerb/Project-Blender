@@ -240,13 +240,17 @@ export class Player {
     // Guard against invalid pairs (bodies may have been removed)
     if (!pair || !pair.bodyA || !pair.bodyB) return;
 
+    // Guard against our own body being removed (category set to 0)
+    if (!this.body || this.body.collisionFilter?.category === 0) return;
+
     const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
     if (!dominated) return;
 
     const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
 
-    // Guard against missing collision filter (body may have been removed)
+    // Guard against missing/disabled collision filter (body may be removed)
     const category = other?.collisionFilter?.category || 0;
+    if (category === 0) return;
 
     // Check if it's a ground-like surface
     if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
@@ -283,13 +287,17 @@ export class Player {
     // Guard against invalid pairs (bodies may have been removed)
     if (!pair || !pair.bodyA || !pair.bodyB) return;
 
+    // Guard against our own body being removed (category set to 0)
+    if (!this.body || this.body.collisionFilter?.category === 0) return;
+
     const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
     if (!dominated) return;
 
     const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
 
-    // Guard against missing collision filter (body may have been removed)
+    // Guard against missing/disabled collision filter (body may be removed)
     const category = other?.collisionFilter?.category || 0;
+    if (category === 0) return;
 
     // Check if it's a ground-like surface
     if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
