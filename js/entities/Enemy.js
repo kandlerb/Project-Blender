@@ -1372,9 +1372,11 @@ export class Enemy {
   update(time, delta) {
     if (!this.isAlive && !this.isRagdoll) return;
 
-    // Sync sprite position from Matter.js body
-    this.sprite.x = this.body.position.x;
-    this.sprite.y = this.body.position.y;
+    // Sync sprite position from Matter.js body (only if body exists - null after ragdoll)
+    if (this.body) {
+      this.sprite.x = this.body.position.x;
+      this.sprite.y = this.body.position.y;
+    }
 
     // Update ground state
     this._isOnGround = this.groundContacts > 0;
