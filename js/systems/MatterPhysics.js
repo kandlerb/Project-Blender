@@ -21,16 +21,14 @@ export const CollisionCategories = Object.freeze({
 
 // Pre-built collision masks
 export const CollisionMasks = Object.freeze({
-  // Player collides with ground, platforms, corpses, enemy hitboxes
+  // Player collides with ground, platforms, enemy hitboxes (not corpses - they're visual only)
   PLAYER: CollisionCategories.GROUND |
           CollisionCategories.PLATFORM |
-          CollisionCategories.CORPSE |
           CollisionCategories.HITBOX,
 
-  // Enemies collide with ground, platforms, corpses, player hitbox
+  // Enemies collide with ground, platforms, player hitbox (not corpses - they're visual only)
   ENEMY:  CollisionCategories.GROUND |
           CollisionCategories.PLATFORM |
-          CollisionCategories.CORPSE |
           CollisionCategories.HITBOX,
 
   // Boss collides with ground, platforms, player hitbox
@@ -44,12 +42,10 @@ export const CollisionMasks = Object.freeze({
           CollisionCategories.BOSS |
           CollisionCategories.CORPSE,
 
-  // Corpses collide with ground, platforms, other corpses, player, enemies
+  // Corpses collide with ground, platforms, other corpses (NOT player/enemies to prevent pushback)
   CORPSE: CollisionCategories.GROUND |
           CollisionCategories.PLATFORM |
-          CollisionCategories.CORPSE |
-          CollisionCategories.PLAYER |
-          CollisionCategories.ENEMY,
+          CollisionCategories.CORPSE,
 
   // Hitboxes only detect hurtboxes (sensors)
   HITBOX: CollisionCategories.HURTBOX,

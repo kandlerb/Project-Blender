@@ -2255,6 +2255,18 @@ export class Enemy {
     // Hide sprite
     this.sprite.setVisible(false);
 
+    // Hide and destroy fist visual
+    if (this.fistVisual) {
+      this.fistVisual.clear();
+      this.fistVisual.destroy();
+      this.fistVisual = null;
+    }
+    this.fistVisible = false;
+    if (this.fistTween) {
+      this.fistTween.stop();
+      this.fistTween = null;
+    }
+
     // Safe removal of main body via world manager
     if (this.body) {
       this.safeRemoveBody(this.body);

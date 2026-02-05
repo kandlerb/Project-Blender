@@ -469,32 +469,34 @@ export class TestArenaScene extends BaseScene {
     }
 
     // Side walls - Matter.js static rectangles
+    // Walls should extend from top of screen to ground level
     const wallWidth = 32;
-    const wallHeight = 700; // Tall walls
+    const wallHeight = groundY; // Extend from top to ground level
+    const wallY = wallHeight / 2; // Center vertically from top to ground
 
     // Left wall
     const leftWall = this.matter.add.rectangle(
       wallWidth / 2,
-      height / 2,
+      wallY,
       wallWidth,
       wallHeight,
       createGroundBodyConfig()
     );
     this.groundBodies.push(leftWall);
-    const leftWallVisual = this.add.rectangle(wallWidth / 2, height / 2, wallWidth, wallHeight, 0x333333);
+    const leftWallVisual = this.add.rectangle(wallWidth / 2, wallY, wallWidth, wallHeight, 0x333333);
     leftWallVisual.setDepth(0);
     this.groundVisuals.push(leftWallVisual);
 
     // Right wall
     const rightWall = this.matter.add.rectangle(
       width - wallWidth / 2,
-      height / 2,
+      wallY,
       wallWidth,
       wallHeight,
       createGroundBodyConfig()
     );
     this.groundBodies.push(rightWall);
-    const rightWallVisual = this.add.rectangle(width - wallWidth / 2, height / 2, wallWidth, wallHeight, 0x333333);
+    const rightWallVisual = this.add.rectangle(width - wallWidth / 2, wallY, wallWidth, wallHeight, 0x333333);
     rightWallVisual.setDepth(0);
     this.groundVisuals.push(rightWallVisual);
 
