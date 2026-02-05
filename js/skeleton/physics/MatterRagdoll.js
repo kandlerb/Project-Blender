@@ -145,24 +145,17 @@ export class MatterRagdoll {
 
   /**
    * Create physics bodies for each bone
+   * Bodies are created at skeleton world positions - no Y adjustment needed.
+   * Matter.js collision response will naturally push bodies above ground if needed.
    */
   createBodies(worldPositions) {
-    // Get ground Y level for validation
-    const groundY = this.getGroundY();
-    console.log('Ground Y level:', groundY);
-
     this.skeleton.traverseDepthFirst((bone) => {
       // Skip zero-length bones but track position for constraints
       if (bone.length === 0) {
         const pos = worldPositions.get(bone.id);
         if (pos) {
           // Create tiny sensor body for constraint anchor
-          let anchorY = pos.y;
-          // Ensure anchor is above ground
-          if (anchorY > groundY - 20) {
-            anchorY = groundY - 50;
-          }
-          const body = this.Bodies.circle(pos.x, anchorY, 2, {
+          const body = this.Bodies.circle(pos.x, pos.y, 2, {
             isSensor: true,
             isStatic: false,  // IMPORTANT: Must be false even for anchors
             label: `ragdoll_anchor_${bone.id}`,
@@ -185,15 +178,10 @@ export class MatterRagdoll {
       const length = bone.length;
       const thickness = this.boneThickness[bone.id] || 6;
 
-      // Calculate center position
-      let centerX = (pos.x + pos.endX) / 2;
-      let centerY = (pos.y + pos.endY) / 2;
-
-      // Ensure body is above ground
-      if (centerY > groundY - 20) {
-        console.warn(`Body ${bone.id} would be below ground, adjusting Y from ${centerY.toFixed(1)} to ${(groundY - 50).toFixed(1)}`);
-        centerY = groundY - 50;
-      }
+      // Calculate center position from skeleton world positions
+      // No Y adjustment - let physics handle ground collision naturally
+      const centerX = (pos.x + pos.endX) / 2;
+      const centerY = (pos.y + pos.endY) / 2;
 
       // CRITICAL: isStatic must be false for ragdoll to fall
       const bodyOptions = {
@@ -235,29 +223,6 @@ export class MatterRagdoll {
       // Add to composite
       this.Composite.add(this.composite, body);
     });
-  }
-
-  /**
-   * Get approximate ground Y level
-   */
-  getGroundY() {
-    // Try to find ground body in the scene
-    try {
-      const allBodies = Phaser.Physics.Matter.Matter.Composite.allBodies(
-        this.scene.matter.world.localWorld
-      );
-
-      for (const body of allBodies) {
-        if (body.label === 'ground' && body.isStatic) {
-          return body.bounds.min.y;
-        }
-      }
-    } catch (e) {
-      console.warn('Could not find ground body:', e.message);
-    }
-
-    // Fallback: assume ground near bottom of screen
-    return this.scene.game.config.height - 50;
   }
 
   /**
@@ -392,20 +357,12 @@ export class MatterRagdoll {
     // Track simulation time
     this.minSimulationTime += delta;
 
-    // Debug: Log periodically to verify update is being called
-    if (this.minSimulationTime < 100 || Math.random() < 0.01) {
-      const torso = this.bodies.get('torso');
-      if (torso) {
-        console.log(`Ragdoll update: time=${this.minSimulationTime.toFixed(0)}ms, torso Y=${torso.position.y.toFixed(1)}, velY=${torso.velocity.y.toFixed(2)}`);
-      }
-    }
-
     // Don't check settle for first 500ms - let physics simulate
     if (this.minSimulationTime < 500) {
       return; // Still in initial simulation phase
     }
 
-    // Now check if settled
+    // Check if settled (all bodies have low velocity)
     if (this.checkSettled()) {
       this.settleTime += delta;
       if (this.settleTime >= this.settleThreshold) {
@@ -421,7 +378,7 @@ export class MatterRagdoll {
    * Check if ragdoll has settled (low velocity)
    */
   checkSettled() {
-    const velocityThreshold = 0.3;  // Lowered threshold for Matter.js scale
+    const velocityThreshold = 0.3;
     const angularThreshold = 0.03;
 
     for (const body of this.bodies.values()) {
@@ -431,11 +388,6 @@ export class MatterRagdoll {
         body.velocity.x * body.velocity.x +
         body.velocity.y * body.velocity.y
       );
-
-      // Debug: Log velocity occasionally
-      if (Math.random() < 0.005) {
-        console.log(`Body speed: ${speed.toFixed(3)}, angular: ${Math.abs(body.angularVelocity).toFixed(3)}`);
-      }
 
       if (speed > velocityThreshold) return false;
       if (Math.abs(body.angularVelocity) > angularThreshold) return false;

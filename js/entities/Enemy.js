@@ -2204,8 +2204,8 @@ export class Enemy {
    * @param {object} hitData - Hit data for impulse direction
    */
   convertToRagdoll(hitData) {
-    if (!this.skeleton || this.isRagdoll) {
-      console.log('Cannot ragdoll: skeleton=', !!this.skeleton, 'isRagdoll=', this.isRagdoll);
+    if (!this.skeleton) {
+      console.log('Cannot ragdoll: no skeleton');
       return;
     }
 
@@ -2234,22 +2234,40 @@ export class Enemy {
     console.log('Death impulse:', impulse);
 
     // Create ragdoll
-    this.ragdoll = new MatterRagdoll(this.scene, this.skeleton);
+    const ragdoll = new MatterRagdoll(this.scene, this.skeleton);
 
-    this.ragdoll.activate({
+    ragdoll.activate({
       impulse: impulse,
       angularImpulse: impulse.x * 0.1, // Very small spin
-      onSettle: (ragdoll) => {
-        console.log('Ragdoll settle callback triggered');
-        this.onRagdollSettle(ragdoll);
-      }
     });
 
-    this.isRagdoll = true;
-
-    // Gray out skin
+    // Gray out skin before transfer
     if (this.skin) {
       this.skin.setColor(0x666666);
+    }
+
+    // Transfer ragdoll and skin to RagdollManager
+    // RagdollManager now owns the lifecycle - Enemy no longer needs updates for ragdoll
+    if (this.scene.ragdollManager) {
+      const enemyRef = this; // Capture reference for callback
+      this.scene.ragdollManager.addRagdoll(
+        ragdoll,
+        this.skin,
+        (settledRagdoll, skin, enemy) => {
+          // This callback fires when ragdoll settles
+          enemyRef.handleRagdollSettled(settledRagdoll, skin);
+        },
+        this
+      );
+
+      // Clear local references - RagdollManager now owns these
+      this.skin = null;
+      this.ragdoll = null;
+    } else {
+      // Fallback: keep local ownership (legacy behavior)
+      console.warn('No RagdollManager found, using legacy ragdoll handling');
+      this.ragdoll = ragdoll;
+      this.isRagdoll = true;
     }
 
     // Hide sprite
@@ -2273,27 +2291,27 @@ export class Enemy {
       this.body = null;
     }
 
-    console.log('Enemy converted to ragdoll');
+    console.log('Enemy converted to ragdoll, ownership transferred to RagdollManager');
   }
 
   /**
-   * Called when ragdoll settles
-   * @param {MatterRagdoll} ragdoll
+   * Called by RagdollManager when ragdoll settles
+   * Handles corpse registration and cleanup
+   * @param {MatterRagdoll} ragdoll - The settled ragdoll
+   * @param {LineSkin} skin - The skin (may be null if already transferred)
    */
-  onRagdollSettle(ragdoll) {
-    // Freeze physics
-    ragdoll.freeze();
+  handleRagdollSettled(ragdoll, skin) {
+    console.log('Ragdoll settled, registering corpse');
 
     // Get silhouette for potential future merging
     const silhouette = ragdoll.generateSilhouetteVertices();
 
-    // Transfer skin to corpse renderer (don't destroy it)
-    if (this.scene.corpseRenderer && this.skin) {
-      this.scene.corpseRenderer.addCorpse(this.skin, ragdoll);
-      this.skin = null; // Transfer ownership
+    // Transfer skin to corpse renderer for continued rendering
+    if (this.scene.corpseRenderer && skin) {
+      this.scene.corpseRenderer.addCorpse(skin, ragdoll);
     }
 
-    // Emit corpse ready event
+    // Emit corpse ready event for terrain system
     this.scene.events.emit('corpse:ready', {
       enemy: this,
       ragdoll: ragdoll,

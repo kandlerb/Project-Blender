@@ -9,6 +9,7 @@ import { AudioManager } from '../systems/AudioManager.js';
 import { CorpseTerrainManager } from '../systems/CorpseTerrainManager.js';
 import { CorpseRenderer } from '../systems/CorpseRenderer.js';
 import { MatterWorldManager } from '../systems/MatterWorldManager.js';
+import { RagdollManager } from '../systems/RagdollManager.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
@@ -79,6 +80,7 @@ export class TestArenaScene extends BaseScene {
     // Create corpse systems (Matter.js based)
     this.corpseTerrainManager = new CorpseTerrainManager(this);
     this.corpseRenderer = new CorpseRenderer(this);
+    this.ragdollManager = new RagdollManager(this);
 
     // Create player
     this.player = new Player(this, 300, 400);
@@ -547,12 +549,17 @@ export class TestArenaScene extends BaseScene {
       // Update combat manager
       this.combatManager.update(time, scaledDelta);
 
+      // Update active ragdolls (physics, rendering, settle detection)
+      if (this.ragdollManager) {
+        this.ragdollManager.update(scaledDelta);
+      }
+
       // Update corpse terrain manager
       if (this.corpseTerrainManager) {
         this.corpseTerrainManager.update(time, scaledDelta);
       }
 
-      // Render corpse visuals
+      // Render corpse visuals (settled corpses only)
       if (this.corpseRenderer) {
         this.corpseRenderer.render();
       }
@@ -764,6 +771,10 @@ export class TestArenaScene extends BaseScene {
     if (this.audioManager) {
       this.audioManager.destroy();
       this.audioManager = null;
+    }
+    if (this.ragdollManager) {
+      this.ragdollManager.destroy();
+      this.ragdollManager = null;
     }
     if (this.corpseTerrainManager) {
       this.corpseTerrainManager.destroy();
