@@ -392,6 +392,14 @@ export class MatterRagdoll {
     // Track simulation time
     this.minSimulationTime += delta;
 
+    // Debug: Log periodically to verify update is being called
+    if (this.minSimulationTime < 100 || Math.random() < 0.01) {
+      const torso = this.bodies.get('torso');
+      if (torso) {
+        console.log(`Ragdoll update: time=${this.minSimulationTime.toFixed(0)}ms, torso Y=${torso.position.y.toFixed(1)}, velY=${torso.velocity.y.toFixed(2)}`);
+      }
+    }
+
     // Don't check settle for first 500ms - let physics simulate
     if (this.minSimulationTime < 500) {
       return; // Still in initial simulation phase
