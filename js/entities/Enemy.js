@@ -2212,7 +2212,7 @@ export class Enemy {
 
     // Sync skeleton position BEFORE creating ragdoll
     // Offset upward to ensure bodies are above ground
-    const skeletonY = this.body.position.y - this.height / 2;
+    const skeletonY = this.body.position.y - this.bodyHeight / 2;
     this.skeleton.setPosition(this.body.position.x, skeletonY);
     this.skeleton.computeWorldPositions();
 
