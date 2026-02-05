@@ -45,6 +45,10 @@ export class MatterRagdoll {
       },
     };
 
+    // Unique collision group for this ragdoll (generated on activation)
+    // Negative group = bodies with same group never collide with each other
+    this.collisionGroup = 0;
+
     // Bone dimensions (thickness for physics bodies)
     this.boneThickness = {
       pelvis: 10,
@@ -149,6 +153,12 @@ export class MatterRagdoll {
    * Matter.js collision response will naturally push bodies above ground if needed.
    */
   createBodies(worldPositions) {
+    // Generate unique negative collision group for this ragdoll
+    // Bodies with the same negative group NEVER collide with each other
+    // This prevents ragdoll parts from fighting against their own constraints
+    this.collisionGroup = this.Body.nextGroup(true);
+    console.log(`Ragdoll collision group: ${this.collisionGroup}`);
+
     this.skeleton.traverseDepthFirst((bone) => {
       // Skip zero-length bones but track position for constraints
       if (bone.length === 0) {
@@ -159,6 +169,11 @@ export class MatterRagdoll {
             isSensor: true,
             isStatic: false,  // IMPORTANT: Must be false even for anchors
             label: `ragdoll_anchor_${bone.id}`,
+            collisionFilter: {
+              category: CollisionCategories.CORPSE,
+              mask: CollisionMasks.CORPSE,
+              group: this.collisionGroup,  // Same group = no self-collision
+            },
           });
           // Prevent Phaser from trying to emit events on this raw body
           body.gameObject = null;
@@ -195,6 +210,7 @@ export class MatterRagdoll {
         collisionFilter: {
           category: CollisionCategories.CORPSE,
           mask: CollisionMasks.CORPSE,
+          group: this.collisionGroup,  // Same group = no self-collision
         },
       };
 
