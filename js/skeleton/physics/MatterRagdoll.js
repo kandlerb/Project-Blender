@@ -641,9 +641,26 @@ export class MatterRagdoll {
       if (this.scene.worldManager) {
         this.scene.worldManager.safeRemove(this.composite);
       } else if (this.scene?.matter?.world) {
-        // Fallback
+        // Fallback: manually clear pairs and defer removal
+        // First, disable collisions on all bodies to prevent new pairs
+        const Matter = Phaser.Physics.Matter.Matter;
+        const allBodies = Matter.Composite.allBodies(this.composite);
+        for (const body of allBodies) {
+          if (body.collisionFilter) {
+            body.collisionFilter.mask = 0;
+            body.collisionFilter.category = 0;
+          }
+        }
+
         this.scene.matter.world.once('afterupdate', () => {
           try {
+            // Clear collision pairs for all bodies before removal
+            const engine = this.scene.matter.world.engine;
+            if (engine?.pairs) {
+              for (const body of allBodies) {
+                this.clearPairsForBody(engine.pairs, body);
+              }
+            }
             this.scene.matter.world.remove(this.composite);
           } catch (e) {
             // Ignore - may already be removed
@@ -656,5 +673,50 @@ export class MatterRagdoll {
     this.bodies.clear();
     this.constraints = [];
     this.active = false;
+  }
+
+  /**
+   * Helper to clear collision pairs for a body (used in fallback destroy)
+   * @param {object} pairs - engine.pairs object
+   * @param {MatterJS.BodyType} body - body to clear pairs for
+   */
+  clearPairsForBody(pairs, body) {
+    if (!pairs || !body) return;
+
+    const pairsToRemove = [];
+
+    // Find all pairs involving this body
+    if (pairs.table) {
+      for (const id in pairs.table) {
+        const pair = pairs.table[id];
+        if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+          pairsToRemove.push(id);
+        }
+      }
+    }
+
+    // Remove from both table and list
+    for (const id of pairsToRemove) {
+      const pair = pairs.table[id];
+      if (pair) {
+        if (pairs.list) {
+          const listIndex = pairs.list.indexOf(pair);
+          if (listIndex !== -1) {
+            pairs.list.splice(listIndex, 1);
+          }
+        }
+        delete pairs.table[id];
+      }
+    }
+
+    // Also clear from collisionActive if present
+    if (pairs.collisionActive) {
+      for (let i = pairs.collisionActive.length - 1; i >= 0; i--) {
+        const pair = pairs.collisionActive[i];
+        if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+          pairs.collisionActive.splice(i, 1);
+        }
+      }
+    }
   }
 }

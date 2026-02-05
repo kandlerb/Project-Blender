@@ -362,15 +362,72 @@ export class MatterPhysicsHelper {
   }
 
   /**
+   * Clear all collision pairs involving a specific body
+   * This prevents stale pair data from causing errors in the next physics step
+   * @param {MatterJS.BodyType} body - The body to clear pairs for
+   */
+  clearPairsForBody(body) {
+    if (!body) return;
+
+    const engine = this.matter.world.engine;
+    if (!engine || !engine.pairs) return;
+
+    const pairs = engine.pairs;
+    const pairsToRemove = [];
+
+    // Find all pairs involving this body
+    if (pairs.table) {
+      for (const id in pairs.table) {
+        const pair = pairs.table[id];
+        if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+          pairsToRemove.push(id);
+        }
+      }
+    }
+
+    // Remove the pairs from both table and list
+    for (const id of pairsToRemove) {
+      const pair = pairs.table[id];
+      if (pair) {
+        if (pairs.list) {
+          const listIndex = pairs.list.indexOf(pair);
+          if (listIndex !== -1) {
+            pairs.list.splice(listIndex, 1);
+          }
+        }
+        delete pairs.table[id];
+      }
+    }
+
+    // Also clear from collisionActive pairs if they exist
+    if (pairs.collisionActive) {
+      for (let i = pairs.collisionActive.length - 1; i >= 0; i--) {
+        const pair = pairs.collisionActive[i];
+        if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+          pairs.collisionActive.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  /**
    * Safely remove a body after the physics update completes
-   * Use this instead of direct world.remove() to prevent mid-update removal errors
+   * Includes collision pair cleanup to prevent stale reference errors
    * @param {MatterJS.BodyType} body
    */
   safeRemove(body) {
     if (!body) return;
 
+    // Immediately disable collisions to prevent new pairs
+    if (body.collisionFilter) {
+      body.collisionFilter.mask = 0;
+      body.collisionFilter.category = 0;
+    }
+
     this.matter.world.once('afterupdate', () => {
       try {
+        // Clear collision pairs before removal
+        this.clearPairsForBody(body);
         this.matter.world.remove(body);
       } catch (e) {
         // Body already removed or world destroyed
@@ -380,15 +437,26 @@ export class MatterPhysicsHelper {
 
   /**
    * Safely remove multiple bodies after physics update
+   * Includes collision pair cleanup to prevent stale reference errors
    * @param {MatterJS.BodyType[]} bodies
    */
   safeRemoveAll(bodies) {
     if (!bodies || bodies.length === 0) return;
 
+    // Immediately disable collisions on all bodies
+    for (const body of bodies) {
+      if (body?.collisionFilter) {
+        body.collisionFilter.mask = 0;
+        body.collisionFilter.category = 0;
+      }
+    }
+
     this.matter.world.once('afterupdate', () => {
       for (const body of bodies) {
         if (body) {
           try {
+            // Clear collision pairs before removal
+            this.clearPairsForBody(body);
             this.matter.world.remove(body);
           } catch (e) {
             // Ignore - body may already be removed

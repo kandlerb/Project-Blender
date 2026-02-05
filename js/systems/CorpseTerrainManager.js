@@ -177,10 +177,10 @@ export class CorpseTerrainManager {
    * Remove a corpse and its terrain
    */
   removeCorpse(corpseData) {
-    // Remove terrain bodies
+    // Remove terrain bodies safely
     if (corpseData.terrainBodies) {
       for (const body of corpseData.terrainBodies) {
-        this.Composite.remove(this.terrainComposite, body);
+        this.safeRemoveTerrainBody(body);
         this.terrainBodies.delete(body);
       }
       corpseData.terrainBodies = [];
@@ -200,6 +200,83 @@ export class CorpseTerrainManager {
     const index = this.corpses.indexOf(corpseData);
     if (index > -1) {
       this.corpses.splice(index, 1);
+    }
+  }
+
+  /**
+   * Safely remove a terrain body with collision pair cleanup
+   * @param {MatterJS.BodyType} body
+   */
+  safeRemoveTerrainBody(body) {
+    if (!body) return;
+
+    // Disable collisions immediately
+    if (body.collisionFilter) {
+      body.collisionFilter.mask = 0;
+      body.collisionFilter.category = 0;
+    }
+
+    // Remove from composite (this doesn't remove from world if body was added to world separately)
+    this.Composite.remove(this.terrainComposite, body);
+
+    // Use worldManager if available for world removal
+    if (this.scene.worldManager) {
+      this.scene.worldManager.safeRemove(body);
+    } else if (this.scene?.matter?.world) {
+      // Fallback: defer removal with pair cleanup
+      this.scene.matter.world.once('afterupdate', () => {
+        try {
+          this.clearPairsForBody(body);
+          this.scene.matter.world.remove(body);
+        } catch (e) {
+          // Ignore - may already be removed
+        }
+      });
+    }
+  }
+
+  /**
+   * Helper to clear collision pairs for a body (used in fallback removal)
+   * @param {MatterJS.BodyType} body
+   */
+  clearPairsForBody(body) {
+    if (!body) return;
+
+    const engine = this.scene.matter?.world?.engine;
+    if (!engine?.pairs) return;
+
+    const pairs = engine.pairs;
+    const pairsToRemove = [];
+
+    if (pairs.table) {
+      for (const id in pairs.table) {
+        const pair = pairs.table[id];
+        if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+          pairsToRemove.push(id);
+        }
+      }
+    }
+
+    for (const id of pairsToRemove) {
+      const pair = pairs.table[id];
+      if (pair) {
+        if (pairs.list) {
+          const listIndex = pairs.list.indexOf(pair);
+          if (listIndex !== -1) {
+            pairs.list.splice(listIndex, 1);
+          }
+        }
+        delete pairs.table[id];
+      }
+    }
+
+    if (pairs.collisionActive) {
+      for (let i = pairs.collisionActive.length - 1; i >= 0; i--) {
+        const pair = pairs.collisionActive[i];
+        if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+          pairs.collisionActive.splice(i, 1);
+        }
+      }
     }
   }
 
@@ -305,7 +382,33 @@ export class CorpseTerrainManager {
     this.clearDebugGraphics();
 
     if (this.terrainComposite) {
-      this.scene.matter.world.remove(this.terrainComposite);
+      // Use safe removal with pair cleanup
+      if (this.scene.worldManager) {
+        this.scene.worldManager.safeRemove(this.terrainComposite);
+      } else if (this.scene?.matter?.world) {
+        // Fallback: disable collisions and defer removal
+        const Matter = Phaser.Physics.Matter.Matter;
+        const allBodies = Matter.Composite.allBodies(this.terrainComposite);
+
+        for (const body of allBodies) {
+          if (body.collisionFilter) {
+            body.collisionFilter.mask = 0;
+            body.collisionFilter.category = 0;
+          }
+        }
+
+        this.scene.matter.world.once('afterupdate', () => {
+          try {
+            // Clear pairs for all bodies before removal
+            for (const body of allBodies) {
+              this.clearPairsForBody(body);
+            }
+            this.scene.matter.world.remove(this.terrainComposite);
+          } catch (e) {
+            // Ignore - may already be removed
+          }
+        });
+      }
     }
   }
 }

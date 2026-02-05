@@ -1055,16 +1055,40 @@ export class Player {
     this.skeletonInstance = null;
     this.poseBlender = null;
 
-    // Clean up Matter.js body using safe removal
+    // Clean up Matter.js body using safe removal with pair cleanup
     if (this.body) {
+      // Immediately disable collisions
+      if (this.body.collisionFilter) {
+        this.body.collisionFilter.mask = 0;
+        this.body.collisionFilter.category = 0;
+      }
+
       if (this.scene?.worldManager) {
         this.scene.worldManager.safeRemove(this.body);
       } else if (this.scene?.matter?.world) {
-        try {
-          this.scene.matter.world.remove(this.body);
-        } catch (e) {
-          // Ignore
-        }
+        // Fallback with pair cleanup
+        const bodyToRemove = this.body;
+        this.scene.matter.world.once('afterupdate', () => {
+          try {
+            // Clear collision pairs before removal
+            const engine = this.scene.matter.world.engine;
+            if (engine?.pairs?.table) {
+              for (const id in engine.pairs.table) {
+                const pair = engine.pairs.table[id];
+                if (pair && (pair.bodyA === bodyToRemove || pair.bodyB === bodyToRemove)) {
+                  delete engine.pairs.table[id];
+                  if (engine.pairs.list) {
+                    const idx = engine.pairs.list.indexOf(pair);
+                    if (idx !== -1) engine.pairs.list.splice(idx, 1);
+                  }
+                }
+              }
+            }
+            this.scene.matter.world.remove(bodyToRemove);
+          } catch (e) {
+            // Ignore
+          }
+        });
       }
       this.body = null;
     }

@@ -759,17 +759,41 @@ export class Boss {
       this.healthBarContainer.destroy();
     }
 
-    // Helper for safe body removal
+    // Helper for safe body removal with pair cleanup
     const safeRemove = (body) => {
       if (!body) return;
+
+      // Immediately disable collisions
+      if (body.collisionFilter) {
+        body.collisionFilter.mask = 0;
+        body.collisionFilter.category = 0;
+      }
+
       if (this.scene?.worldManager) {
         this.scene.worldManager.safeRemove(body);
       } else if (this.scene?.matter?.world) {
-        try {
-          this.scene.matter.world.remove(body);
-        } catch (e) {
-          // Ignore
-        }
+        // Fallback with pair cleanup
+        this.scene.matter.world.once('afterupdate', () => {
+          try {
+            // Clear collision pairs before removal
+            const engine = this.scene.matter.world.engine;
+            if (engine?.pairs?.table) {
+              for (const id in engine.pairs.table) {
+                const pair = engine.pairs.table[id];
+                if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+                  delete engine.pairs.table[id];
+                  if (engine.pairs.list) {
+                    const idx = engine.pairs.list.indexOf(pair);
+                    if (idx !== -1) engine.pairs.list.splice(idx, 1);
+                  }
+                }
+              }
+            }
+            this.scene.matter.world.remove(body);
+          } catch (e) {
+            // Ignore
+          }
+        });
       }
     };
 
