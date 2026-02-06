@@ -46,6 +46,7 @@ export const PLAYER_STATES = Object.freeze({
 
 /**
  * Base class for player states with common helpers
+ * Updated for Matter.js physics
  */
 class PlayerState extends State {
   get player() {
@@ -60,25 +61,56 @@ class PlayerState extends State {
     return this.player.sprite;
   }
 
+  /**
+   * Get the Matter.js body
+   * Note: This is now the Matter.js body directly, not sprite.body
+   */
   get body() {
-    return this.player.sprite.body;
+    return this.player.body;
   }
 
   /**
    * Handle horizontal movement (common to most states)
+   * Updated for Matter.js velocity API
    */
   handleHorizontalMovement(speedMultiplier = 1) {
     const horizontal = this.input.getHorizontalAxis();
-    const speed = PHYSICS.PLAYER.RUN_SPEED * speedMultiplier;
+    const speed = this.player.moveSpeed * speedMultiplier;
 
     if (horizontal !== 0) {
-      this.body.setVelocityX(horizontal * speed);
+      this.player.matterHelper.setVelocityX(this.body, horizontal * speed);
       this.sprite.setFlipX(horizontal < 0);
+      this.player.facingRight = horizontal > 0;
       return true;
     } else {
-      this.body.setVelocityX(0);
+      this.player.matterHelper.setVelocityX(this.body, 0);
       return false;
     }
+  }
+
+  /**
+   * Set velocity X using Matter.js API
+   * @param {number} vx - X velocity
+   */
+  setVelocityX(vx) {
+    this.player.matterHelper.setVelocityX(this.body, vx);
+  }
+
+  /**
+   * Set velocity Y using Matter.js API
+   * @param {number} vy - Y velocity
+   */
+  setVelocityY(vy) {
+    this.player.matterHelper.setVelocityY(this.body, vy);
+  }
+
+  /**
+   * Set both X and Y velocity using Matter.js API
+   * @param {number} vx - X velocity
+   * @param {number} vy - Y velocity
+   */
+  setVelocity(vx, vy) {
+    this.player.scene.matter.body.setVelocity(this.body, { x: vx, y: vy });
   }
 
   /**
@@ -108,7 +140,31 @@ class PlayerState extends State {
    * Execute jump
    */
   doJump() {
-    this.body.setVelocityY(-PHYSICS.PLAYER.JUMP_FORCE);
+    this.player.matterHelper.setVelocityY(this.body, -this.player.jumpForce);
+  }
+
+  /**
+   * Check if player is on the ground
+   * @returns {boolean}
+   */
+  isOnFloor() {
+    return this.player.isOnGround();
+  }
+
+  /**
+   * Check if player is touching left wall
+   * @returns {boolean}
+   */
+  isTouchingLeftWall() {
+    return this.player.isTouchingLeftWall();
+  }
+
+  /**
+   * Check if player is touching right wall
+   * @returns {boolean}
+   */
+  isTouchingRightWall() {
+    return this.player.isTouchingRightWall();
   }
 }
 
@@ -121,7 +177,7 @@ export class IdleState extends PlayerState {
   }
 
   enter(prevState, params) {
-    this.body.setVelocityX(0);
+    this.setVelocityX(0);
 
     // Play idle animation
     if (this.player.poseBlender) {
@@ -134,12 +190,12 @@ export class IdleState extends PlayerState {
 
   update(time, delta) {
     // Fall if not on ground
-    if (!this.body.onFloor()) {
+    if (!this.isOnFloor()) {
       return PLAYER_STATES.FALL;
     }
 
     // Maintain floor contact to prevent ground clipping
-    this.body.setVelocityY(0);
+    this.setVelocityY(0);
 
     // Transition to run if moving
     if (this.input.getHorizontalAxis() !== 0) {
@@ -229,14 +285,14 @@ export class RunState extends PlayerState {
 
   update(time, delta) {
     // Fall if not on ground
-    if (!this.body.onFloor()) {
+    if (!this.isOnFloor()) {
       // Store coyote time reference
       this.player.leftGroundTime = time;
       return PLAYER_STATES.FALL;
     }
 
     // Maintain floor contact to prevent ground clipping
-    this.body.setVelocityY(0);
+    this.setVelocityY(0);
 
     // Handle movement
     const isMoving = this.handleHorizontalMovement();
@@ -351,24 +407,24 @@ export class JumpState extends PlayerState {
       const inputH = this.input.getHorizontalAxis();
       if (inputH !== 0 && Math.sign(inputH) === Math.sign(this.wallJumpDirection)) {
         // Player pressing in jump direction - allow slight boost
-        this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+        this.handleHorizontalMovement(this.player.airControl);
       }
       // Otherwise preserve wall jump velocity
     } else {
       // Normal air movement
-      this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+      this.handleHorizontalMovement(this.player.airControl);
     }
 
     // Variable jump height - release early for short hop
     if (this.input.justReleased(ACTIONS.JUMP) && this.body.velocity.y < 0) {
-      this.body.setVelocityY(this.body.velocity.y * 0.5);
+      this.setVelocityY(this.body.velocity.y * 0.5);
     }
 
     // Transition to fall when velocity becomes positive (falling)
     if (this.body.velocity.y >= 0) {
       // Check for wall slide opportunity
-      const touchingLeftWall = this.body.blocked.left;
-      const touchingRightWall = this.body.blocked.right;
+      const touchingLeftWall = this.isTouchingLeftWall();
+      const touchingRightWall = this.isTouchingRightWall();
       const inputH = this.input.getHorizontalAxis();
 
       if ((touchingLeftWall && inputH < 0) || (touchingRightWall && inputH > 0)) {
@@ -433,11 +489,11 @@ export class FallState extends PlayerState {
 
   update(time, delta) {
     // Air movement
-    this.handleHorizontalMovement(PHYSICS.PLAYER.AIR_CONTROL);
+    this.handleHorizontalMovement(this.player.airControl);
 
     // Wall slide - check if pressing into a wall while falling
-    const touchingLeftWall = this.body.blocked.left;
-    const touchingRightWall = this.body.blocked.right;
+    const touchingLeftWall = this.isTouchingLeftWall();
+    const touchingRightWall = this.isTouchingRightWall();
     const inputH = this.input.getHorizontalAxis();
 
     // Must be falling (not rising) and pressing toward wall
@@ -485,7 +541,7 @@ export class FallState extends PlayerState {
     }
 
     // Land when hitting ground
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       return PLAYER_STATES.LAND;
     }
 
@@ -510,7 +566,7 @@ export class LandState extends PlayerState {
 
   enter(prevState, params) {
     // Zero Y velocity on landing to prevent ground clipping
-    this.body.setVelocityY(0);
+    this.setVelocityY(0);
 
     // Play land animation
     if (this.player.poseBlender) {
@@ -523,8 +579,8 @@ export class LandState extends PlayerState {
 
   update(time, delta) {
     // Maintain floor contact to prevent ground clipping
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
     // Can still move during landing
@@ -604,7 +660,7 @@ class AttackState extends PlayerState {
     }
 
     // Stop horizontal movement (slight momentum)
-    this.body.setVelocityX(this.body.velocity.x * 0.3);
+    this.setVelocityX(this.body.velocity.x * 0.3);
 
     // Play attack animation
     this.playAttackAnimation();
@@ -650,8 +706,8 @@ class AttackState extends PlayerState {
     const realElapsedTime = this.realElapsedTime;
 
     // Maintain floor contact to prevent ground clipping during attacks
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
     // Movement ability cancels (after startup)
@@ -688,7 +744,7 @@ class AttackState extends PlayerState {
           // Fallback hitbox when no weapon data available
           this.player.activateAttackHitbox({
             damage: 10,
-            knockback: { x: 200, y: -100 },
+            knockback: { x: 4, y: -2 }, // Matter.js scale
             hitstun: 150,
             hitstop: 40,
             width: 50,
@@ -738,7 +794,7 @@ class AttackState extends PlayerState {
    * @returns {string}
    */
   getExitState() {
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       return this.input.getHorizontalAxis() !== 0
         ? PLAYER_STATES.RUN
         : PLAYER_STATES.IDLE;
@@ -833,7 +889,7 @@ export class AttackAirState extends AttackState {
 
   update(time, delta) {
     // Air attack can land during animation
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       return PLAYER_STATES.LAND;
     }
 
@@ -863,9 +919,9 @@ export class FlipState extends PlayerState {
     this.perfectWindowStart = 170; // Perfect timing window (apex)
     this.perfectWindowEnd = 220;
 
-    // Movement
-    this.flipSpeed = 450; // Horizontal speed during flip
-    this.flipHeight = 350; // Vertical impulse
+    // Movement (Matter.js scale)
+    this.flipSpeed = 8; // Horizontal speed during flip
+    this.flipHeight = 12; // Vertical impulse
 
     // State tracking
     this.flipDirection = 1;
@@ -884,8 +940,8 @@ export class FlipState extends PlayerState {
     }
 
     // Apply flip velocity
-    this.body.setVelocityX(this.flipDirection * this.flipSpeed);
-    this.body.setVelocityY(-this.flipHeight);
+    this.setVelocityX(this.flipDirection * this.flipSpeed);
+    this.setVelocityY(-this.flipHeight);
 
     // Track if we came from attack (for attack buffering)
     this.hasReleasedAttack = !this.input.isDown(ACTIONS.ATTACK_LIGHT) &&
@@ -920,7 +976,7 @@ export class FlipState extends PlayerState {
     if (horizontal !== 0) {
       const currentVelX = this.body.velocity.x;
       const adjustment = horizontal * 100; // Slight air adjustment
-      this.body.setVelocityX(currentVelX + adjustment * (delta / 1000));
+      this.setVelocityX(currentVelX + adjustment * (delta / 1000));
     }
 
     // Track attack release for buffering
@@ -938,7 +994,7 @@ export class FlipState extends PlayerState {
     }
 
     // Land early cancels flip
-    if (this.body.onFloor() && stateTime > 100) {
+    if (this.isOnFloor() && stateTime > 100) {
       return this.finishFlip();
     }
 
@@ -952,12 +1008,12 @@ export class FlipState extends PlayerState {
 
   finishFlip() {
     // Determine next state based on situation
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       // Dust effect on land
       if (this.player.scene.effectsManager) {
         this.player.scene.effectsManager.dustCloud(
-          this.sprite.x,
-          this.sprite.y + 20,
+          this.body.position.x,
+          this.body.position.y + 20,
           3
         );
       }
@@ -990,8 +1046,8 @@ export class DiveKickState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.DIVE_KICK, stateMachine);
 
-    this.diveSpeed = 800; // Downward velocity
-    this.horizontalSpeed = 200; // Forward momentum
+    this.diveSpeed = 15; // Downward velocity (Matter.js scale)
+    this.horizontalSpeed = 5; // Forward momentum (Matter.js scale)
     this.damage = 20;
     this.hasHit = false;
   }
@@ -1001,13 +1057,13 @@ export class DiveKickState extends PlayerState {
 
     // Dive downward with slight forward momentum
     const direction = this.sprite.flipX ? -1 : 1;
-    this.body.setVelocityX(direction * this.horizontalSpeed);
-    this.body.setVelocityY(this.diveSpeed);
+    this.setVelocityX(direction * this.horizontalSpeed);
+    this.setVelocityY(this.diveSpeed);
 
     // Activate hitbox
     this.player.activateAttackHitbox({
       damage: this.damage,
-      knockback: { x: 150, y: 200 }, // Spike enemies down
+      knockback: { x: 3, y: 4 }, // Spike enemies down (Matter.js scale)
       hitstun: 300,
       hitstop: 60,
       width: 40,
@@ -1024,12 +1080,12 @@ export class DiveKickState extends PlayerState {
 
   update(time, delta) {
     // Land cancels dive kick
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       // Impact effect
       if (this.player.scene.effectsManager) {
         this.player.scene.effectsManager.dustCloud(
-          this.sprite.x,
-          this.sprite.y + 20,
+          this.body.position.x,
+          this.body.position.y + 20,
           6
         );
         this.player.scene.effectsManager.screenShake(4, 60);
@@ -1070,7 +1126,7 @@ export class SpinChargeState extends PlayerState {
 
   enter(prevState, params) {
     // Slow down horizontal movement
-    this.body.setVelocityX(this.body.velocity.x * 0.3);
+    this.setVelocityX(this.body.velocity.x * 0.3);
 
     // TODO: Play charge animation
     // Temporary: scale up slightly
@@ -1089,8 +1145,8 @@ export class SpinChargeState extends PlayerState {
     this.handleHorizontalMovement(0.2);
 
     // Maintain floor contact to prevent ground clipping
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
     // Released button - go to active spin if charged enough
@@ -1099,7 +1155,7 @@ export class SpinChargeState extends PlayerState {
         return PLAYER_STATES.SPIN_ACTIVE;
       } else {
         // Not charged enough - cancel
-        return this.body.onFloor() ? PLAYER_STATES.IDLE : PLAYER_STATES.FALL;
+        return this.isOnFloor() ? PLAYER_STATES.IDLE : PLAYER_STATES.FALL;
       }
     }
 
@@ -1121,7 +1177,7 @@ export class SpinChargeState extends PlayerState {
     // sprite.height already includes scale, so baseHeight = height / scale
     // When scaling down, the bottom moves up, so we move sprite down to compensate
     const currentScale = this.sprite.scaleY;
-    if (currentScale > 1 && this.body.onFloor()) {
+    if (currentScale > 1 && this.isOnFloor()) {
       const baseHeight = this.sprite.height / currentScale;
       const heightDiff = (this.sprite.height - baseHeight) / 2;
       this.sprite.y += heightDiff;
@@ -1130,8 +1186,8 @@ export class SpinChargeState extends PlayerState {
     this.sprite.setScale(1);
 
     // Sync physics body position after scale change
-    this.body.setVelocityY(0);
-    this.body.reset(this.sprite.x, this.sprite.y);
+    this.setVelocityY(0);
+    this.player.setPosition(this.sprite.x, this.sprite.y);
   }
 
   canBeInterrupted(nextStateName) {
@@ -1151,7 +1207,7 @@ export class SpinActiveState extends PlayerState {
 
     this.maxSpinDuration = 2000; // Max time can spin
     this.tickRate = 150; // MS between damage ticks
-    this.spinSpeed = 200; // Movement speed while spinning
+    this.spinSpeed = 5; // Movement speed while spinning (Matter.js scale)
 
     this.lastTickTime = 0;
     this.totalRotation = 0;
@@ -1165,13 +1221,13 @@ export class SpinActiveState extends PlayerState {
     const spinData = this.player.getAttackData('spin');
 
     const damage = spinData?.damage || 5;
-    const knockback = spinData?.knockback || { x: 100, y: -50 };
+    const knockback = spinData?.knockback || { x: 2, y: -1 }; // Matter.js scale
     const hitstun = spinData?.hitstun || 100;
     const hitstop = spinData?.hitstop || 20;
     const hitbox = spinData?.hitbox || { width: 80, height: 60, offsetX: 40, offsetY: 0 };
 
-    // Activate dual spin hitboxes (one on each side for 360 coverage)
-    this.player.activateAttackHitbox({
+    // Store spin config for re-activation during multi-hit
+    this.spinConfig = {
       damage,
       hitstun,
       hitstop,
@@ -1193,7 +1249,10 @@ export class SpinActiveState extends PlayerState {
           knockback: { x: -knockback.x, y: knockback.y }, // Knockback away from player
         },
       ],
-    });
+    };
+
+    // Activate dual spin hitboxes (one on each side for 360 coverage)
+    this.player.activateAttackHitbox(this.spinConfig);
   }
 
   update(time, delta) {
@@ -1206,22 +1265,22 @@ export class SpinActiveState extends PlayerState {
     // Movement while spinning (reduced)
     const horizontal = this.input.getHorizontalAxis();
     if (horizontal !== 0) {
-      this.body.setVelocityX(horizontal * this.spinSpeed);
+      this.setVelocityX(horizontal * this.spinSpeed);
       this.sprite.setFlipX(horizontal < 0);
     } else {
-      this.body.setVelocityX(this.body.velocity.x * 0.9); // Slow down
+      this.setVelocityX(this.body.velocity.x * 0.9); // Slow down
     }
 
     // Maintain floor contact to prevent ground clipping
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
-    // Reset hitbox tracking periodically for multi-hit (both hitboxes)
+    // Reset hitbox tracking periodically for multi-hit
+    // Re-activating the hitbox in Matter.js clears the hit tracker
     if (stateTime - this.lastTickTime >= this.tickRate) {
       this.lastTickTime = stateTime;
-      this.player.attackHitbox.hasHit.clear();
-      this.player.attackHitboxSecondary.hasHit.clear();
+      this.player.activateAttackHitbox(this.spinConfig);
     }
 
     // Release button to finish
@@ -1275,7 +1334,7 @@ export class SpinReleaseState extends PlayerState {
 
     const baseDamage = releaseData?.damage || 25;
     const finalDamage = isPerfect ? baseDamage * 1.5 : baseDamage;
-    const knockback = releaseData?.knockback || { x: 400, y: -350 };
+    const knockback = releaseData?.knockback || { x: 8, y: -6 }; // Matter.js scale
     const hitstun = releaseData?.hitstun || 400;
     const baseHitstop = releaseData?.hitstop || 80;
     const hitbox = releaseData?.hitbox || { width: 100, height: 80, offsetX: 50, offsetY: 0 };
@@ -1314,9 +1373,9 @@ export class SpinReleaseState extends PlayerState {
     this.sprite.setRotation(0);
 
     // Brief pause in movement - freeze both axes to prevent ground clipping
-    this.body.setVelocityX(0);
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    this.setVelocityX(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
     // Store base height before scaling for Y compensation
@@ -1337,7 +1396,7 @@ export class SpinReleaseState extends PlayerState {
 
     // Adjust Y position to keep feet planted as scale changes
     // When scale decreases, the sprite shrinks toward center, so we need to move down
-    if (this.body.onFloor() && this.lastScale !== newScale) {
+    if (this.isOnFloor() && this.lastScale !== newScale) {
       const scaleDiff = this.lastScale - newScale;
       // Move Y down by half the height change to keep feet at same position
       this.sprite.y += (scaleDiff * this.baseHeight) / 2;
@@ -1347,12 +1406,12 @@ export class SpinReleaseState extends PlayerState {
     this.lastScale = newScale;
 
     // Maintain floor contact to prevent clipping through ground
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
     if (stateTime >= this.releaseDuration) {
-      if (this.body.onFloor()) {
+      if (this.isOnFloor()) {
         return this.input.getHorizontalAxis() !== 0
           ? PLAYER_STATES.RUN
           : PLAYER_STATES.IDLE;
@@ -1370,7 +1429,7 @@ export class SpinReleaseState extends PlayerState {
     this.sprite.setScale(1);
 
     // Sync physics body position
-    this.body.reset(this.sprite.x, this.sprite.y);
+    this.player.setPosition(this.sprite.x, this.sprite.y);
   }
 
   canBeInterrupted(nextStateName) {
@@ -1428,8 +1487,8 @@ export class BlinkState extends PlayerState {
     // Make player invulnerable
     this.setInvulnerable(true);
 
-    // Disable physics body during blink (phase through everything)
-    this.body.enable = false;
+    // Disable physics collisions during blink (phase through everything)
+    this.body.isSensor = true;
 
     // Make sprite semi-transparent during blink
     this.sprite.setAlpha(0.3);
@@ -1462,18 +1521,18 @@ export class BlinkState extends PlayerState {
   }
 
   finishBlink() {
-    // Re-enable physics
-    this.body.enable = true;
+    // Re-enable physics collisions
+    this.body.isSensor = false;
 
     // Check if target position is valid (not inside wall)
     // If invalid, push player to nearest valid position
     this.validatePosition();
 
     // Sync physics body to sprite position
-    this.body.reset(this.sprite.x, this.sprite.y);
+    this.player.setPosition(this.sprite.x, this.sprite.y);
 
     // Determine next state
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       const horizontal = this.input.getHorizontalAxis();
       return horizontal !== 0 ? PLAYER_STATES.RUN : PLAYER_STATES.IDLE;
     }
@@ -1481,17 +1540,17 @@ export class BlinkState extends PlayerState {
   }
 
   validatePosition() {
-    // Simple bounds check - keep player in world
-    const bounds = this.player.scene.physics.world.bounds;
+    // Simple bounds check - keep player in world (Game Config dimensions)
+    const { width, height } = this.player.scene.game.config;
     const halfWidth = this.sprite.width / 2;
     const halfHeight = this.sprite.height / 2;
 
     let x = this.sprite.x;
     let y = this.sprite.y;
 
-    // Clamp to world bounds
-    x = Math.max(bounds.x + halfWidth, Math.min(bounds.right - halfWidth, x));
-    y = Math.max(bounds.y + halfHeight, Math.min(bounds.bottom - halfHeight, y));
+    // Clamp to game bounds
+    x = Math.max(halfWidth, Math.min(width - halfWidth, x));
+    y = Math.max(halfHeight, Math.min(height - halfHeight, y));
 
     this.sprite.setPosition(x, y);
 
@@ -1503,15 +1562,31 @@ export class BlinkState extends PlayerState {
     const scene = this.player.scene;
 
     // Create a copy of the player sprite as afterimage
-    this.afterimageSprite = scene.add.sprite(
-      this.startPosition.x,
-      this.startPosition.y,
-      this.sprite.texture.key
-    );
+    // Check if sprite is a Rectangle (Matter.js migration) or Sprite
+    if (this.sprite instanceof Phaser.GameObjects.Rectangle) {
+      this.afterimageSprite = scene.add.rectangle(
+        this.startPosition.x,
+        this.startPosition.y,
+        this.sprite.width,
+        this.sprite.height,
+        this.sprite.fillColor
+      );
+    } else {
+      this.afterimageSprite = scene.add.sprite(
+        this.startPosition.x,
+        this.startPosition.y,
+        this.sprite.texture.key
+      );
+      this.afterimageSprite.setFlipX(this.sprite.flipX);
+    }
 
-    this.afterimageSprite.setFlipX(this.sprite.flipX);
     this.afterimageSprite.setAlpha(0.6);
-    this.afterimageSprite.setTint(0x4488ff); // Blue tint
+    // Apply color - use setTint for Sprites, setFillStyle for Rectangles
+    if (this.afterimageSprite.setTint) {
+      this.afterimageSprite.setTint(0x4488ff);
+    } else if (this.afterimageSprite.setFillStyle) {
+      this.afterimageSprite.setFillStyle(0x4488ff, 0.6);
+    }
     this.afterimageSprite.setDepth(this.sprite.depth - 1);
 
     // Fade out afterimage
@@ -1533,7 +1608,8 @@ export class BlinkState extends PlayerState {
   exit(nextState) {
     this.setInvulnerable(false);
     this.sprite.setAlpha(1);
-    this.body.enable = true;
+    // Re-enable physics collisions (safety check)
+    this.body.isSensor = false;
 
     // Afterimage cleanup handled by tween
   }
@@ -1603,7 +1679,7 @@ export class GrappleFireState extends PlayerState {
     }
 
     // Slow player movement during fire
-    this.body.setVelocityX(this.body.velocity.x * 0.5);
+    this.setVelocityX(this.body.velocity.x * 0.5);
   }
 
   update(time, delta) {
@@ -1678,7 +1754,12 @@ export class GrappleFireState extends PlayerState {
     // Collect ground and platforms
     if (scene.ground) platforms.push(scene.ground);
     if (scene.platforms) {
-      scene.platforms.getChildren().forEach(p => platforms.push(p));
+      // Handle both Phaser Group (has getChildren) and plain array (Matter.js)
+      if (Array.isArray(scene.platforms)) {
+        scene.platforms.forEach(p => platforms.push(p));
+      } else if (scene.platforms.getChildren) {
+        scene.platforms.getChildren().forEach(p => platforms.push(p));
+      }
     }
 
     // Simple line-rectangle intersection check
@@ -1699,16 +1780,16 @@ export class GrappleFireState extends PlayerState {
       }
     }
 
-    // Method 3: Check world bounds
-    const worldBounds = scene.physics.world.bounds;
-    if (this.hookPosition.x <= worldBounds.left ||
-        this.hookPosition.x >= worldBounds.right ||
-        this.hookPosition.y <= worldBounds.top ||
-        this.hookPosition.y >= worldBounds.bottom) {
+    // Method 3: Check world bounds (Game Config)
+    const { width, height } = scene.game.config;
+    if (this.hookPosition.x <= 0 ||
+        this.hookPosition.x >= width ||
+        this.hookPosition.y <= 0 ||
+        this.hookPosition.y >= height) {
       // Clamp to world edge
       return {
-        x: Math.max(worldBounds.left, Math.min(worldBounds.right, this.hookPosition.x)),
-        y: Math.max(worldBounds.top, Math.min(worldBounds.bottom, this.hookPosition.y)),
+        x: Math.max(0, Math.min(width, this.hookPosition.x)),
+        y: Math.max(0, Math.min(height, this.hookPosition.y)),
       };
     }
 
@@ -1785,7 +1866,7 @@ export class GrappleFireState extends PlayerState {
   }
 
   cancelGrapple() {
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       return this.input.getHorizontalAxis() !== 0
         ? PLAYER_STATES.RUN
         : PLAYER_STATES.IDLE;
@@ -1817,7 +1898,7 @@ export class GrappleTravelState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.GRAPPLE_TRAVEL, stateMachine);
 
-    this.travelSpeed = 1400;
+    this.travelSpeed = 25; // Matter.js scale
     this.arrivalDistance = 25;    // How close before "arrived"
     this.maxTravelTime = 600;     // Safety timeout
 
@@ -1828,11 +1909,11 @@ export class GrappleTravelState extends PlayerState {
   }
 
   enter(prevState, params) {
-    // Disable gravity during travel
-    this.body.setAllowGravity(false);
+    // Disable gravity during travel (Matter.js)
+    this.body.ignoreGravity = true;
 
     // Cancel any existing velocity
-    this.body.setVelocity(0, 0);
+    this.setVelocity(0, 0);
   }
 
   update(time, delta) {
@@ -1869,7 +1950,7 @@ export class GrappleTravelState extends PlayerState {
 
     // Move toward target
     const speed = this.travelSpeed;
-    this.body.setVelocity(
+    this.setVelocity(
       (dx / distance) * speed,
       (dy / distance) * speed
     );
@@ -1903,19 +1984,19 @@ export class GrappleTravelState extends PlayerState {
   }
 
   finishGrapple() {
-    this.body.setAllowGravity(true);
+    this.body.ignoreGravity = false;
 
-    // Preserve some momentum based on input
+    // Preserve some momentum based on input (Matter.js scale)
     const inputH = this.input.getHorizontalAxis();
-    let exitVelX = inputH * 200;
-    let exitVelY = -150; // Small upward boost
+    let exitVelX = inputH * 5;
+    let exitVelY = -3; // Small upward boost
 
     // If grappling upward, give more upward boost
     if (this.targetPoint.y < this.sprite.y - 50) {
-      exitVelY = -250;
+      exitVelY = -5; // Matter.js scale
     }
 
-    this.body.setVelocity(exitVelX, exitVelY);
+    this.setVelocity(exitVelX, exitVelY);
 
     // Dust effect
     if (this.player.scene.effectsManager) {
@@ -1927,14 +2008,14 @@ export class GrappleTravelState extends PlayerState {
     }
 
     // Return appropriate state
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       return inputH !== 0 ? PLAYER_STATES.RUN : PLAYER_STATES.IDLE;
     }
     return PLAYER_STATES.FALL;
   }
 
   exit(nextState) {
-    this.body.setAllowGravity(true);
+    this.body.ignoreGravity = false;
 
     if (this.hookGraphics) {
       this.hookGraphics.destroy();
@@ -2000,7 +2081,7 @@ export class GrapplePullState extends PlayerState {
     }
 
     // Stop player movement
-    this.body.setVelocityX(0);
+    this.setVelocityX(0);
 
     // Stun the primary target
     if (this.foundTarget && this.foundTarget.isAlive) {
@@ -2013,8 +2094,8 @@ export class GrapplePullState extends PlayerState {
     const stateTime = this.stateMachine.getStateTime();
 
     // Maintain floor contact to prevent ground clipping
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
     if (!this.foundTarget || !this.foundTarget.isAlive) {
@@ -2089,7 +2170,7 @@ export class GrapplePullState extends PlayerState {
     }
 
     // Return to idle/fall
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       return this.input.getHorizontalAxis() !== 0
         ? PLAYER_STATES.RUN
         : PLAYER_STATES.IDLE;
@@ -2133,9 +2214,9 @@ export class WallSlideState extends PlayerState {
   constructor(stateMachine) {
     super(PLAYER_STATES.WALL_SLIDE, stateMachine);
 
-    this.slideSpeed = 80;           // Max fall speed while sliding
-    this.wallJumpForceX = 400;      // Horizontal force when jumping off
-    this.wallJumpForceY = 450;      // Vertical force when jumping off
+    this.slideSpeed = 2;            // Max fall speed while sliding (Matter.js scale)
+    this.wallJumpForceX = 8;        // Horizontal force when jumping off (Matter.js scale)
+    this.wallJumpForceY = 10;       // Vertical force when jumping off (Matter.js scale)
     this.wallDirection = 0;         // -1 = wall on left, 1 = wall on right
     this.dustTimer = 0;
     this.dustInterval = 150;        // Dust particle interval
@@ -2143,17 +2224,17 @@ export class WallSlideState extends PlayerState {
 
   enter(prevState, params) {
     // Determine which side the wall is on
-    if (this.body.blocked.left) {
+    if (this.isTouchingLeftWall()) {
       this.wallDirection = -1;
       this.sprite.setFlipX(false); // Face away from wall
-    } else if (this.body.blocked.right) {
+    } else if (this.isTouchingRightWall()) {
       this.wallDirection = 1;
       this.sprite.setFlipX(true);
     }
 
     // Cap fall speed immediately
     if (this.body.velocity.y > this.slideSpeed) {
-      this.body.setVelocityY(this.slideSpeed);
+      this.setVelocityY(this.slideSpeed);
     }
 
     this.dustTimer = 0;
@@ -2163,8 +2244,8 @@ export class WallSlideState extends PlayerState {
 
   update(time, delta) {
     // Check if still against wall
-    const touchingWall = (this.wallDirection === -1 && this.body.blocked.left) ||
-                         (this.wallDirection === 1 && this.body.blocked.right);
+    const touchingWall = (this.wallDirection === -1 && this.isTouchingLeftWall()) ||
+                         (this.wallDirection === 1 && this.isTouchingRightWall());
 
     // Left the wall
     if (!touchingWall) {
@@ -2172,7 +2253,7 @@ export class WallSlideState extends PlayerState {
     }
 
     // Landed on ground
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       // Dust puff on landing
       if (this.player.scene.effectsManager) {
         this.player.scene.effectsManager.dustCloud(
@@ -2186,7 +2267,7 @@ export class WallSlideState extends PlayerState {
 
     // Cap descent speed
     if (this.body.velocity.y > this.slideSpeed) {
-      this.body.setVelocityY(this.slideSpeed);
+      this.setVelocityY(this.slideSpeed);
     }
 
     // Wall jump
@@ -2238,7 +2319,7 @@ export class WallSlideState extends PlayerState {
     const pushDistance = 8;
     this.sprite.x += jumpDirX * pushDistance;
 
-    this.body.setVelocity(
+    this.setVelocity(
       jumpDirX * this.wallJumpForceX,
       -this.wallJumpForceY
     );
@@ -2300,7 +2381,7 @@ export class ParryState extends PlayerState {
     }
 
     // Stop movement
-    this.body.setVelocityX(0);
+    this.setVelocityX(0);
 
     // Visual: defensive stance
     this.sprite.setTint(0x8888ff);
@@ -2389,8 +2470,8 @@ export class ParryState extends PlayerState {
     const stateTime = this.stateMachine.getStateTime();
 
     // Maintain floor contact
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
     // Counter window active after perfect parry
@@ -2428,7 +2509,7 @@ export class ParryState extends PlayerState {
   }
 
   exitParry() {
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       return this.input.getHorizontalAxis() !== 0
         ? PLAYER_STATES.RUN
         : PLAYER_STATES.IDLE;
@@ -2478,16 +2559,16 @@ export class CounterAttackState extends PlayerState {
         activeTime: 100,
         recoveryTime: 150,
         damage: 35,
-        knockback: { x: 400, y: -200 },
+        knockback: { x: 8, y: -4 }, // Matter.js scale
         hitstun: 450,
         hitstop: 100,
         hitbox: { width: 60, height: 50, offsetX: 35, offsetY: 0 },
       };
     }
 
-    // Dash forward slightly
+    // Dash forward slightly (Matter.js scale)
     const direction = this.sprite.flipX ? -1 : 1;
-    this.body.setVelocityX(direction * 300);
+    this.setVelocityX(direction * 6);
 
     // Visual flair
     this.sprite.setTint(0xffaa00);
@@ -2505,8 +2586,8 @@ export class CounterAttackState extends PlayerState {
     const realElapsedTime = this.realElapsedTime;
 
     // Maintain floor contact
-    if (this.body.onFloor()) {
-      this.body.setVelocityY(0);
+    if (this.isOnFloor()) {
+      this.setVelocityY(0);
     }
 
     // Startup
@@ -2548,7 +2629,7 @@ export class CounterAttackState extends PlayerState {
                           this.attackData.recoveryTime;
 
     if (realElapsedTime >= totalDuration) {
-      if (this.body.onFloor()) {
+      if (this.isOnFloor()) {
         return this.input.getHorizontalAxis() !== 0
           ? PLAYER_STATES.RUN
           : PLAYER_STATES.IDLE;
@@ -2581,7 +2662,7 @@ export class WeaponSwapState extends PlayerState {
 
   enter(prevState, params) {
     // Slow down movement during swap
-    this.body.setVelocityX(this.body.velocity.x * 0.3);
+    this.setVelocityX(this.body.velocity.x * 0.3);
 
     // Visual feedback - slight scale pulse
     this.player.scene.tweens.add({
@@ -2603,22 +2684,22 @@ export class WeaponSwapState extends PlayerState {
     const wm = this.player.weaponManager;
 
     // Fall if not on ground
-    if (!this.body.onFloor()) {
+    if (!this.isOnFloor()) {
       // Cancel swap if we fall
       wm?.cancelSwap();
       return PLAYER_STATES.FALL;
     }
 
     // Maintain floor contact
-    this.body.setVelocityY(0);
+    this.setVelocityY(0);
 
     // Allow some drift movement
     const horizontal = this.input.getHorizontalAxis();
     if (horizontal !== 0) {
-      this.body.setVelocityX(horizontal * 50); // Slow movement
+      this.setVelocityX(horizontal * 50); // Slow movement
       this.sprite.setFlipX(horizontal < 0);
     } else {
-      this.body.setVelocityX(0);
+      this.setVelocityX(0);
     }
 
     // Check if swap is complete
@@ -2697,8 +2778,8 @@ export class UltimateState extends PlayerState {
     this.setInvulnerable(true);
 
     // Stop movement
-    this.body.setVelocity(0, 0);
-    this.body.setAllowGravity(false);
+    this.setVelocity(0, 0);
+    this.body.ignoreGravity = true;
 
     // Visual: glow effect
     this.sprite.setTint(0xffdd44);
@@ -2808,7 +2889,7 @@ export class UltimateState extends PlayerState {
       // Deal damage
       const hitData = {
         damage: this.damage,
-        knockback: { x: direction * 200, y: -150 },
+        knockback: { x: direction * 4, y: -3 }, // Matter.js scale
         hitstun: 300,
         hitstop: 0, // No hitstop during ultimate (too many hits)
         attacker: this.player,
@@ -2838,13 +2919,25 @@ export class UltimateState extends PlayerState {
   createAfterimage() {
     const scene = this.player.scene;
 
-    const afterimage = scene.add.sprite(
-      this.sprite.x,
-      this.sprite.y,
-      this.sprite.texture.key
-    );
+    let afterimage;
+    // Check if sprite is a Rectangle (Matter.js migration) or Sprite
+    if (this.sprite instanceof Phaser.GameObjects.Rectangle) {
+      afterimage = scene.add.rectangle(
+        this.sprite.x,
+        this.sprite.y,
+        this.sprite.width,
+        this.sprite.height,
+        this.sprite.fillColor
+      );
+    } else {
+      afterimage = scene.add.sprite(
+        this.sprite.x,
+        this.sprite.y,
+        this.sprite.texture.key
+      );
+      afterimage.setFlipX(this.sprite.flipX);
+    }
 
-    afterimage.setFlipX(this.sprite.flipX);
     afterimage.setAlpha(0.5);
     afterimage.setTint(0xffdd44);
     afterimage.setDepth(this.sprite.depth - 1);
@@ -2867,9 +2960,9 @@ export class UltimateState extends PlayerState {
     }
 
     // Return to normal
-    this.body.setAllowGravity(true);
+    this.body.ignoreGravity = false;
 
-    if (this.body.onFloor()) {
+    if (this.isOnFloor()) {
       return PLAYER_STATES.IDLE;
     }
     return PLAYER_STATES.FALL;
@@ -2879,7 +2972,7 @@ export class UltimateState extends PlayerState {
     this.setInvulnerable(false);
     this.sprite.clearTint();
     this.sprite.setScale(1);
-    this.body.setAllowGravity(true);
+    this.body.ignoreGravity = false;
 
     // End time slow
     if (this.player.scene.timeManager) {

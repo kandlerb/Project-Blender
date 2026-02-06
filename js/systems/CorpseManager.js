@@ -1,3 +1,9 @@
+/**
+ * @deprecated This file uses Arcade Physics and is no longer used.
+ * The game has migrated to Matter.js. Use CorpseTerrainManager.js instead.
+ * This file is kept for reference only and may be removed in the future.
+ */
+
 import { Corpse, CORPSE_DEFAULTS, CORPSE_STATE } from '../entities/Corpse.js';
 import { CorpseGrid } from './CorpseGrid.js';
 import { PHYSICS } from '../utils/physics.js';

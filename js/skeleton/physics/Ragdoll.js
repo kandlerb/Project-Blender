@@ -1,5 +1,11 @@
 /**
- * Ragdoll - Physics-driven skeleton state
+ * @deprecated This file uses Arcade Physics and is no longer used.
+ * The game has migrated to Matter.js. Use MatterRagdoll.js instead.
+ * This file is kept for reference only and may be removed in the future.
+ */
+
+/**
+ * Ragdoll - Physics-driven skeleton state (DEPRECATED)
  *
  * Converts an animated skeleton into individual physics bodies
  * connected by constraints. Used for death animations and corpse piling.

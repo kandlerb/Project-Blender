@@ -96,6 +96,20 @@ export class Skeleton {
   }
 
   /**
+   * Traverse the skeleton in depth-first order, invoking a callback for each bone.
+   * @param {function(Bone): void} callback
+   */
+  traverseDepthFirst(callback) {
+    const order = this.getTraversalOrder();
+    for (const boneId of order) {
+      const bone = this.getBone(boneId);
+      if (bone) {
+        callback(bone);
+      }
+    }
+  }
+
+  /**
    * Compute depth-first traversal order starting from root.
    * @private
    * @returns {string[]}

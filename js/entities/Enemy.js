@@ -1,13 +1,21 @@
 import { StateMachine, State } from '../systems/StateMachine.js';
-import { CombatBox, BOX_TYPE, TEAM } from '../systems/CombatBox.js';
 import { PHYSICS } from '../utils/physics.js';
+import {
+  CollisionCategories,
+  CollisionMasks,
+  createEnemyBodyConfig,
+  createHitboxConfig,
+  createHurtboxConfig,
+  MatterPhysicsHelper
+} from '../systems/MatterPhysics.js';
+import { BOX_TYPE, TEAM } from '../systems/CombatManagerMatter.js';
 
 // Skeletal animation system
 import { SkeletonInstance } from '../skeleton/SkeletonInstance.js';
 import { createHumanoidSkeleton } from '../skeleton/definitions/humanoid.js';
 import { LineSkin } from '../skeleton/skins/LineSkin.js';
 import { PoseBlender } from '../skeleton/poses/PoseBlender.js';
-import { Ragdoll } from '../skeleton/physics/Ragdoll.js';
+import { MatterRagdoll } from '../skeleton/physics/MatterRagdoll.js';
 import { BasicEnemyAnimations } from '../data/animations/enemies/index.js';
 
 /**
@@ -294,12 +302,71 @@ export class Enemy {
     this.attackTimer = 0;
     this.hasDealtDamage = false;
 
-    // Create sprite
-    this.sprite = scene.physics.add.sprite(x, y, 'enemy_placeholder');
-    this.setupPhysics();
+    // Body dimensions from config
+    this.bodyWidth = this.stats.width;
+    this.bodyHeight = this.stats.height;
 
-    // Terrain groups for clipping fix
-    this.terrainGroups = [];
+    // Create Matter.js body
+    this.body = scene.matter.add.rectangle(
+      x, y, this.bodyWidth, this.bodyHeight,
+      createEnemyBodyConfig(this.bodyWidth, this.bodyHeight)
+    );
+
+    // Store reference on body for collision callbacks
+    // Note: Use 'owner' not 'gameObject' - Phaser reserves gameObject for internal use
+    this.body.owner = this;
+    this.body.label = 'enemy';
+
+    // Create visual sprite (no physics, just graphics)
+    this.sprite = scene.add.rectangle(x, y, this.bodyWidth, this.bodyHeight, this.stats.color || 0xff4444);
+    this.sprite.setDepth(5);
+    this.sprite.setVisible(false); // Skeleton handles visuals
+
+    // Add compatibility properties for existing code
+    this.sprite.flipX = false;
+    this.sprite.setFlipX = (flip) => {
+      this.sprite.flipX = flip;
+    };
+    this.sprite.setTint = (color) => {
+      // For skeleton-based rendering, modify skin color instead
+      if (this.skin) {
+        this.skin.setColor(color);
+      }
+    };
+    this.sprite.clearTint = () => {
+      if (this.skin && this.stats.color) {
+        this.skin.setColor(this.stats.color);
+      }
+    };
+    this.sprite.setVisible = (visible) => {
+      // Control skeleton visibility
+      if (this.skin) {
+        this.skin.setVisible(visible);
+      }
+    };
+    this.sprite.getBounds = () => {
+      // Return bounds based on Matter.js body
+      return {
+        left: this.body.position.x - this.bodyWidth / 2,
+        right: this.body.position.x + this.bodyWidth / 2,
+        top: this.body.position.y - this.bodyHeight / 2,
+        bottom: this.body.position.y + this.bodyHeight / 2,
+        width: this.bodyWidth,
+        height: this.bodyHeight,
+      };
+    };
+
+    // Create Matter.js physics helper
+    this.matterHelper = new MatterPhysicsHelper(scene);
+
+    // Ground and wall contact tracking (via collision events)
+    this.groundContacts = 0;
+    this.wallContactLeft = 0;
+    this.wallContactRight = 0;
+    this._isOnGround = false;
+
+    // Setup collision event handlers
+    this.setupCollisionEvents();
 
     // Apply color tint if defined
     if (this.stats.color) {
@@ -336,86 +403,240 @@ export class Enemy {
     this.isRagdoll = false;
   }
 
-  setupPhysics() {
-    const body = this.sprite.body;
+  /**
+   * Setup Matter.js collision event listeners
+   */
+  setupCollisionEvents() {
+    // Track ground and wall contacts
+    this.scene.matter.world.on('collisionstart', (event) => {
+      for (const pair of event.pairs) {
+        this.handleCollisionStart(pair);
+      }
+    });
 
-    body.setCollideWorldBounds(true);
-    body.setBounce(0);
-    body.setGravityY(PHYSICS.GRAVITY);
-    // Cap fall velocity to prevent tunneling through other enemies
-    // At 120 physics FPS with maxVelocity 500, enemies move ~4.2px per frame
-    // Smallest enemy (SWARMER) is 32px tall, so this prevents skipping collisions
-    const maxFallSpeed = 500;
-    body.setMaxVelocity(this.chaseSpeed * 1.5, maxFallSpeed);
-    body.setDrag(300, 0);
+    this.scene.matter.world.on('collisionend', (event) => {
+      for (const pair of event.pairs) {
+        this.handleCollisionEnd(pair);
+      }
+    });
+  }
 
-    // The base texture is 28x28 pixels. We scale the sprite to reach target dimensions.
-    // IMPORTANT: body.setSize() and body.setOffset() work in TEXTURE coordinates (pre-scale).
-    // Phaser automatically scales the physics body along with the sprite.
-    const textureSize = 28;
+  /**
+   * Handle collision start for ground/wall detection
+   * @param {object} pair - Collision pair
+   */
+  handleCollisionStart(pair) {
+    // Guard against invalid pairs (bodies may have been removed)
+    if (!pair || !pair.bodyA || !pair.bodyB) return;
 
-    // Scale sprite to match config dimensions
-    const scaleX = this.stats.width / textureSize;
-    const scaleY = this.stats.height / textureSize;
-    this.sprite.setScale(scaleX, scaleY);
+    // Guard against our own body being removed (category set to 0)
+    if (!this.body || this.body.collisionFilter?.category === 0) return;
 
-    // Set body to full texture size with no offset - after scaling this will
-    // exactly match the displayed sprite dimensions
-    body.setSize(textureSize, textureSize);
-    body.setOffset(0, 0);
+    const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
+    if (!dominated) return;
 
-    // Set mass for enemy-enemy collision physics (heavier enemies push lighter ones)
-    body.mass = this.mass;
+    const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
+
+    // Guard against missing/disabled collision filter (body may be removed)
+    const category = other?.collisionFilter?.category || 0;
+    if (category === 0) return;
+
+    // Check if it's a ground-like surface
+    if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
+      return;
+    }
+
+    // Check collision normal to determine contact direction
+    if (!pair.collision?.normal) return;
+    const normal = pair.collision.normal;
+    const ny = pair.bodyA === this.body ? normal.y : -normal.y;
+    const nx = pair.bodyA === this.body ? normal.x : -normal.x;
+
+    // Normal points up = standing on surface
+    if (ny < -0.5) {
+      this.groundContacts++;
+    }
+
+    // Normal points left = wall on right
+    if (nx < -0.5) {
+      this.wallContactRight++;
+    }
+
+    // Normal points right = wall on left
+    if (nx > 0.5) {
+      this.wallContactLeft++;
+    }
+  }
+
+  /**
+   * Handle collision end for ground/wall detection
+   * @param {object} pair - Collision pair
+   */
+  handleCollisionEnd(pair) {
+    // Guard against invalid pairs (bodies may have been removed)
+    if (!pair || !pair.bodyA || !pair.bodyB) return;
+
+    // Guard against our own body being removed (category set to 0)
+    if (!this.body || this.body.collisionFilter?.category === 0) return;
+
+    const dominated = pair.bodyA === this.body || pair.bodyB === this.body;
+    if (!dominated) return;
+
+    const other = pair.bodyA === this.body ? pair.bodyB : pair.bodyA;
+
+    // Guard against missing/disabled collision filter (body may be removed)
+    const category = other?.collisionFilter?.category || 0;
+    if (category === 0) return;
+
+    if (!(category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE))) {
+      return;
+    }
+
+    if (!pair.collision?.normal) return;
+    const normal = pair.collision.normal;
+    const ny = pair.bodyA === this.body ? normal.y : -normal.y;
+    const nx = pair.bodyA === this.body ? normal.x : -normal.x;
+
+    if (ny < -0.5) {
+      this.groundContacts = Math.max(0, this.groundContacts - 1);
+    }
+
+    if (nx < -0.5) {
+      this.wallContactRight = Math.max(0, this.wallContactRight - 1);
+    }
+
+    if (nx > 0.5) {
+      this.wallContactLeft = Math.max(0, this.wallContactLeft - 1);
+    }
+  }
+
+  /**
+   * Check if enemy is on ground
+   * @returns {boolean}
+   */
+  isOnGround() {
+    return this.groundContacts > 0;
+  }
+
+  /**
+   * Check if touching wall on left
+   * @returns {boolean}
+   */
+  isTouchingLeftWall() {
+    return this.wallContactLeft > 0;
+  }
+
+  /**
+   * Check if touching wall on right
+   * @returns {boolean}
+   */
+  isTouchingRightWall() {
+    return this.wallContactRight > 0;
   }
 
   setupCombatBoxes() {
-    // Hurtbox - match sprite size from config
-    this.hurtbox = new CombatBox(this.scene, {
-      owner: this,
-      type: BOX_TYPE.HURTBOX,
-      team: TEAM.ENEMY,
-      width: this.stats.width,
-      height: this.stats.height,
-      offsetX: 0,
-      offsetY: 0,
-    });
-
-    // Attack hitbox - scale based on enemy size
+    // Calculate attack hitbox dimensions based on enemy size
     const attackWidth = Math.max(35, this.stats.width * 1.2);
     const attackHeight = Math.max(30, this.stats.height * 0.7);
-    const attackOffset = Math.max(25, this.stats.width * 0.6);
+    this.attackOffset = Math.max(25, this.stats.width * 0.6);
 
-    this.attackHitbox = new CombatBox(this.scene, {
-      owner: this,
-      type: BOX_TYPE.HITBOX,
-      team: TEAM.ENEMY,
-      width: attackWidth,
-      height: attackHeight,
-      offsetX: attackOffset,
-      offsetY: 0,
+    // Store dimensions for showFist (attackHitbox was removed in Matter.js migration)
+    this.attackHitboxWidth = attackWidth;
+    this.attackHitboxHeight = attackHeight;
+
+    // Create Matter.js sensor for hurtbox
+    this.hurtboxBody = this.scene.matter.add.rectangle(
+      this.body.position.x,
+      this.body.position.y,
+      this.stats.width,
+      this.stats.height,
+      createHurtboxConfig('enemy_hurtbox')
+    );
+    this.hurtboxBody.owner = this;
+
+    // Create Matter.js sensor for attack hitbox
+    this.hitboxBody = this.scene.matter.add.rectangle(
+      this.body.position.x + this.attackOffset,
+      this.body.position.y,
+      attackWidth,
+      attackHeight,
+      createHitboxConfig('enemy_hitbox')
+    );
+    this.hitboxBody.owner = this;
+
+    // Store hitbox data for combat resolution
+    this.hitboxData = {
       damage: this.damage,
-      knockback: { x: 200, y: -100 },
+      knockback: { x: 4, y: -2 }, // Matter.js scale
       hitstun: 200,
       hitstop: 40,
-    });
+    };
 
     // Fist visual - small square that animates through hitbox area during attacks
     this.fistVisual = this.scene.add.graphics();
-    this.fistVisual.setDepth(this.sprite.depth + 1);
+    this.fistVisual.setDepth(6);
     this.fistLocalX = 0;
     this.fistLocalY = 0;
     this.fistVisible = false;
     this.fistTween = null;
 
-    // Store attack offset for punch visual positioning
-    this.attackOffset = attackOffset;
-
+    // Register with combat manager if available
     if (this.scene.combatManager) {
-      this.scene.combatManager.register(this.hurtbox);
-      this.scene.combatManager.register(this.attackHitbox);
+      this.scene.combatManager.registerHurtbox(this.hurtboxBody, {
+        owner: this,
+        team: TEAM.ENEMY,
+      });
+      this.scene.combatManager.registerHitbox(this.hitboxBody, {
+        owner: this,
+        team: TEAM.ENEMY,
+        damage: this.hitboxData.damage,
+        knockback: this.hitboxData.knockback,
+        hitstun: this.hitboxData.hitstun,
+        hitstop: this.hitboxData.hitstop,
+      });
     }
 
-    this.hurtbox.activate();
+    // Hitbox starts inactive
+    this.hitboxActive = false;
+  }
+
+  /**
+   * Activate attack hitbox
+   * @param {object} overrides - Optional property overrides
+   */
+  activateHitbox(overrides = {}) {
+    this.hitboxActive = true;
+    if (this.scene.combatManager) {
+      this.scene.combatManager.activateHitbox(this.hitboxBody, overrides);
+    }
+  }
+
+  /**
+   * Deactivate attack hitbox
+   */
+  deactivateHitbox() {
+    this.hitboxActive = false;
+    if (this.scene.combatManager) {
+      this.scene.combatManager.deactivateHitbox(this.hitboxBody);
+    }
+  }
+
+  /**
+   * Update combat box positions to follow body
+   */
+  updateCombatBoxPositions() {
+    // Update hurtbox position
+    this.scene.matter.body.setPosition(this.hurtboxBody, {
+      x: this.body.position.x,
+      y: this.body.position.y,
+    });
+
+    // Update hitbox position (offset based on facing direction)
+    const facingMult = this.sprite.flipX ? -1 : 1;
+    this.scene.matter.body.setPosition(this.hitboxBody, {
+      x: this.body.position.x + (this.attackOffset * facingMult),
+      y: this.body.position.y,
+    });
   }
 
   /**
@@ -449,8 +670,9 @@ export class Enemy {
     // Visibility flag
     this.showSkeleton = true;
 
-    // Hide the sprite - skeleton handles visuals now
-    this.sprite.setVisible(false);
+    // Hide the rectangle sprite directly (not using custom setVisible which propagates to skin)
+    // The skeleton/skin handles visuals now
+    this.sprite.visible = false;
   }
 
   /**
@@ -460,7 +682,7 @@ export class Enemy {
   updateSkeleton(delta) {
     if (!this.skeleton) return;
 
-    // If ragdoll, update physics instead of animation
+    // If ragdoll, update physics and render from ragdoll positions
     if (this.isRagdoll && this.ragdoll) {
       this.ragdoll.update(delta);
 
@@ -473,19 +695,20 @@ export class Enemy {
     }
 
     // Normal animated skeleton
-    // Sync position to sprite
     const offsetY = -8; // Adjust for visual alignment
-    this.skeleton.setPosition(this.sprite.x, this.sprite.y + offsetY);
+    this.skeleton.setPosition(this.body.position.x, this.body.position.y + offsetY);
 
     // Sync facing direction
-    const facingRight = !this.sprite.flipX;
+    const facingRight = this.facingRight;
     this.skeleton.setScale(
       facingRight ? this.skeletonBaseScale : -this.skeletonBaseScale,
       this.skeletonBaseScale
     );
 
     // Update animation
-    this.poseBlender.update(delta);
+    if (this.poseBlender) {
+      this.poseBlender.update(delta);
+    }
 
     // Render
     if (this.showSkeleton && this.skin) {
@@ -633,15 +856,153 @@ export class Enemy {
    * @param {number} speed
    */
   move(direction, speed = this.speed) {
-    this.sprite.setVelocityX(direction * speed);
+    // Matter.js uses smaller velocity values
+    const matterSpeed = speed / 60; // Scale for Matter.js
+    this.matterHelper.setVelocityX(this.body, direction * matterSpeed);
     this.sprite.setFlipX(direction < 0);
   }
 
   /**
-   * Stop moving
+   * Stop horizontal movement
    */
   stop() {
-    this.sprite.setVelocityX(0);
+    this.matterHelper.setVelocityX(this.body, 0);
+  }
+
+  /**
+   * Set horizontal velocity directly
+   * @param {number} vx - Velocity (positive = right, negative = left)
+   */
+  setVelocityX(vx) {
+    // Matter.js uses smaller velocity values
+    const matterVx = vx / 60;
+    this.matterHelper.setVelocityX(this.body, matterVx);
+  }
+
+  /**
+   * Set vertical velocity
+   * @param {number} vy - Velocity (positive = down, negative = up)
+   */
+  setVelocityY(vy) {
+    // Matter.js uses smaller velocity values
+    const matterVy = vy / 60;
+    this.matterHelper.setVelocityY(this.body, matterVy);
+  }
+
+  /**
+   * Get current position
+   * @returns {{x: number, y: number}}
+   */
+  getPosition() {
+    return {
+      x: this.body.position.x,
+      y: this.body.position.y,
+    };
+  }
+
+  /**
+   * Get current velocity
+   * @returns {{x: number, y: number}}
+   */
+  getVelocity() {
+    return {
+      x: this.body.velocity.x,
+      y: this.body.velocity.y,
+    };
+  }
+
+  /**
+   * Check if enemy is blocked horizontally (hitting a wall)
+   * @returns {boolean}
+   */
+  isBlockedHorizontally() {
+    return this.wallContactLeft > 0 || this.wallContactRight > 0;
+  }
+
+  /**
+   * Check if blocked on left side
+   * @returns {boolean}
+   */
+  isBlockedLeft() {
+    return this.wallContactLeft > 0;
+  }
+
+  /**
+   * Check if blocked on right side
+   * @returns {boolean}
+   */
+  isBlockedRight() {
+    return this.wallContactRight > 0;
+  }
+
+  /**
+   * Check if there's ground ahead (for edge detection)
+   * Prevents walking off platforms
+   * @returns {boolean}
+   */
+  hasGroundAhead() {
+    const direction = this.facingRight ? 1 : -1;
+    const checkDistance = this.bodyWidth / 2 + 10;
+    const checkDepth = this.bodyHeight / 2 + 20;
+
+    const startX = this.body.position.x + (checkDistance * direction);
+    const startY = this.body.position.y + this.bodyHeight / 2;
+    const endY = startY + checkDepth;
+
+    const allBodies = Phaser.Physics.Matter.Matter.Composite.allBodies(
+      this.scene.matter.world.localWorld
+    );
+
+    const results = Phaser.Physics.Matter.Matter.Query.ray(
+      allBodies,
+      { x: startX, y: startY },
+      { x: startX, y: endY },
+      checkDepth
+    );
+
+    for (const result of results) {
+      const category = result.body.collisionFilter?.category || 0;
+      if (category & (CollisionCategories.GROUND | CollisionCategories.PLATFORM | CollisionCategories.CORPSE)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Get distance to player
+   * @returns {number}
+   */
+  getDistanceToPlayer() {
+    if (!this.target) return Infinity;
+    const targetPos = this.target.getPosition ? this.target.getPosition() :
+                      { x: this.target.body?.position?.x || this.target.sprite?.x || 0,
+                        y: this.target.body?.position?.y || this.target.sprite?.y || 0 };
+    const dx = targetPos.x - this.body.position.x;
+    const dy = targetPos.y - this.body.position.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  /**
+   * Get direction to player (-1 or 1)
+   * @returns {number}
+   */
+  getDirectionToPlayer() {
+    if (!this.target) return 0;
+    const targetPos = this.target.getPosition ? this.target.getPosition() :
+                      { x: this.target.body?.position?.x || this.target.sprite?.x || 0 };
+    return targetPos.x < this.body.position.x ? -1 : 1;
+  }
+
+  /**
+   * Check if player is in range
+   * @param {number} range - Detection range
+   * @returns {boolean}
+   */
+  canSeePlayer(range = 200) {
+    if (!this.target) return false;
+    return this.getDistanceToPlayer() <= range;
   }
 
   // ============================================
@@ -776,14 +1137,12 @@ export class Enemy {
     // Only climbing-capable enemies check for blocks
     if (!this.canClimbEnemies) return false;
 
-    const body = this.sprite.body;
-
-    // Must be on ground (blocked.down or touching.down)
-    if (!body.blocked.down && !body.touching.down) return false;
+    // Must be on ground
+    if (!this.isOnGround()) return false;
 
     // Must have horizontal velocity (actively trying to move)
-    const velocityX = body.velocity.x;
-    if (Math.abs(velocityX) < 10) return false;
+    const velocityX = this.body.velocity.x;
+    if (Math.abs(velocityX) < 0.1) return false;  // Matter.js has smaller velocity values
 
     // Get movement direction
     const moveDirection = velocityX > 0 ? 1 : -1;
@@ -832,11 +1191,11 @@ export class Enemy {
    */
   hasClearanceAbove() {
     // Get swarmer body height, use 1.5x as check distance
-    const bodyHeight = this.sprite.body.height || 28;
+    const bodyHeight = this.bodyHeight || 28;
     const checkDistance = bodyHeight * 1.5;
 
     // Horizontal tolerance - how directly above counts as "above"
-    const horizontalTolerance = this.sprite.body.width || 28;
+    const horizontalTolerance = this.bodyWidth || 28;
 
     const enemies = this.scene.enemies || [];
 
@@ -845,8 +1204,8 @@ export class Enemy {
       if (!enemy.isAlive) continue;
       if (enemy.config.type !== 'SWARMER') continue; // Only care about other swarmers
 
-      const dx = Math.abs(enemy.sprite.x - this.sprite.x);
-      const dy = this.sprite.y - enemy.sprite.y; // Positive if enemy is above
+      const dx = Math.abs(enemy.body.position.x - this.body.position.x);
+      const dy = this.body.position.y - enemy.body.position.y; // Positive if enemy is above
 
       // Enemy is above if:
       // - Horizontally overlapping (within body width)
@@ -879,20 +1238,22 @@ export class Enemy {
 
     // Apply upward velocity from config (doubled for better climbing height)
     const climbVelocity = this.config.climbHopVelocity || -600;
-    this.sprite.body.setVelocityY(climbVelocity);
+    this.setVelocityY(climbVelocity);
 
     // Emit climb event
     this.scene.events.emit('enemy:climb', { enemy: this });
 
     // Debug flash yellow when combat debug is enabled
     if (this.scene.showCombatDebug) {
-      const originalTint = this.stats.color || 0xffffff;
-      this.sprite.setTint(0xffff00);
-      this.scene.time.delayedCall(100, () => {
-        if (this.sprite && this.sprite.active && this.isAlive) {
-          this.sprite.setTint(originalTint);
-        }
-      });
+      const originalColor = this.stats.color || 0xffffff;
+      if (this.skin) {
+        this.skin.setColor(0xffff00);
+        this.scene.time.delayedCall(100, () => {
+          if (this.skin && this.isAlive) {
+            this.skin.setColor(originalColor);
+          }
+        });
+      }
     }
 
     return true;
@@ -907,9 +1268,11 @@ export class Enemy {
     if (this.corpseInteraction !== CORPSE_INTERACTION.CLIMB) return false;
     if (this.stepUpHeight <= 0) return false;
 
-    // Calculate height difference
-    const enemyBottom = this.sprite.body.bottom;
-    const obstacleTop = obstacleSprite.body.top;
+    // Calculate height difference (Matter.js version)
+    const enemyBottom = this.body.position.y + this.bodyHeight / 2;
+    const obstacleTop = obstacleSprite.body ?
+      obstacleSprite.body.position.y - (obstacleSprite.bodyHeight || 0) / 2 :
+      obstacleSprite.y - obstacleSprite.height / 2;
     const heightDiff = enemyBottom - obstacleTop;
 
     // Can step up if obstacle top is within step-up range
@@ -924,8 +1287,8 @@ export class Enemy {
 
     this.isSteppingUp = true;
 
-    // Gentle upward lift - just enough to clear corpses without a hop
-    this.sprite.body.setVelocityY(-150);
+    // Gentle upward lift - just enough to clear corpses without a hop (Matter.js scale)
+    this.setVelocityY(-3);
 
     // Short cooldown for smooth traversal over multiple corpses
     this.scene.time.delayedCall(80, () => {
@@ -951,10 +1314,10 @@ export class Enemy {
    * @param {object} config - Optional hitbox config override
    */
   showFist(config = {}) {
-    const width = config.width || this.attackHitbox.width;
-    const height = config.height || this.attackHitbox.height;
-    const offsetX = config.offsetX !== undefined ? config.offsetX : this.attackHitbox.offsetX;
-    const offsetY = config.offsetY !== undefined ? config.offsetY : this.attackHitbox.offsetY;
+    const width = config.width || this.attackHitboxWidth || 40;
+    const height = config.height || this.attackHitboxHeight || 40;
+    const offsetX = config.offsetX !== undefined ? config.offsetX : (this.attackOffset || 25);
+    const offsetY = config.offsetY !== undefined ? config.offsetY : 0;
 
     const isVerticalAttack = Math.abs(offsetY) > Math.abs(offsetX);
 
@@ -1009,6 +1372,15 @@ export class Enemy {
   update(time, delta) {
     if (!this.isAlive && !this.isRagdoll) return;
 
+    // Sync sprite position from Matter.js body (only if body exists - null after ragdoll)
+    if (this.body) {
+      this.sprite.x = this.body.position.x;
+      this.sprite.y = this.body.position.y;
+    }
+
+    // Update ground state
+    this._isOnGround = this.groundContacts > 0;
+
     // Existing updates (only if alive)
     if (this.isAlive) {
       if (this.hitstunRemaining > 0) {
@@ -1037,15 +1409,15 @@ export class Enemy {
           break;
       }
 
-      this.hurtbox.updatePosition();
-      this.attackHitbox.updatePosition();
+      // Update combat box positions
+      this.updateCombatBoxPositions();
 
       // Update fist visual position
       if (this.fistVisual) {
         const facingMult = this.sprite.flipX ? -1 : 1;
         this.fistVisual.setPosition(
-          this.sprite.x + (this.fistLocalX * facingMult),
-          this.sprite.y + this.fistLocalY
+          this.body.position.x + (this.fistLocalX * facingMult),
+          this.body.position.y + this.fistLocalY
         );
         this.drawFist();
       }
@@ -1054,9 +1426,6 @@ export class Enemy {
       if (this.config.type === 'SWARMER' && this.packDebugGraphics) {
         this.updatePackDebug();
       }
-
-      // Fix any terrain clipping
-      this.fixTerrainClipping();
     }
 
     // Always update skeleton (handles ragdoll too)
@@ -1137,7 +1506,7 @@ export class Enemy {
    * Simple patrol behavior for new enemy types
    */
   updatePatrol(time, delta) {
-    const distanceFromOrigin = this.sprite.x - this.patrolOrigin;
+    const distanceFromOrigin = this.body.position.x - this.patrolOrigin;
 
     if (distanceFromOrigin > this.patrolDistance) {
       this.patrolDirection = -1;
@@ -1145,14 +1514,13 @@ export class Enemy {
       this.patrolDirection = 1;
     }
 
-    if (this.sprite.body.blocked.left) {
+    if (this.isTouchingLeftWall()) {
       this.patrolDirection = 1;
-    } else if (this.sprite.body.blocked.right) {
+    } else if (this.isTouchingRightWall()) {
       this.patrolDirection = -1;
     }
 
-    this.sprite.body.setVelocityX(this.patrolDirection * this.stats.speed);
-    this.sprite.setFlipX(this.patrolDirection < 0);
+    this.move(this.patrolDirection, this.stats.speed);
   }
 
   /**
@@ -1173,7 +1541,7 @@ export class Enemy {
     if (!this.target || !this.target.takeDamage) return;
     const direction = this.sprite.flipX ? -1 : 1;
     this.target.takeDamage(this.stats.damage, {
-      knockback: { x: direction * 300, y: -150 },
+      knockback: { x: direction * 6, y: -3 }, // Matter.js scale
       hitstun: 200,
     });
   }
@@ -1188,14 +1556,15 @@ export class Enemy {
   updateLungerAI(time, delta) {
     if (this.hitstunRemaining > 0) {
       this.currentState = 'HITSTUN';
-      this.sprite.body.setVelocityX(0);
+      this.stop();
       return;
     }
 
     if (!this.target) return;
 
-    const dx = this.target.sprite.x - this.sprite.x;
-    const dy = this.target.sprite.y - this.sprite.y;
+    const targetPos = this.target.body ? this.target.body.position : this.target.sprite;
+    const dx = targetPos.x - this.body.position.x;
+    const dy = targetPos.y - this.body.position.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     const direction = dx > 0 ? 1 : -1;
 
@@ -1217,40 +1586,43 @@ export class Enemy {
           this.currentState = 'CHARGE_WINDUP';
           this.chargeDirection = direction;
           this.windupTimer = 0;
-          this.sprite.setTint(0xffff00); // Yellow warning
+          if (this.skin) this.skin.setColor(0xffff00); // Yellow warning
         } else {
           // Move toward player
-          this.sprite.body.setVelocityX(direction * this.stats.speed);
-          this.sprite.setFlipX(direction < 0);
+          this.move(direction, this.stats.speed);
         }
         break;
 
       case 'CHARGE_WINDUP':
         // Stop and telegraph
-        this.sprite.body.setVelocityX(0);
+        this.stop();
         this.windupTimer += delta;
 
-        // Shake to telegraph
-        this.sprite.x += (Math.random() - 0.5) * 3;
+        // Shake to telegraph (modify body position slightly)
+        const shakeOffset = (Math.random() - 0.5) * 3;
+        this.scene.matter.body.setPosition(this.body, {
+          x: this.body.position.x + shakeOffset,
+          y: this.body.position.y,
+        });
 
         if (this.windupTimer >= this.stats.chargeWindup) {
           this.currentState = 'CHARGING';
           this.chargeTimer = 0;
-          this.sprite.setTint(0xff0000); // Red = danger
+          if (this.skin) this.skin.setColor(0xff0000); // Red = danger
           this.lastAttackTime = time;
         }
         break;
 
       case 'CHARGING':
         // Dash forward
-        this.sprite.body.setVelocityX(this.chargeDirection * this.stats.chargeSpeed);
+        this.move(this.chargeDirection, this.stats.chargeSpeed);
         this.chargeTimer += delta;
 
         // Create trail effect
         if (this.scene.effectsManager && Math.random() < 0.3) {
           this.scene.effectsManager.dustCloud(
-            this.sprite.x,
-            this.sprite.y + (this.stats.height || 32) / 2,
+            this.body.position.x,
+            this.body.position.y + (this.stats.height || 32) / 2,
             -this.chargeDirection
           );
         }
@@ -1261,11 +1633,12 @@ export class Enemy {
         }
 
         // Charge duration complete or hit wall
-        if (this.chargeTimer >= this.stats.chargeDuration || this.sprite.body.blocked.left || this.sprite.body.blocked.right) {
+        const hitWall = this.isTouchingLeftWall() || this.isTouchingRightWall();
+        if (this.chargeTimer >= this.stats.chargeDuration || hitWall) {
           this.currentState = 'ATTACK_RECOVERY';
           this.recoveryTimer = 0;
-          this.sprite.body.setVelocityX(0);
-          this.sprite.setTint(this.stats.color);
+          this.stop();
+          if (this.skin) this.skin.setColor(this.stats.color);
         }
         break;
 
@@ -1279,7 +1652,7 @@ export class Enemy {
       case 'HITSTUN':
         if (this.hitstunRemaining <= 0) {
           this.currentState = 'CHASE';
-          this.sprite.setTint(this.stats.color);
+          if (this.skin) this.skin.setColor(this.stats.color);
         }
         break;
     }
@@ -1296,13 +1669,14 @@ export class Enemy {
     if (this.hitstunRemaining > 0) {
       this.currentState = 'HITSTUN';
       this.isBlocking = false;
-      this.sprite.body.setVelocityX(0);
+      this.stop();
       return;
     }
 
     if (!this.target) return;
 
-    const dx = this.target.sprite.x - this.sprite.x;
+    const targetPos = this.target.body ? this.target.body.position : this.target.sprite;
+    const dx = targetPos.x - this.body.position.x;
     const distance = Math.abs(dx);
     const direction = dx > 0 ? 1 : -1;
 
@@ -1312,7 +1686,7 @@ export class Enemy {
         if (distance < this.stats.detectionRange) {
           this.currentState = 'ADVANCE';
           this.isBlocking = true;
-          this.sprite.setTint(0x6699ff); // Shield active tint
+          if (this.skin) this.skin.setColor(0x6699ff); // Shield active tint
         } else {
           this.updatePatrol(time, delta);
           this.isBlocking = false;
@@ -1327,19 +1701,19 @@ export class Enemy {
         if (distance > this.stats.detectionRange * 1.3) {
           this.currentState = 'IDLE';
           this.isBlocking = false;
-          this.sprite.setTint(this.stats.color);
+          if (this.skin) this.skin.setColor(this.stats.color);
         } else if (distance < this.stats.attackRange && this.canAttack(time)) {
           this.currentState = 'ATTACK';
           this.attackTimer = 0;
           this.isBlocking = false;
         } else {
           // Slow advance while blocking
-          this.sprite.body.setVelocityX(direction * this.stats.speed);
+          this.move(direction, this.stats.speed);
         }
         break;
 
       case 'ATTACK':
-        this.sprite.body.setVelocityX(0);
+        this.stop();
         this.attackTimer += delta;
 
         if (this.attackTimer >= 300 && !this.hasDealtDamage) {
@@ -1355,7 +1729,7 @@ export class Enemy {
           this.currentState = 'ADVANCE';
           this.hasDealtDamage = false;
           this.isBlocking = true;
-          this.sprite.setTint(0x6699ff);
+          if (this.skin) this.skin.setColor(0x6699ff);
         }
         break;
 
@@ -1363,7 +1737,7 @@ export class Enemy {
         if (this.hitstunRemaining <= 0) {
           this.currentState = 'ADVANCE';
           this.isBlocking = true;
-          this.sprite.setTint(0x6699ff);
+          if (this.skin) this.skin.setColor(0x6699ff);
         }
         break;
     }
@@ -1378,8 +1752,8 @@ export class Enemy {
     if (!this.isBlocking) return false;
 
     // Check if attack is from the front
-    const attackerX = hitData?.attacker?.sprite?.x || hitData?.x || this.sprite.x;
-    const attackDirection = attackerX > this.sprite.x ? 1 : -1;
+    const attackerX = hitData?.attacker?.body?.position?.x || hitData?.attacker?.sprite?.x || hitData?.x || this.body.position.x;
+    const attackDirection = attackerX > this.body.position.x ? 1 : -1;
     const facingDirection = this.sprite.flipX ? -1 : 1;
 
     // Block if attack is from the direction we're facing
@@ -1389,7 +1763,7 @@ export class Enemy {
         this.isBlocking = false;
         this.currentState = 'HITSTUN';
         this.hitstunRemaining = 500; // Staggered
-        this.sprite.setTint(this.stats.color);
+        if (this.skin) this.skin.setColor(this.stats.color);
 
         if (this.scene.effectsManager) {
           this.scene.effectsManager.screenShake(6, 100);
@@ -1400,8 +1774,8 @@ export class Enemy {
       // Successful block
       if (this.scene.effectsManager) {
         this.scene.effectsManager.hitSparks(
-          this.sprite.x + facingDirection * 20,
-          this.sprite.y,
+          this.body.position.x + facingDirection * 20,
+          this.body.position.y,
           3,
           -facingDirection
         );
@@ -1422,13 +1796,14 @@ export class Enemy {
   updateLobberAI(time, delta) {
     if (this.hitstunRemaining > 0) {
       this.currentState = 'HITSTUN';
-      this.sprite.body.setVelocityX(0);
+      this.stop();
       return;
     }
 
     if (!this.target) return;
 
-    const dx = this.target.sprite.x - this.sprite.x;
+    const targetPos = this.target.body ? this.target.body.position : this.target.sprite;
+    const dx = targetPos.x - this.body.position.x;
     const distance = Math.abs(dx);
     const direction = dx > 0 ? 1 : -1;
 
@@ -1449,31 +1824,31 @@ export class Enemy {
           this.currentState = 'IDLE';
         } else if (distance < this.stats.minRange) {
           // Too close, back away
-          this.sprite.body.setVelocityX(-direction * this.stats.speed * 1.5);
+          this.move(-direction, this.stats.speed * 1.5);
         } else if (distance > this.stats.attackRange) {
           // Too far, get closer
-          this.sprite.body.setVelocityX(direction * this.stats.speed);
+          this.move(direction, this.stats.speed);
         } else if (this.canAttack(time)) {
           // In range, attack
           this.currentState = 'ATTACK_WINDUP';
           this.windupTimer = 0;
-          this.sprite.body.setVelocityX(0);
+          this.stop();
         } else {
           // Waiting for cooldown
-          this.sprite.body.setVelocityX(0);
+          this.stop();
         }
         break;
 
       case 'ATTACK_WINDUP':
         this.windupTimer += delta;
-        this.sprite.setTint(0xaaff44); // Glow before throw
+        if (this.skin) this.skin.setColor(0xaaff44); // Glow before throw
 
         if (this.windupTimer >= 400) {
           this.throwProjectile(this.target);
           this.currentState = 'ATTACK_RECOVERY';
           this.recoveryTimer = 0;
           this.lastAttackTime = time;
-          this.sprite.setTint(this.stats.color);
+          if (this.skin) this.skin.setColor(this.stats.color);
         }
         break;
 
@@ -1487,7 +1862,7 @@ export class Enemy {
       case 'HITSTUN':
         if (this.hitstunRemaining <= 0) {
           this.currentState = 'REPOSITION';
-          this.sprite.setTint(this.stats.color);
+          if (this.skin) this.skin.setColor(this.stats.color);
         }
         break;
     }
@@ -1509,23 +1884,23 @@ export class Enemy {
     const dy = targetY - startY;
     const distance = Math.abs(dx);
 
-    // Create projectile
+    // Create projectile with Matter.js physics
     const projectile = scene.add.circle(startX, startY, 8, 0x88ff44);
-    scene.physics.add.existing(projectile);
+    scene.matter.add.gameObject(projectile, {
+      shape: { type: 'circle', radius: 8 },
+      isSensor: true, // Pass through terrain, damage handled manually
+      frictionAir: 0
+    });
 
-    const projBody = projectile.body;
-    projBody.setCircle(8);
-    projBody.setAllowGravity(true);
+    // Enable gravity for projectile
+    projectile.body.ignoreGravity = false;
 
-    const gravity = 400 * this.stats.projectileArc;
-    projBody.setGravityY(gravity);
-
-    // Calculate velocity for arc (corrected formula for projectile motion)
+    // Calculate velocity for arc (Matter.js scale)
     const flightTime = distance / this.stats.projectileSpeed;
-    const vx = dx / flightTime;
-    const vy = (dy / flightTime) + (0.5 * gravity * flightTime);
+    const vx = (dx / flightTime) / 60; // Scale to Matter.js
+    const vy = ((dy / flightTime) + (0.5 * 40 * this.stats.projectileArc * flightTime)) / 60;
 
-    projBody.setVelocity(vx, vy);
+    scene.matter.body.setVelocity(projectile.body, { x: vx, y: vy });
 
     // Track projectile
     if (!scene.enemyProjectiles) scene.enemyProjectiles = [];
@@ -1553,7 +1928,7 @@ export class Enemy {
   updateDetonatorAI(time, delta) {
     if (this.hitstunRemaining > 0) {
       this.currentState = 'HITSTUN';
-      this.sprite.body.setVelocityX(0);
+      this.stop();
       return;
     }
 
@@ -1561,7 +1936,8 @@ export class Enemy {
 
     if (!this.target) return;
 
-    const dx = this.target.sprite.x - this.sprite.x;
+    const targetPos = this.target.body ? this.target.body.position : this.target.sprite;
+    const dx = targetPos.x - this.body.position.x;
     const distance = Math.abs(dx);
     const direction = dx > 0 ? 1 : -1;
 
@@ -1570,7 +1946,7 @@ export class Enemy {
       case 'PATROL':
         if (distance < this.stats.detectionRange) {
           this.currentState = 'CHASE';
-          this.sprite.setTint(0xff6666); // Warning color
+          if (this.skin) this.skin.setColor(0xff6666); // Warning color
         } else {
           this.updatePatrol(time, delta);
         }
@@ -1582,16 +1958,16 @@ export class Enemy {
         // Flash faster as it gets closer
         const flashRate = Math.max(100, 500 - (300 - distance));
         if (Math.floor(time / flashRate) % 2 === 0) {
-          this.sprite.setTint(0xff0000);
+          if (this.skin) this.skin.setColor(0xff0000);
         } else {
-          this.sprite.setTint(0xff6666);
+          if (this.skin) this.skin.setColor(0xff6666);
         }
 
         if (distance < this.stats.attackRange) {
           // Contact! Start explosion
           this.startExplosion();
         } else {
-          this.sprite.body.setVelocityX(direction * this.stats.speed);
+          this.move(direction, this.stats.speed);
         }
         break;
 
@@ -1610,7 +1986,9 @@ export class Enemy {
     if (this.isExploding) return;
 
     this.isExploding = true;
-    this.sprite.body.setVelocity(0, 0);
+    // Stop movement (Matter.js)
+    this.stop();
+    this.setVelocityY(0);
     this.sprite.setTint(0xffffff);
 
     // Fuse countdown
@@ -1632,23 +2010,24 @@ export class Enemy {
 
     // Visual explosion
     if (scene.effectsManager) {
-      // Big particle burst
+      // Big particle burst (using tweens instead of physics for visual particles)
       for (let i = 0; i < 20; i++) {
         const angle = (i / 20) * Math.PI * 2;
         const speed = 200 + Math.random() * 100;
         const particle = scene.add.circle(x, y, 6, 0xff4444);
-        scene.physics.add.existing(particle);
-        particle.body.setVelocity(
-          Math.cos(angle) * speed,
-          Math.sin(angle) * speed
-        );
-        particle.body.setAllowGravity(false);
+
+        // Animate particles with tweens (no physics needed for visual effect)
+        const targetX = x + Math.cos(angle) * speed;
+        const targetY = y + Math.sin(angle) * speed;
 
         scene.tweens.add({
           targets: particle,
+          x: targetX,
+          y: targetY,
           alpha: 0,
           scale: 0,
           duration: 500,
+          ease: 'Power2',
           onComplete: () => particle.destroy(),
         });
       }
@@ -1670,7 +2049,7 @@ export class Enemy {
         const dir = pdx > 0 ? 1 : -1;
 
         scene.player.takeDamage(damage, {
-          knockback: { x: dir * 400 * falloff, y: -300 * falloff },
+          knockback: { x: dir * 8 * falloff, y: -6 * falloff }, // Matter.js scale
           hitstun: 400,
         });
       }
@@ -1694,7 +2073,7 @@ export class Enemy {
             enemy.startExplosion();
           } else {
             enemy.takeDamage(damage, {
-              knockback: { x: (edx / enemyDist) * 300, y: -200 },
+              knockback: { x: (edx / enemyDist) * 6, y: -4 }, // Matter.js scale
               hitstun: 200,
             });
           }
@@ -1713,9 +2092,12 @@ export class Enemy {
   die(hitData = null) {
     if (!this.isAlive) return;
 
+    console.log('=== ENEMY DEATH ===');
+
     this.isAlive = false;
-    this.hurtbox.deactivate();
-    this.attackHitbox.deactivate();
+
+    // IMMEDIATELY disable combat bodies to stop taking hits
+    this.disableCombatBodies();
 
     // Stop any playing animations
     if (this.poseBlender) {
@@ -1733,129 +2115,227 @@ export class Enemy {
   }
 
   /**
-   * Convert skeleton to ragdoll physics
-   * @param {object} hitData - Hit data for impulse direction
+   * Safely remove a Matter.js body using world manager or fallback
+   * Immediately disables collision filter to prevent new pairs
+   * @param {MatterJS.BodyType} body - The body to remove
    */
-  convertToRagdoll(hitData) {
-    if (!this.skeleton || this.isRagdoll) return;
-
-    // Calculate death impulse from hit data
-    let impulse = { x: 0, y: -150 }; // Default: small upward pop
-
-    if (hitData && hitData.knockback) {
-      // Use knockback direction but amplify for death
-      impulse.x = hitData.knockback.x * 1.5;
-      impulse.y = hitData.knockback.y * 1.2;
-    }
-
-    // Create ragdoll
-    this.ragdoll = new Ragdoll(this.scene, this.skeleton);
-
-    // Activate with impulse
-    this.ragdoll.activate({
-      impulse: impulse,
-      angularImpulse: impulse.x * 0.3,
-      onSettle: (ragdoll) => this.onRagdollSettle(ragdoll)
-    });
-
-    // Add colliders for ground/platforms
-    if (this.scene.ground) {
-      this.ragdoll.addCollider(this.scene.ground);
-    }
-    if (this.scene.platforms) {
-      this.ragdoll.addCollider(this.scene.platforms);
-    }
-
-    // Hide the sprite, show ragdoll
-    this.sprite.setVisible(false);
-    this.sprite.body.enable = false;
-    this.isRagdoll = true;
-
-    // Change skin color to indicate death
-    if (this.skin) {
-      this.skin.setColor(0x888888); // Gray for dead
-    }
-  }
-
-  /**
-   * Called when ragdoll settles
-   * @param {Ragdoll} ragdoll
-   */
-  onRagdollSettle(ragdoll) {
-    // Freeze the ragdoll
-    ragdoll.freeze();
-
-    // Emit corpse ready event for corpse system
-    this.scene.events.emit('corpse:ready', {
-      enemy: this,
-      ragdoll: ragdoll,
-      bounds: ragdoll.getBounds(),
-      center: ragdoll.getCenter()
-    });
-  }
-
-  addCollider(target) {
-    this.scene.physics.add.collider(this.sprite, target);
-    // Track static groups for terrain clipping fix
-    if (target && target.getChildren) {
-      this.terrainGroups.push(target);
-    }
-  }
-
-  /**
-   * Check for and fix clipping into terrain
-   * Pushes enemy up if embedded in ground/platforms
-   */
-  fixTerrainClipping() {
-    if (this.terrainGroups.length === 0) return;
-
-    const body = this.sprite.body;
+  safeRemoveBody(body) {
     if (!body) return;
 
-    let maxOverlap = 0;
+    // Immediately disable collisions to prevent new pairs being created
+    if (body.collisionFilter) {
+      body.collisionFilter.mask = 0;
+      body.collisionFilter.category = 0;
+    }
 
-    // Check against all terrain groups
-    for (const terrainGroup of this.terrainGroups) {
-      if (!terrainGroup) continue;
-
-      const children = terrainGroup.getChildren();
-      for (const terrain of children) {
-        if (!terrain.body) continue;
-
-        const terrainBody = terrain.body;
-
-        // Check if there's horizontal overlap
-        const horizontalOverlap =
-          body.right > terrainBody.left && body.left < terrainBody.right;
-
-        if (!horizontalOverlap) continue;
-
-        // Check if enemy bottom is below terrain top (embedded)
-        if (body.bottom > terrainBody.top && body.top < terrainBody.bottom) {
-          // Calculate how much the enemy is embedded
-          const overlap = body.bottom - terrainBody.top;
-          if (overlap > maxOverlap) {
-            maxOverlap = overlap;
+    if (this.scene?.worldManager) {
+      this.scene.worldManager.safeRemove(body);
+    } else if (this.scene?.matter?.world) {
+      // Fallback to afterupdate with pair cleanup
+      this.scene.matter.world.once('afterupdate', () => {
+        try {
+          // Clear collision pairs for this body before removal
+          const engine = this.scene.matter.world.engine;
+          if (engine?.pairs?.table) {
+            for (const id in engine.pairs.table) {
+              const pair = engine.pairs.table[id];
+              if (pair && (pair.bodyA === body || pair.bodyB === body)) {
+                delete engine.pairs.table[id];
+                if (engine.pairs.list) {
+                  const idx = engine.pairs.list.indexOf(pair);
+                  if (idx !== -1) engine.pairs.list.splice(idx, 1);
+                }
+              }
+            }
           }
+          this.scene.matter.world.remove(body);
+        } catch (e) {
+          // Body may already be removed, ignore
+        }
+      });
+    }
+  }
+
+  /**
+   * Disable combat bodies - call BEFORE ragdoll creation
+   * Uses world manager for safe deferred removal
+   */
+  disableCombatBodies() {
+    console.log('Disabling combat bodies');
+
+    // Deactivate attack hitbox
+    this.deactivateHitbox();
+
+    // Unregister from combat manager FIRST (synchronous, prevents new hits)
+    if (this.scene.combatManager) {
+      if (this.hitboxBody) {
+        if (this.scene.combatManager.deactivateHitbox) {
+          this.scene.combatManager.deactivateHitbox(this.hitboxBody);
+        }
+        if (this.scene.combatManager.unregisterHitbox) {
+          this.scene.combatManager.unregisterHitbox(this.hitboxBody);
+        } else if (this.scene.combatManager.hitboxes) {
+          this.scene.combatManager.hitboxes.delete(this.hitboxBody.id);
+        }
+      }
+      if (this.hurtboxBody) {
+        if (this.scene.combatManager.unregisterHurtbox) {
+          this.scene.combatManager.unregisterHurtbox(this.hurtboxBody);
+        } else if (this.scene.combatManager.hurtboxes) {
+          this.scene.combatManager.hurtboxes.delete(this.hurtboxBody.id);
         }
       }
     }
 
-    // If embedded, push enemy up
-    if (maxOverlap > 0) {
-      this.sprite.y -= maxOverlap + 1; // +1 to ensure clearance
-      body.reset(this.sprite.x, this.sprite.y);
+    // Safe removal via world manager (deferred if during physics update)
+    if (this.hitboxBody) {
+      this.safeRemoveBody(this.hitboxBody);
+      this.hitboxBody = null;
+    }
 
-      // Stop downward velocity to prevent re-embedding
-      if (body.velocity.y > 0) {
-        body.setVelocityY(0);
-      }
+    if (this.hurtboxBody) {
+      this.safeRemoveBody(this.hurtboxBody);
+      this.hurtboxBody = null;
     }
   }
 
+  /**
+   * Convert to ragdoll physics using Matter.js
+   * @param {object} hitData - Hit data for impulse direction
+   */
+  convertToRagdoll(hitData) {
+    if (!this.skeleton) {
+      console.log('Cannot ragdoll: no skeleton');
+      return;
+    }
+
+    console.log('=== CONVERTING TO RAGDOLL ===');
+    console.log('Enemy position:', this.body.position);
+
+    // Sync skeleton position BEFORE creating ragdoll
+    // Offset upward to ensure bodies are above ground
+    const skeletonY = this.body.position.y - this.bodyHeight / 2;
+    this.skeleton.setPosition(this.body.position.x, skeletonY);
+    this.skeleton.computeWorldPositions();
+
+    console.log('Skeleton Y adjusted to:', skeletonY);
+
+    // Calculate impulse - DON'T multiply knockback, it's already correct scale
+    // Just add a small upward pop
+    let impulse = { x: 0, y: -300 }; // Modest upward pop
+
+    if (hitData && hitData.knockback) {
+      // Knockback is already in reasonable units, just use direction and modest force
+      const kbDirection = hitData.knockback.x > 0 ? 1 : -1;
+      impulse.x = kbDirection * 200; // Consistent modest horizontal
+      impulse.y = -300; // Consistent upward
+    }
+
+    console.log('Death impulse:', impulse);
+
+    // Create ragdoll
+    const ragdoll = new MatterRagdoll(this.scene, this.skeleton);
+
+    ragdoll.activate({
+      impulse: impulse,
+      angularImpulse: impulse.x * 0.1, // Very small spin
+    });
+
+    // Gray out skin before transfer
+    if (this.skin) {
+      this.skin.setColor(0x666666);
+    }
+
+    // Transfer ragdoll and skin to RagdollManager
+    // RagdollManager now owns the lifecycle - Enemy no longer needs updates for ragdoll
+    if (this.scene.ragdollManager) {
+      const enemyRef = this; // Capture reference for callback
+      this.scene.ragdollManager.addRagdoll(
+        ragdoll,
+        this.skin,
+        (settledRagdoll, skin, enemy) => {
+          // This callback fires when ragdoll settles
+          enemyRef.handleRagdollSettled(settledRagdoll, skin);
+        },
+        this
+      );
+
+      // Clear local references - RagdollManager now owns these
+      this.skin = null;
+      this.ragdoll = null;
+    } else {
+      // Fallback: keep local ownership (legacy behavior)
+      console.warn('No RagdollManager found, using legacy ragdoll handling');
+      this.ragdoll = ragdoll;
+      this.isRagdoll = true;
+    }
+
+    // Hide sprite
+    this.sprite.setVisible(false);
+
+    // Hide and destroy fist visual
+    if (this.fistVisual) {
+      this.fistVisual.clear();
+      this.fistVisual.destroy();
+      this.fistVisual = null;
+    }
+    this.fistVisible = false;
+    if (this.fistTween) {
+      this.fistTween.stop();
+      this.fistTween = null;
+    }
+
+    // Safe removal of main body via world manager
+    if (this.body) {
+      this.safeRemoveBody(this.body);
+      this.body = null;
+    }
+
+    console.log('Enemy converted to ragdoll, ownership transferred to RagdollManager');
+  }
+
+  /**
+   * Called by RagdollManager when ragdoll settles
+   * Handles corpse registration and cleanup
+   * @param {MatterRagdoll} ragdoll - The settled ragdoll
+   * @param {LineSkin} skin - The skin (may be null if already transferred)
+   */
+  handleRagdollSettled(ragdoll, skin) {
+    console.log('Ragdoll settled, registering corpse');
+
+    // Get silhouette for potential future merging
+    const silhouette = ragdoll.generateSilhouetteVertices();
+
+    // Transfer skin to corpse renderer for continued rendering
+    if (this.scene.corpseRenderer && skin) {
+      this.scene.corpseRenderer.addCorpse(skin, ragdoll);
+    }
+
+    // Emit corpse ready event for terrain system
+    this.scene.events.emit('corpse:ready', {
+      enemy: this,
+      ragdoll: ragdoll,
+      bounds: ragdoll.getBounds(),
+      center: ragdoll.getCenter(),
+      silhouette: silhouette,
+      bodies: ragdoll.getBodies(),
+    });
+  }
+
+  /**
+   * Add collider (compatibility method - Matter.js uses collision categories)
+   * @param {*} target - Not used with Matter.js
+   */
+  addCollider(target) {
+    // Matter.js uses collision categories for ground/platform collision
+    // No explicit collider setup needed
+  }
+
   setCombatDebug(show) {
-    this.hurtbox.setDebug(show);
-    this.attackHitbox.setDebug(show);
+    // Combat debug is now handled by CombatManagerMatter
+    if (this.scene.combatManager && this.scene.combatManager.setDebug) {
+      this.scene.combatManager.setDebug(show);
+    }
 
     // Swarmer pack debug visualization
     if (this.config.type === 'SWARMER') {
@@ -1970,12 +2450,34 @@ export class Enemy {
   }
 
   destroy() {
-    if (this.scene.combatManager) {
-      this.scene.combatManager.unregister(this.hurtbox);
-      this.scene.combatManager.unregister(this.attackHitbox);
+    // Unregister from combat manager
+    if (this.scene?.combatManager) {
+      if (this.scene.combatManager.unregisterHurtbox) {
+        this.scene.combatManager.unregisterHurtbox(this.hurtboxBody);
+        this.scene.combatManager.unregisterHitbox(this.hitboxBody);
+      }
     }
-    this.hurtbox.destroy();
-    this.attackHitbox.destroy();
+
+    // Safe removal of Matter.js bodies (only if not ragdoll - ragdoll handles its own cleanup)
+    if (this.body && !this.isRagdoll) {
+      this.safeRemoveBody(this.body);
+      this.body = null;
+    }
+    if (this.hurtboxBody) {
+      this.safeRemoveBody(this.hurtboxBody);
+      this.hurtboxBody = null;
+    }
+    if (this.hitboxBody) {
+      this.safeRemoveBody(this.hitboxBody);
+      this.hitboxBody = null;
+    }
+
+    // Note: ragdoll and skin may be managed by corpse system now
+    // Only destroy ragdoll if we still own it (not frozen = not transferred)
+    if (this.ragdoll && !this.ragdoll.frozen) {
+      this.ragdoll.destroy();
+    }
+    this.ragdoll = null;
 
     // Clean up fist visual
     if (this.fistTween) {
@@ -1997,17 +2499,16 @@ export class Enemy {
       this.stateText = null;
     }
 
-    // Clean up skeleton and ragdoll
+    // Clean up skeleton skin (only if not transferred to corpse renderer)
     if (this.skin) {
       this.skin.destroy();
       this.skin = null;
     }
-    if (this.ragdoll) {
-      this.ragdoll.destroy();
-      this.ragdoll = null;
-    }
 
-    this.sprite.destroy();
+    // Visual sprite
+    if (this.sprite) {
+      this.sprite.destroy();
+    }
   }
 }
 
@@ -2083,10 +2584,10 @@ class EnemyPatrolState extends State {
       this.enemy.patrolDirection = 1;
     }
 
-    // Check for walls/edges
-    if (this.enemy.sprite.body.blocked.left) {
+    // Check for walls/edges (Matter.js version)
+    if (this.enemy.isBlockedLeft()) {
       this.enemy.patrolDirection = 1;
-    } else if (this.enemy.sprite.body.blocked.right) {
+    } else if (this.enemy.isBlockedRight()) {
       this.enemy.patrolDirection = -1;
     }
 
@@ -2199,21 +2700,21 @@ class EnemyAttackState extends State {
 
     // Active phase - hitbox active
     if (stateTime < this.windupTime + this.activeTime) {
-      if (!this.enemy.attackHitbox.active) {
-        this.enemy.attackHitbox.activate();
+      if (!this.enemy.hitboxActive) {
+        this.enemy.activateHitbox();
         this.enemy.showFist(); // Show fist visual
         this.enemy.sprite.setTint(0xff4444); // Brighter red during attack
 
-        // Lunge forward slightly
-        const direction = this.enemy.sprite.flipX ? -1 : 1;
-        this.enemy.sprite.body.setVelocityX(direction * 150);
+        // Lunge forward slightly (Matter.js scale)
+        const direction = this.enemy.facingRight ? 1 : -1;
+        this.enemy.setVelocityX(direction * 3);
       }
       return null;
     }
 
     // Recovery phase
     if (stateTime < this.totalDuration) {
-      this.enemy.attackHitbox.deactivate();
+      this.enemy.deactivateHitbox();
       this.enemy.hideFist(); // Hide fist visual
       this.enemy.sprite.clearTint();
       this.enemy.stop();
@@ -2228,7 +2729,7 @@ class EnemyAttackState extends State {
   }
 
   exit(nextState) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
     this.enemy.hideFist(); // Ensure fist visual is hidden on exit
     this.enemy.sprite.clearTint();
   }
@@ -2252,7 +2753,7 @@ class EnemyHitstunState extends State {
   }
 
   enter(prevState, params) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
     this.enemy.playAnimation(BasicEnemyAnimations.hitstun, {
       layer: 'base',
       blendDuration: 30,
@@ -2288,12 +2789,13 @@ class EnemyDeadState extends State {
 
   enter(prevState, params) {
     // Emit event for corpse spawning - corpse system handles visual persistence
+    const pos = this.enemy.getPosition();
     this.enemy.scene.events.emit('enemy:died', {
-      x: this.enemy.sprite.x,
-      y: this.enemy.sprite.y,
+      x: pos.x,
+      y: pos.y,
       enemyType: this.enemy.config.type || 'SWARMER',
-      width: this.enemy.sprite.body.width,
-      height: this.enemy.sprite.body.height,
+      width: this.enemy.bodyWidth,
+      height: this.enemy.bodyHeight,
     });
 
     // Immediately destroy the enemy - corpse replaces the visual
@@ -2384,7 +2886,8 @@ class SwarmerPatrolState extends State {
     }
 
     // Patrol movement
-    const distanceFromOrigin = this.enemy.sprite.x - this.enemy.patrolOrigin;
+    const pos = this.enemy.getPosition();
+    const distanceFromOrigin = pos.x - this.enemy.patrolOrigin;
 
     // Turn around at patrol limits
     if (distanceFromOrigin > this.enemy.patrolDistance) {
@@ -2393,10 +2896,10 @@ class SwarmerPatrolState extends State {
       this.enemy.patrolDirection = 1;
     }
 
-    // Check for walls
-    if (this.enemy.sprite.body.blocked.left) {
+    // Check for walls (Matter.js version)
+    if (this.enemy.isBlockedLeft()) {
       this.enemy.patrolDirection = 1;
-    } else if (this.enemy.sprite.body.blocked.right) {
+    } else if (this.enemy.isBlockedRight()) {
       this.enemy.patrolDirection = -1;
     }
 
@@ -2698,11 +3201,12 @@ class SwarmerAttackingState extends State {
   enter(prevState, params) {
     this.activeDuration = this.enemy.config.attackActive || 100;
 
-    // Activate hitbox with swarmer-specific properties
-    this.enemy.attackHitbox.damage = this.enemy.damage;
-    this.enemy.attackHitbox.knockback = { x: 150, y: -50 };
-    this.enemy.attackHitbox.hitstun = 200;
-    this.enemy.attackHitbox.activate();
+    // Activate hitbox with swarmer-specific properties (Matter.js scale)
+    this.enemy.activateHitbox({
+      damage: this.enemy.damage,
+      knockback: { x: 3, y: -1 },
+      hitstun: 200
+    });
 
     // Show fist visual
     this.enemy.showFist();
@@ -2710,9 +3214,9 @@ class SwarmerAttackingState extends State {
     // Brighter red during attack
     this.enemy.sprite.setTint(0xff4444);
 
-    // Lunge forward
-    const direction = this.enemy.sprite.flipX ? -1 : 1;
-    this.enemy.sprite.body.setVelocityX(direction * 180);
+    // Lunge forward (Matter.js scale)
+    const direction = this.enemy.facingRight ? 1 : -1;
+    this.enemy.setVelocityX(direction * 4);
   }
 
   update(time, delta) {
@@ -2726,7 +3230,7 @@ class SwarmerAttackingState extends State {
   }
 
   exit(nextState) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
     this.enemy.hideFist(); // Hide fist visual on exit
   }
 
@@ -2752,7 +3256,7 @@ class SwarmerAttackRecoveryState extends State {
   enter(prevState, params) {
     this.recoveryDuration = this.enemy.config.attackRecovery || 150;
     this.enemy.stop();
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
 
     // Restore tint
     if (this.enemy.stats.color) {
@@ -2796,7 +3300,7 @@ class SwarmerHitstunState extends State {
   }
 
   enter(prevState, params) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
     this.wasLaunched = false;
 
     // Apply hitstun multiplier (swarmers have longer hitstun)
@@ -2831,7 +3335,8 @@ class SwarmerHitstunState extends State {
     }
 
     // Check for launch (hit by launcher while in hitstun)
-    if (this.wasLaunched || (this.enemy.sprite.body.velocity.y < -200 && !this.enemy.sprite.body.blocked.down)) {
+    const vel = this.enemy.getVelocity();
+    if (this.wasLaunched || (vel.y < -3 && !this.enemy.isOnGround)) {
       return SWARMER_STATES.LAUNCHED;
     }
 
@@ -2873,7 +3378,7 @@ class SwarmerLaunchedState extends State {
   }
 
   enter(prevState, params) {
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
 
     // Airborne visual
     this.enemy.sprite.setTint(0xffaaaa);
@@ -2891,8 +3396,8 @@ class SwarmerLaunchedState extends State {
       return SWARMER_STATES.DEAD;
     }
 
-    // Check if landed
-    if (this.enemy.sprite.body.blocked.down || this.enemy.sprite.body.touching.down) {
+    // Check if landed (Matter.js version)
+    if (this.enemy.isOnGround) {
       return SWARMER_STATES.DOWNED;
     }
 
@@ -2921,7 +3426,7 @@ class SwarmerDownedState extends State {
   enter(prevState, params) {
     this.downedDuration = this.enemy.config.downedDuration || 300;
     this.enemy.stop();
-    this.enemy.attackHitbox.deactivate();
+    this.enemy.deactivateHitbox();
 
     // Darker tint while downed
     this.enemy.sprite.setTint(0x886644);
@@ -2981,12 +3486,13 @@ class SwarmerDeadState extends State {
 
   enter(prevState, params) {
     // Emit event for corpse spawning
+    const pos = this.enemy.getPosition();
     this.enemy.scene.events.emit('enemy:died', {
-      x: this.enemy.sprite.x,
-      y: this.enemy.sprite.y,
+      x: pos.x,
+      y: pos.y,
       enemyType: this.enemy.config.type || 'SWARMER',
-      width: this.enemy.sprite.body.width,
-      height: this.enemy.sprite.body.height,
+      width: this.enemy.bodyWidth,
+      height: this.enemy.bodyHeight,
     });
 
     // Clean up debug graphics

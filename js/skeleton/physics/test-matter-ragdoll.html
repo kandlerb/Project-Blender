@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Matter.js Ragdoll Test</title>
+  <style>
+    body { margin: 0; background: #1a1a2e; overflow: hidden; }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: monospace;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">
+    Click to spawn ragdoll | R to reset | D to toggle debug
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+  <script type="module">
+    import { SkeletonInstance } from '../SkeletonInstance.js';
+    import { createHumanoidSkeleton } from '../definitions/humanoid.js';
+    import { LineSkin } from '../skins/LineSkin.js';
+    import { MatterRagdoll } from './MatterRagdoll.js';
+    import { CollisionCategories, CollisionMasks } from '../../systems/MatterPhysics.js';
+
+    class TestScene extends Phaser.Scene {
+      constructor() {
+        super('TestScene');
+        this.ragdolls = [];
+        this.skins = [];
+      }
+
+      create() {
+        // Create ground
+        const groundY = 550;
+        this.ground = this.matter.add.rectangle(
+          400, groundY + 25, 800, 50,
+          {
+            isStatic: true,
+            friction: 0.8,
+            label: 'ground',
+            collisionFilter: {
+              category: CollisionCategories.GROUND,
+              mask: CollisionMasks.GROUND,
+            }
+          }
+        );
+
+        // Visual ground
+        this.add.rectangle(400, groundY + 25, 800, 50, 0x444444);
+
+        // Add some platforms
+        this.createPlatform(200, 400, 150, 20);
+        this.createPlatform(500, 300, 150, 20);
+        this.createPlatform(350, 200, 100, 20);
+
+        // Instructions
+        console.log('=== Matter.js Ragdoll Test ===');
+        console.log('Click to spawn ragdoll at cursor');
+        console.log('R to reset (clear all ragdolls)');
+        console.log('D to toggle physics debug');
+
+        // Input handlers
+        this.input.on('pointerdown', (pointer) => {
+          this.spawnRagdoll(pointer.x, pointer.y);
+        });
+
+        this.input.keyboard.on('keydown-R', () => {
+          this.clearRagdolls();
+        });
+
+        this.input.keyboard.on('keydown-D', () => {
+          this.matter.world.drawDebug = !this.matter.world.drawDebug;
+          if (!this.matter.world.debugGraphic) {
+            this.matter.world.createDebugGraphic();
+          }
+          this.matter.world.debugGraphic.setVisible(this.matter.world.drawDebug);
+        });
+
+        // Enable debug by default
+        this.matter.world.createDebugGraphic();
+        this.matter.world.drawDebug = true;
+      }
+
+      createPlatform(x, y, width, height) {
+        this.matter.add.rectangle(x, y, width, height, {
+          isStatic: true,
+          friction: 0.8,
+          label: 'platform',
+          collisionFilter: {
+            category: CollisionCategories.PLATFORM,
+            mask: CollisionMasks.GROUND,
+          }
+        });
+        this.add.rectangle(x, y, width, height, 0x555555);
+      }
+
+      spawnRagdoll(x, y) {
+        // Create skeleton at position
+        const skeletonDef = createHumanoidSkeleton();
+        const skeleton = new SkeletonInstance(skeletonDef, {
+          position: { x, y }
+        });
+
+        // Create skin
+        const skin = new LineSkin(skeleton, {
+          lineWidth: 3,
+          color: Phaser.Display.Color.RandomRGB().color,
+          jointRadius: 4,
+          headRadius: 12
+        });
+        skin.initialize(this);
+
+        // Create ragdoll
+        const ragdoll = new MatterRagdoll(this, skeleton);
+
+        // Random impulse
+        const impulseX = (Math.random() - 0.5) * 600;
+        const impulseY = -200 - Math.random() * 300;
+
+        ragdoll.activate({
+          impulse: { x: impulseX, y: impulseY },
+          angularImpulse: impulseX * 0.003,
+          onSettle: (r) => {
+            console.log('Ragdoll settled!');
+            r.freeze();
+            skin.setColor(0x666666);
+          }
+        });
+
+        this.ragdolls.push(ragdoll);
+        this.skins.push({ skin, ragdoll });
+
+        console.log(`Spawned ragdoll at (${x.toFixed(0)}, ${y.toFixed(0)})`);
+        console.log(`Total ragdolls: ${this.ragdolls.length}`);
+      }
+
+      clearRagdolls() {
+        for (const ragdoll of this.ragdolls) {
+          ragdoll.destroy();
+        }
+        for (const { skin } of this.skins) {
+          skin.destroy();
+        }
+        this.ragdolls = [];
+        this.skins = [];
+        console.log('Cleared all ragdolls');
+      }
+
+      update(time, delta) {
+        // Update ragdolls
+        for (const ragdoll of this.ragdolls) {
+          ragdoll.update(delta);
+        }
+
+        // Render skins from ragdoll positions
+        for (const { skin, ragdoll } of this.skins) {
+          const positions = ragdoll.getWorldPositions();
+          skin.renderFromPositions(positions);
+        }
+      }
+    }
+
+    const config = {
+      type: Phaser.AUTO,
+      width: 800,
+      height: 600,
+      backgroundColor: '#1a1a2e',
+      physics: {
+        default: 'matter',
+        matter: {
+          gravity: { y: 1 },
+          debug: false,
+        }
+      },
+      scene: TestScene
+    };
+
+    new Phaser.Game(config);
+  </script>
+</body>
+</html>

@@ -243,6 +243,14 @@ export class LineSkin extends Skin {
   }
 
   /**
+   * Update the default alpha transparency.
+   * @param {number} alpha - New alpha value (0-1)
+   */
+  setAlpha(alpha) {
+    this.config.alpha = alpha;
+  }
+
+  /**
    * Set style override for a specific bone.
    * @param {string} boneId - The bone ID
    * @param {Object} style - Style settings to apply

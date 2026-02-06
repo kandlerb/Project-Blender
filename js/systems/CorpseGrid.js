@@ -1,4 +1,10 @@
 /**
+ * @deprecated This file uses Arcade Physics and is no longer used.
+ * The game has migrated to Matter.js. Use CorpseTerrainManager.js instead.
+ * This file is kept for reference only and may be removed in the future.
+ */
+
+/**
  * Grid configuration for corpse settling
  */
 export const GRID_CONFIG = Object.freeze({

@@ -50,35 +50,35 @@ export class TonfaWarden extends Boss {
           range: 100,
           onStart: function() {
             this.attackPhase = 'windup';
-            this.sprite.setTint(0x6699ff);
+            this.sprite.setFillStyle(0x6699ff);
           },
           onUpdate: function(timer, delta) {
             switch (this.attackPhase) {
               case 'windup':
-                this.body.setVelocityX(0);
+                this.setVelocityX(0);
                 if (timer >= 150) {
                   this.attackPhase = 'strike';
-                  // Dash forward
-                  this.body.setVelocityX(this.facingDirection * 400);
+                  // Dash forward (Matter.js scale: ~6.7)
+                  this.setVelocityX(this.facingDirection * 6.7);
                   this.activateAttackHitbox({
                     damage: 12,
                     width: 50,
                     height: 40,
                     offsetX: this.facingDirection * 30,
-                    knockback: { x: this.facingDirection * 250, y: -50 },
+                    knockback: { x: this.facingDirection * 4, y: -1 },
                   });
                 }
                 break;
               case 'strike':
                 if (timer >= 350) {
                   this.attackPhase = 'recovery';
-                  this.body.setVelocityX(0);
+                  this.setVelocityX(0);
                   this.deactivateHitbox();
                 }
                 break;
               case 'recovery':
                 if (timer >= 600) {
-                  this.sprite.setTint(this.config.color);
+                  this.sprite.setFillStyle(this.config.color);
                   return 'complete';
                 }
                 break;
@@ -95,8 +95,8 @@ export class TonfaWarden extends Boss {
             this.attackPhase = 'stance';
             this.isDefending = true;
             this.hasCountered = false;
-            this.sprite.setTint(0x88aaff);
-            this.body.setVelocityX(0);
+            this.sprite.setFillStyle(0x88aaff);
+            this.setVelocityX(0);
 
             // Visual indicator
             this.defenseIndicator = this.scene.add.circle(
@@ -129,7 +129,7 @@ export class TonfaWarden extends Boss {
                 this.defenseIndicator = null;
               }
               this.isDefending = false;
-              this.sprite.setTint(this.config.color);
+              this.sprite.setFillStyle(this.config.color);
               return 'complete';
             }
 
@@ -141,7 +141,7 @@ export class TonfaWarden extends Boss {
               this.defenseIndicator = null;
             }
             this.isDefending = false;
-            this.sprite.setTint(this.config.color);
+            this.sprite.setFillStyle(this.config.color);
           },
         },
 
@@ -152,13 +152,13 @@ export class TonfaWarden extends Boss {
           damage: 10,
           onStart: function() {
             this.attackPhase = 'windup';
-            this.sprite.setTint(0xff8844);
+            this.sprite.setFillStyle(0xff8844);
           },
           onUpdate: function(timer, delta) {
             switch (this.attackPhase) {
               case 'windup':
                 // Crouch down
-                this.body.setVelocityX(0);
+                this.setVelocityX(0);
                 if (timer >= 250) {
                   this.attackPhase = 'sweep';
                   this.activateAttackHitbox({
@@ -167,22 +167,22 @@ export class TonfaWarden extends Boss {
                     height: 30,
                     offsetX: this.facingDirection * 40,
                     offsetY: 25, // Low hit
-                    knockback: { x: this.facingDirection * 200, y: -150 },
+                    knockback: { x: this.facingDirection * 3.3, y: -2.5 },
                   });
                 }
                 break;
               case 'sweep':
-                // Slide forward while sweeping
-                this.body.setVelocityX(this.facingDirection * 200);
+                // Slide forward while sweeping (Matter.js scale: ~3.3)
+                this.setVelocityX(this.facingDirection * 3.3);
                 if (timer >= 500) {
                   this.attackPhase = 'recovery';
                   this.deactivateHitbox();
-                  this.body.setVelocityX(0);
+                  this.setVelocityX(0);
                 }
                 break;
               case 'recovery':
                 if (timer >= 800) {
-                  this.sprite.setTint(this.config.color);
+                  this.sprite.setFillStyle(this.config.color);
                   return 'complete';
                 }
                 break;
@@ -199,12 +199,12 @@ export class TonfaWarden extends Boss {
           onStart: function() {
             this.attackPhase = 'windup';
             this.comboCount = 0;
-            this.sprite.setTint(0xff6644);
+            this.sprite.setFillStyle(0xff6644);
           },
           onUpdate: function(timer, delta) {
             switch (this.attackPhase) {
               case 'windup':
-                this.body.setVelocityX(0);
+                this.setVelocityX(0);
                 if (timer >= 200) {
                   this.attackPhase = 'combo';
                   this.lastHitTime = timer;
@@ -217,9 +217,9 @@ export class TonfaWarden extends Boss {
                   this.comboCount++;
                   this.lastHitTime = timer;
 
-                  // Alternate hitbox sides
+                  // Alternate hitbox sides (Matter.js scale: ~2.5)
                   const side = this.comboCount % 2 === 0 ? 1 : -1;
-                  this.body.setVelocityX(this.facingDirection * 150);
+                  this.setVelocityX(this.facingDirection * 2.5);
 
                   this.activateAttackHitbox({
                     damage: 8,
@@ -227,8 +227,8 @@ export class TonfaWarden extends Boss {
                     height: 35,
                     offsetX: this.facingDirection * 25 + (side * 10),
                     knockback: {
-                      x: this.facingDirection * 100,
-                      y: this.comboCount === 4 ? -200 : -30,
+                      x: this.facingDirection * 1.7,
+                      y: this.comboCount === 4 ? -3.3 : -0.5,
                     },
                   });
 
@@ -238,12 +238,12 @@ export class TonfaWarden extends Boss {
 
                 if (this.comboCount >= 4 && timer - this.lastHitTime >= hitInterval) {
                   this.attackPhase = 'recovery';
-                  this.body.setVelocityX(0);
+                  this.setVelocityX(0);
                 }
                 break;
               case 'recovery':
                 if (timer >= 1200) {
-                  this.sprite.setTint(this.config.color);
+                  this.sprite.setFillStyle(this.config.color);
                   return 'complete';
                 }
                 break;
@@ -259,7 +259,7 @@ export class TonfaWarden extends Boss {
           damage: 5,
           onStart: function() {
             this.attackPhase = 'windup';
-            this.sprite.setTint(0xff3333);
+            this.sprite.setFillStyle(0xff3333);
             this.spinSpeed = 0;
 
             if (this.scene.effectsManager) {
@@ -269,7 +269,7 @@ export class TonfaWarden extends Boss {
           onUpdate: function(timer, delta) {
             switch (this.attackPhase) {
               case 'windup':
-                this.body.setVelocityX(0);
+                this.setVelocityX(0);
                 // Charge up
                 this.spinSpeed = Math.min(1500, this.spinSpeed + delta * 3);
                 this.sprite.rotation += delta * 0.01 * (this.spinSpeed / 500);
@@ -281,7 +281,7 @@ export class TonfaWarden extends Boss {
                     width: 90,
                     height: 70,
                     offsetX: 0,
-                    knockback: { x: 0, y: -100 },
+                    knockback: { x: 0, y: -1.7 },
                   });
                 }
                 break;
@@ -291,7 +291,8 @@ export class TonfaWarden extends Boss {
 
                 if (this.scene.player) {
                   const dx = this.scene.player.sprite.x - this.sprite.x;
-                  this.body.setVelocityX(Math.sign(dx) * 250);
+                  // Matter.js scale: ~4.2
+                  this.setVelocityX(Math.sign(dx) * 4.2);
                 }
 
                 // Continuous damage ticks
@@ -301,14 +302,14 @@ export class TonfaWarden extends Boss {
                     width: 90,
                     height: 70,
                     offsetX: 0,
-                    knockback: { x: this.facingDirection * 150, y: -100 },
+                    knockback: { x: this.facingDirection * 2.5, y: -1.7 },
                   });
                 }
 
                 if (timer >= 2000) {
                   this.attackPhase = 'recovery';
                   this.deactivateHitbox();
-                  this.body.setVelocityX(0);
+                  this.setVelocityX(0);
                 }
                 break;
               case 'recovery':
@@ -320,7 +321,7 @@ export class TonfaWarden extends Boss {
 
                 if (timer >= 2500) {
                   this.sprite.rotation = 0;
-                  this.sprite.setTint(this.config.color);
+                  this.sprite.setFillStyle(this.config.color);
                   return 'complete';
                 }
                 break;
@@ -374,7 +375,7 @@ export class TonfaWarden extends Boss {
     }
 
     // Visual feedback
-    this.sprite.setTint(0xffff00);
+    this.sprite.setFillStyle(0xffff00);
 
     if (this.scene.effectsManager) {
       this.scene.effectsManager.screenFlash(0xffff00, 100, 0.3);
@@ -397,17 +398,17 @@ export class TonfaWarden extends Boss {
     // Face the attacker
     if (hitData?.attacker?.sprite) {
       this.facingDirection = hitData.attacker.sprite.x < this.sprite.x ? -1 : 1;
-      this.sprite.setFlipX(this.facingDirection < 0);
+      this.sprite.flipX = this.facingDirection < 0;
     }
 
-    // Dash and strike
-    this.body.setVelocityX(this.facingDirection * 500);
+    // Dash and strike (Matter.js scale: ~8.3)
+    this.setVelocityX(this.facingDirection * 8.3);
     this.activateAttackHitbox({
       damage: 25,
       width: 60,
       height: 50,
       offsetX: this.facingDirection * 35,
-      knockback: { x: this.facingDirection * 350, y: -150 },
+      knockback: { x: this.facingDirection * 5.8, y: -2.5 },
     });
   }
 

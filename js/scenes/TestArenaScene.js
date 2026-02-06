@@ -2,16 +2,25 @@ import { BaseScene } from './BaseScene.js';
 import { Player } from '../entities/Player.js';
 import { Enemy, CORPSE_INTERACTION } from '../entities/Enemy.js';
 import { TonfaWarden } from '../entities/bosses/TonfaWarden.js';
-import { CombatManager } from '../systems/CombatManager.js';
+import { CombatManagerMatter } from '../systems/CombatManagerMatter.js';
 import { TimeManager } from '../systems/TimeManager.js';
 import { EffectsManager } from '../systems/EffectsManager.js';
 import { AudioManager } from '../systems/AudioManager.js';
-import { CorpseManager } from '../systems/CorpseManager.js';
+import { CorpseTerrainManager } from '../systems/CorpseTerrainManager.js';
+import { CorpseRenderer } from '../systems/CorpseRenderer.js';
+import { MatterWorldManager } from '../systems/MatterWorldManager.js';
+import { RagdollManager } from '../systems/RagdollManager.js';
 import { HUD } from '../ui/HUD.js';
 import { ACTIONS } from '../systems/InputManager.js';
 import { COMBAT } from '../utils/combat.js';
 import { SOUNDS, MUSIC } from '../utils/audio.js';
 import { PHYSICS } from '../utils/physics.js';
+import {
+  CollisionCategories,
+  CollisionMasks,
+  createGroundBodyConfig,
+  createPlatformBodyConfig
+} from '../systems/MatterPhysics.js';
 
 // Import weapons module to register all weapons
 import '../weapons/index.js';
@@ -35,9 +44,12 @@ export class TestArenaScene extends BaseScene {
     this.timeManager = null;
     this.effectsManager = null;
     this.audioManager = null;
-    this.corpseManager = null;
+    this.corpseTerrainManager = null;
+    this.corpseRenderer = null;
+    this.worldManager = null;
     this.hud = null;
     this.showCombatDebug = false;
+    this._showCorpseDebug = false;
 
     // Collider references for cleanup/reset
     this.enemyEnemyCollider = null;
@@ -46,15 +58,15 @@ export class TestArenaScene extends BaseScene {
   }
 
   onCreate() {
-    // Physics debug - start with debug hidden (debug enabled in config for toggling)
-    this.physics.world.drawDebug = false;
-    if (this.physics.world.debugGraphic) {
-      this.physics.world.debugGraphic.setVisible(false);
-    }
+    // Matter.js physics debug - start with debug hidden
+    this.matter.world.drawDebug = false;
+
+    // Create world manager FIRST - handles safe body addition/removal
+    this.worldManager = new MatterWorldManager(this);
 
     // Create managers BEFORE entities
     this.timeManager = new TimeManager(this);
-    this.combatManager = new CombatManager(this);
+    this.combatManager = new CombatManagerMatter(this);
     this.combatManager.setTimeManager(this.timeManager);
     this.effectsManager = new EffectsManager(this);
     this.audioManager = new AudioManager(this);
@@ -65,41 +77,14 @@ export class TestArenaScene extends BaseScene {
     // Create arena first (needed for platformLayer)
     this.createArena();
 
-    // Create corpse manager with platform layer for grid ground detection
-    this.corpseManager = new CorpseManager(this, {
-      platformLayer: this.ground,
-      maxCorpses: Infinity,
-      cleanupMode: 'none',
-      decayEnabled: false,
-    });
-
-    // Set terrain for corpse-platform collision during falling
-    this.corpseManager.setTerrain(this.ground, this.platforms);
-
-    // Note: Corpse-to-corpse collision is now handled by grid snapping
-    // No physics-based corpse stacking needed
-
-    // Create enemy group for collision handling
-    // runChildUpdate: false prevents group from interfering with enemy updates
-    this.enemyGroup = this.physics.add.group({
-      runChildUpdate: false,
-    });
+    // Create corpse systems (Matter.js based)
+    this.corpseTerrainManager = new CorpseTerrainManager(this);
+    this.corpseRenderer = new CorpseRenderer(this);
+    this.ragdollManager = new RagdollManager(this);
 
     // Create player
     this.player = new Player(this, 300, 400);
-    this.player.addCollider(this.ground);
-    this.player.addCollider(this.platforms);
-
-    // Player-corpse collision with step-up handling
-    this.playerStepUpHeight = 32; // Generous height for smooth traversal
-    this.isPlayerSteppingUp = false;
-    this.physics.add.collider(
-      this.player.sprite,
-      this.corpseManager.corpseGroup,
-      this.handlePlayerCorpseCollision,
-      this.shouldPlayerCollideWithCorpse,
-      this
-    );
+    // Matter.js collisions are automatic via collision categories - no addCollider needed
 
     // Expose for console debugging
     window.player = this.player;
@@ -159,22 +144,18 @@ export class TestArenaScene extends BaseScene {
         this.audioManager.playSFX(SOUNDS.ENEMY_DEATH);
       }
 
-      // Remove from array and enemy group
+      // Remove from array
       const index = this.enemies.indexOf(data.enemy);
       if (index > -1) {
         this.enemies.splice(index, 1);
       }
-      if (data.enemy.sprite && this.enemyGroup.contains(data.enemy.sprite)) {
-        this.enemyGroup.remove(data.enemy.sprite, true, true);
-      }
     });
 
-    // Spawn corpse when enemy dies
+    // Enemy death is handled by Enemy.js which creates MatterRagdoll
+    // The CorpseTerrainManager listens for 'corpse:ready' events from ragdolls
     this.events.on('enemy:died', (data) => {
-      this.corpseManager.spawn(data.x, data.y, data.enemyType, {
-        width: data.width,
-        height: data.height || 16,
-      });
+      // Death handling (ragdoll creation) is done in Enemy.die()
+      // No additional action needed here - CorpseTerrainManager handles terrain
     });
 
     // Boss events
@@ -224,18 +205,16 @@ export class TestArenaScene extends BaseScene {
   }
 
   setupInputHandlers() {
-    // Physics debug toggle
+    // Matter.js physics debug toggle
     this.input.keyboard.on('keydown-BACKTICK', () => {
-      this.physics.world.drawDebug = !this.physics.world.drawDebug;
+      this.matter.world.drawDebug = !this.matter.world.drawDebug;
 
-      if (this.physics.world.debugGraphic) {
-        this.physics.world.debugGraphic.setVisible(this.physics.world.drawDebug);
-        if (!this.physics.world.drawDebug) {
-          this.physics.world.debugGraphic.clear();
-        }
+      if (!this.matter.world.debugGraphic) {
+        this.matter.world.createDebugGraphic();
       }
+      this.matter.world.debugGraphic.setVisible(this.matter.world.drawDebug);
 
-      console.log('Physics debug:', this.physics.world.drawDebug);
+      console.log('Physics debug:', this.matter.world.drawDebug);
     });
 
     // Combat debug toggle
@@ -277,75 +256,49 @@ export class TestArenaScene extends BaseScene {
       }
     });
 
-    // Spawn test corpse at player position (8 key - avoids conflict with P=PAUSE gameplay key)
-    this.input.keyboard.on('keydown-EIGHT', () => {
-      const pos = this.player.getPosition();
-      // Spawn slightly above player so it falls
-      this.corpseManager.spawn(pos.x, pos.y - 20, 'TEST', {
-        width: 24,
-        height: 16,
-      });
-      console.log(`Corpses: ${this.corpseManager.getCount()}`);
-    });
-
-    // Toggle grid debug visualization
-    this.input.keyboard.on('keydown-G', () => {
-      const enabled = this.corpseManager.toggleGridDebug();
-      console.log(`Corpse grid debug: ${enabled ? 'ON' : 'OFF'}`);
-    });
-
-    // Dump grid state (9 key - avoids conflict with D=MOVE_RIGHT gameplay key)
-    this.input.keyboard.on('keydown-NINE', () => {
-      const grid = this.corpseManager.grid;
-      const corpses = this.corpseManager.corpses || [];
-
-      // Count states and mismatches
-      let settled = 0, falling = 0, snapping = 0, mismatches = 0;
-      const mismatchDetails = [];
-
-      for (const corpse of corpses) {
-        if (!corpse.sprite || !corpse.sprite.active) continue;
-
-        if (corpse.state === 'settled') settled++;
-        else if (corpse.state === 'falling') falling++;
-        else if (corpse.state === 'snapping') snapping++;
-
-        // Check for position mismatches (only for settled corpses)
-        if (corpse.state === 'settled' && corpse.gridCell && grid) {
-          const actualGridPos = grid.worldToGrid(corpse.sprite.x, corpse.sprite.y);
-          if (actualGridPos.col !== corpse.gridCell.col || actualGridPos.row !== corpse.gridCell.row) {
-            mismatches++;
-            mismatchDetails.push(`  #${corpse.id}: at (${actualGridPos.col},${actualGridPos.row}) claimed (${corpse.gridCell.col},${corpse.gridCell.row})`);
-          }
-        }
-      }
-
-      // Compact output
-      console.log(`\n=== Corpse Grid Dump ===`);
-      console.log(`Corpses: ${corpses.length} (settled:${settled} falling:${falling} snapping:${snapping})`);
-      console.log(`Grid cells: ${grid ? grid.getOccupiedCount() : 0}`);
-
-      if (mismatches > 0) {
-        console.log(`⚠️ MISMATCHES: ${mismatches}`);
-        mismatchDetails.forEach(d => console.log(d));
-      }
-
-      // Print compact ASCII grid
-      if (grid && grid.getOccupiedCount() > 0) {
-        grid.debugPrintOccupiedCells();
-      }
-
-      console.log('');
-    });
-
-    // AI debug dump (7 key)
+    // Toggle corpse terrain debug (7 key)
     this.input.keyboard.on('keydown-SEVEN', () => {
+      this._showCorpseDebug = !this._showCorpseDebug;
+      if (this._showCorpseDebug && this.corpseTerrainManager) {
+        this.corpseTerrainManager.debugHighlightTerrain(0xff0000, 0.3);
+      } else if (this.corpseTerrainManager) {
+        this.corpseTerrainManager.clearDebugGraphics();
+      }
+      console.log('Corpse terrain debug:', this._showCorpseDebug);
+    });
+
+    // Clear all corpses (8 key)
+    this.input.keyboard.on('keydown-EIGHT', () => {
+      if (this.corpseTerrainManager) {
+        this.corpseTerrainManager.clearAllCorpses();
+      }
+      if (this.corpseRenderer) {
+        this.corpseRenderer.clear();
+      }
+      console.log('Cleared all corpses');
+    });
+
+    // Toggle grid debug visualization (G key - now shows Matter.js physics debug)
+    this.input.keyboard.on('keydown-G', () => {
+      // G now just shows info about corpses
+      if (this.corpseTerrainManager) {
+        console.log(`Corpse count: ${this.corpseTerrainManager.getCorpseCount()}`);
+        console.log(`Terrain bodies: ${this.corpseTerrainManager.getTerrainBodyCount()}`);
+      }
+    });
+
+    // AI debug dump (9 key)
+    this.input.keyboard.on('keydown-NINE', () => {
       console.log('--- ENEMY AI DEBUG ---');
       for (const enemy of this.enemies) {
         enemy.debugAI();
       }
       if (this.currentBoss && this.currentBoss.isAlive) {
         console.log(`[BOSS] HP: ${this.currentBoss.health}/${this.currentBoss.maxHealth}`);
+      }
+      if (this.corpseTerrainManager) {
+        console.log(`Corpses: ${this.corpseTerrainManager.getCorpseCount()}`);
+        console.log(`Terrain bodies: ${this.corpseTerrainManager.getTerrainBodyCount()}`);
       }
       console.log('----------------------');
     });
@@ -376,6 +329,9 @@ export class TestArenaScene extends BaseScene {
    * Spawn the Tonfa Warden boss
    */
   spawnBoss() {
+    // TODO: Boss needs Matter.js migration - temporarily disabled
+    console.log('Boss spawning disabled - requires Matter.js migration');
+
     // Clear existing boss
     if (this.currentBoss) {
       this.currentBoss.destroy();
@@ -398,32 +354,16 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemyProjectiles = [];
 
-    // Spawn boss in center-right of arena
+    // NOTE: Boss spawning disabled until Boss class is migrated to Matter.js
+    /*
     this.currentBoss = new TonfaWarden(this, 800, 450);
     this.currentBoss.addCollider(this.ground);
     this.currentBoss.addCollider(this.platforms);
-
-    // Add boss to enemy group for collision with player, other enemies, and corpses
-    if (this.currentBoss.sprite && this.enemyGroup) {
-      this.enemyGroup.add(this.currentBoss.sprite);
-
-      // Re-apply physics settings that group may have overwritten
-      this.currentBoss.sprite.body.setAllowGravity(true);
-      this.currentBoss.sprite.body.setGravityY(PHYSICS.GRAVITY);
-      this.currentBoss.sprite.body.setCollideWorldBounds(true);
-    }
-
-    // Apply combat debug if currently enabled
-    if (this.showCombatDebug && this.currentBoss.setCombatDebug) {
-      this.currentBoss.setCombatDebug(true);
-    }
-
-    console.log('Boss spawned: The Tonfa Warden');
-    console.log('Tip: Attack during blue circle = parried! Bait the defensive stance.');
+    // ... boss setup
+    */
   }
 
   spawnEnemies() {
-    // NOTE: No longer clearing existing enemies - R key spawns additional enemies
     // Clear existing projectiles to avoid stale references
     if (this.enemyProjectiles) {
       for (const proj of this.enemyProjectiles) {
@@ -434,48 +374,21 @@ export class TestArenaScene extends BaseScene {
     }
     this.enemyProjectiles = [];
 
-    // Spawn a variety of enemy types
-    // Swarmers spawn in groups to test pack behavior
+    // Spawn points for initial enemies
     const spawnPoints = [
-      // Left swarmer pack (4 swarmers)
       { x: 500, y: 400, type: 'SWARMER' },
-      { x: 540, y: 400, type: 'SWARMER' },
-      { x: 580, y: 400, type: 'SWARMER' },
-      { x: 620, y: 400, type: 'SWARMER' },
-      // Right swarmer pack (3 swarmers)
-      { x: 1000, y: 400, type: 'SWARMER' },
-      { x: 1040, y: 400, type: 'SWARMER' },
-      { x: 1080, y: 400, type: 'SWARMER' },
-      // Other enemy types
-      { x: 800, y: 400, type: 'LUNGER' },
-      { x: 1200, y: 400, type: 'SHIELD_BEARER' },
-      { x: 1400, y: 400, type: 'LOBBER' },
-      { x: 1500, y: 400, type: 'DETONATOR' },
+      { x: 600, y: 400, type: 'SWARMER' },
+      { x: 700, y: 400, type: 'SWARMER' },
+      { x: 900, y: 400, type: 'BRUTE' },
     ];
 
     for (const pos of spawnPoints) {
       const enemy = new Enemy(this, pos.x, pos.y, { type: pos.type });
-      enemy.addCollider(this.ground);
-      enemy.addCollider(this.platforms);
       enemy.setTarget(this.player);
-
-      // Add to enemy group for corpse collision
-      this.enemyGroup.add(enemy.sprite);
-
-      // Re-apply enemy physics settings that group may have overwritten
-      // World gravity is 0, so we must set per-body gravity
-      enemy.sprite.body.setAllowGravity(true);
-      enemy.sprite.body.setGravityY(PHYSICS.GRAVITY);
-      enemy.sprite.body.setCollideWorldBounds(true);
-
-      if (this.showCombatDebug) {
-        enemy.setCombatDebug(true);
-      }
-
       this.enemies.push(enemy);
     }
 
-    console.log(`Spawned 11 enemies (total: ${this.enemies.length}) - Swarmer x7 (2 packs), Lunger, Shield Bearer, Lobber, Detonator`);
+    console.log(`Spawned ${this.enemies.length} enemies`);
   }
 
   /**
@@ -483,6 +396,9 @@ export class TestArenaScene extends BaseScene {
    * Called after spawnEnemies() and when respawning
    */
   setupColliders() {
+    // TODO: Colliders need Matter.js migration - temporarily disabled
+    // Matter.js uses collision categories instead of explicit colliders
+
     // Destroy existing colliders if any (for respawn scenarios)
     if (this.enemyEnemyCollider) {
       this.enemyEnemyCollider.destroy();
@@ -497,66 +413,98 @@ export class TestArenaScene extends BaseScene {
       this.enemyCorpseCollider = null;
     }
 
-    // Enemy-enemy collision (solid collision between all enemies)
-    // Mass-based physics: heavier enemies push lighter ones
-    this.enemyEnemyCollider = this.physics.add.collider(
-      this.enemyGroup,
-      this.enemyGroup,
-      null, // no callback needed for basic collision
-      null, // no process callback
-      this
-    );
-
-    // Player-enemy collision (player and enemies cannot walk through each other)
-    // Player mass = 2, swarmers = 1 (player pushes), brutes = 5 (push player)
-    this.playerEnemyCollider = this.physics.add.collider(
-      this.player.sprite,
-      this.enemyGroup,
-      null, // no callback needed for basic collision
-      null, // no process callback
-      this
-    );
-
-    // Enemy-corpse collision
-    // Process callback prevents physics from moving corpses - only step-up/destroy logic applies
-    this.enemyCorpseCollider = this.physics.add.collider(
-      this.enemyGroup,
-      this.corpseManager.corpseGroup,
-      this.handleEnemyCorpseCollision,
-      this.shouldEnemyCollideWithCorpse,
-      this
-    );
-
-    console.log('Colliders setup. Enemy count:', this.enemies.length);
+    console.log('Collider setup skipped - Matter.js uses collision categories');
   }
 
   createArena() {
     const width = this.cameras.main.width;
     const height = this.cameras.main.height;
     const groundY = height - 64;
-    const tileSize = 32;
 
-    // Ground
-    this.ground = this.physics.add.staticGroup();
-    const tilesNeeded = Math.ceil(width / tileSize) + 1;
-    for (let i = 0; i < tilesNeeded; i++) {
-      this.ground.create(i * tileSize + 16, groundY, 'ground_placeholder');
-      this.ground.create(i * tileSize + 16, groundY + 32, 'ground_placeholder');
+    // Store ground bodies for reference
+    this.groundBodies = [];
+    this.platformBodies = [];
+    this.groundVisuals = [];
+    this.platformVisuals = [];
+
+    // Create main ground - single large rectangle
+    const groundHeight = 64;
+    const groundBody = this.matter.add.rectangle(
+      width / 2,
+      groundY + groundHeight / 2,
+      width,
+      groundHeight,
+      createGroundBodyConfig()
+    );
+    this.groundBodies.push(groundBody);
+
+    // Ground visual
+    const groundVisual = this.add.rectangle(
+      width / 2,
+      groundY + groundHeight / 2,
+      width,
+      groundHeight,
+      0x333333
+    );
+    groundVisual.setDepth(0);
+    this.groundVisuals.push(groundVisual);
+
+    // Platforms - Matter.js static rectangles
+    const platformConfigs = [
+      { x: 300, y: groundY - 150, w: 128, h: 20 },
+      { x: 700, y: groundY - 280, w: 128, h: 20 },
+      { x: 1100, y: groundY - 400, w: 128, h: 20 },
+      { x: 200, y: groundY - 450, w: 128, h: 20 },
+    ];
+
+    for (const plat of platformConfigs) {
+      const platBody = this.matter.add.rectangle(
+        plat.x, plat.y, plat.w, plat.h,
+        createPlatformBodyConfig()
+      );
+      this.platformBodies.push(platBody);
+
+      // Platform visual
+      const platVisual = this.add.rectangle(plat.x, plat.y, plat.w, plat.h, 0x444444);
+      platVisual.setDepth(0);
+      this.platformVisuals.push(platVisual);
     }
 
-    // Platforms
-    this.platforms = this.physics.add.staticGroup();
-    this.platforms.create(300, groundY - 150, 'platform_placeholder');
-    this.platforms.create(700, groundY - 280, 'platform_placeholder');
-    this.platforms.create(1100, groundY - 400, 'platform_placeholder');
-    this.platforms.create(200, groundY - 450, 'platform_placeholder');
+    // Side walls - Matter.js static rectangles
+    // Walls should extend from top of screen to ground level
+    const wallWidth = 32;
+    const wallHeight = groundY; // Extend from top to ground level
+    const wallY = wallHeight / 2; // Center vertically from top to ground
 
-    // Side walls (start above ground to avoid collision overlap)
-    const wallHeight = 20;
-    for (let i = 1; i <= wallHeight; i++) {
-      this.ground.create(16, groundY - (i * 32), 'ground_placeholder');
-      this.ground.create(width - 16, groundY - (i * 32), 'ground_placeholder');
-    }
+    // Left wall
+    const leftWall = this.matter.add.rectangle(
+      wallWidth / 2,
+      wallY,
+      wallWidth,
+      wallHeight,
+      createGroundBodyConfig()
+    );
+    this.groundBodies.push(leftWall);
+    const leftWallVisual = this.add.rectangle(wallWidth / 2, wallY, wallWidth, wallHeight, 0x333333);
+    leftWallVisual.setDepth(0);
+    this.groundVisuals.push(leftWallVisual);
+
+    // Right wall
+    const rightWall = this.matter.add.rectangle(
+      width - wallWidth / 2,
+      wallY,
+      wallWidth,
+      wallHeight,
+      createGroundBodyConfig()
+    );
+    this.groundBodies.push(rightWall);
+    const rightWallVisual = this.add.rectangle(width - wallWidth / 2, wallY, wallWidth, wallHeight, 0x333333);
+    rightWallVisual.setDepth(0);
+    this.groundVisuals.push(rightWallVisual);
+
+    // For backward compatibility with code expecting this.ground and this.platforms
+    this.ground = this.groundBodies;
+    this.platforms = this.platformBodies;
   }
 
   createDebugHUD() {
@@ -601,9 +549,20 @@ export class TestArenaScene extends BaseScene {
       // Update combat manager
       this.combatManager.update(time, scaledDelta);
 
-      // Update corpse manager
-      this.corpseManager.update(time, scaledDelta);
-      this.corpseManager.setReferencePosition(this.player.sprite.x, this.player.sprite.y);
+      // Update active ragdolls (physics, rendering, settle detection)
+      if (this.ragdollManager) {
+        this.ragdollManager.update(scaledDelta);
+      }
+
+      // Update corpse terrain manager
+      if (this.corpseTerrainManager) {
+        this.corpseTerrainManager.update(time, scaledDelta);
+      }
+
+      // Render corpse visuals (settled corpses only)
+      if (this.corpseRenderer) {
+        this.corpseRenderer.render();
+      }
 
       // Check enemy projectiles
       this.updateEnemyProjectiles();
@@ -654,258 +613,60 @@ export class TestArenaScene extends BaseScene {
   }
 
   /**
-   * Handle collision between enemy and corpse
-   * Called after collision resolution
-   * @param {Phaser.Physics.Arcade.Sprite} enemySprite
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
+   * Handle collision between enemy and corpse terrain
+   * Note: With Matter.js, corpse terrain collision is automatic via collision categories
+   * This method can be used for special behaviors like Brute corpse destruction
+   * @param {Enemy} enemy - The enemy
+   * @param {MatterJS.Body} terrainBody - The Matter.js terrain body
    */
-  handleEnemyCorpseCollision(enemySprite, corpseSprite) {
-    const enemy = enemySprite.getData('owner');
-    const corpse = corpseSprite.getData('owner');
+  handleEnemyCorpseCollision(enemy, terrainBody) {
+    // With Matter.js, physical collision is handled automatically via collision masks
+    // This method is for special behaviors only
 
-    if (!enemy || !corpse || corpse.state !== 'settled') return;
+    if (!enemy) return;
 
     // Brutes destroy corpses on contact
     if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
-      this.destroyCorpseWithForce(enemy, corpse);
-      return;
-    }
-
-    // For climbing/blocking enemies, handle standing on corpse
-    const enemyBody = enemySprite.body;
-    const corpseBody = corpseSprite.body;
-
-    const enemyBottom = enemyBody.bottom;
-    const corpseTop = corpseBody.top;
-    const isStandingOn = enemyBottom >= corpseTop - 4 && enemyBottom <= corpseTop + 6;
-
-    if (isStandingOn && enemyBody.velocity.y >= 0) {
-      // Snap enemy to stand on top of corpse
-      enemySprite.y = corpseTop - enemyBody.halfHeight;
-      enemyBody.velocity.y = 0;
-
-      // Mark enemy as grounded for AI/movement purposes
-      enemyBody.blocked.down = true;
+      // Find and remove the corpse from terrain manager
+      if (this.corpseTerrainManager) {
+        this.corpseTerrainManager.removeTerrainByBody(terrainBody);
+      }
     }
   }
 
   /**
-   * Process callback for enemy-corpse collision
-   * Handles step-up positioning for climbing enemies
-   * @param {Phaser.Physics.Arcade.Sprite} enemySprite
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
-   * @returns {boolean} Whether to apply collision physics
-   */
-  shouldEnemyCollideWithCorpse(enemySprite, corpseSprite) {
-    const enemy = enemySprite.getData('owner');
-    const corpse = corpseSprite.getData('owner');
-
-    // Only collide with settled corpses (they have static platform bodies)
-    if (!corpse || corpse.state !== 'settled') {
-      return false;
-    }
-
-    if (!enemy) return true;
-
-    const enemyBody = enemySprite.body;
-    const corpseBody = corpseSprite.body;
-    const enemyBottom = enemyBody.bottom;
-    const corpseTop = corpseBody.top;
-    const heightDiff = enemyBottom - corpseTop;
-
-    // Brutes destroy corpses on contact
-    if (enemy.corpseInteraction === CORPSE_INTERACTION.DESTROY) {
-      return true; // Collision triggers destruction in handler
-    }
-
-    // Blocking enemies are fully blocked by corpses
-    if (enemy.corpseInteraction === CORPSE_INTERACTION.BLOCK) {
-      // Don't collide if too far below (prevents getting stuck on sides)
-      if (heightDiff > 16) {
-        return false;
-      }
-      return true;
-    }
-
-    // Climbing enemies (CORPSE_INTERACTION.CLIMB)
-    const stepUpHeight = enemy.stepUpHeight || 32;
-
-    // Enemy is above or at corpse top - normal collision for standing/landing
-    if (enemyBottom <= corpseTop + 4) {
-      return true;
-    }
-
-    // Enemy below corpse top but within step-up range - assist step-up
-    const canStepUp = heightDiff > 0 && heightDiff <= stepUpHeight;
-    const isMoving = Math.abs(enemyBody.velocity.x) > 5 || enemyBody.velocity.y !== 0;
-
-    if (canStepUp && isMoving) {
-      // Smoothly step up onto corpse
-      const targetY = corpseTop - enemyBody.halfHeight;
-
-      if (enemySprite.y > targetY + 2) {
-        // Gradual step-up for smoother movement
-        const stepSpeed = 3;
-        enemySprite.y -= stepSpeed;
-
-        // Snap to final position when close
-        if (enemySprite.y <= targetY + stepSpeed) {
-          enemySprite.y = targetY;
-        }
-
-        // Neutralize downward velocity during step-up
-        if (enemyBody.velocity.y > 0) {
-          enemyBody.velocity.y = 0;
-        }
-      }
-      return true;
-    }
-
-    // Enemy too far below - don't collide (prevents getting stuck on sides)
-    if (heightDiff > stepUpHeight) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Destroy a corpse with knockback force (used by Brutes)
+   * Destroy corpse terrain with visual effect
    * @param {Enemy} enemy - The enemy destroying the corpse
-   * @param {Object} corpse - The corpse being destroyed
+   * @param {MatterJS.Body} terrainBody - The terrain body to destroy
    */
-  destroyCorpseWithForce(enemy, corpse) {
-    // Prevent double-destruction
-    if (corpse._beingDestroyed) return;
-    corpse._beingDestroyed = true;
+  destroyCorpseWithEffect(enemy, terrainBody) {
+    if (!terrainBody) return;
 
-    // Determine knockback direction (away from enemy)
-    const direction = corpse.sprite.x > enemy.sprite.x ? 1 : -1;
-    const force = enemy.corpseDestroyForce || 300;
+    const x = terrainBody.position.x;
+    const y = terrainBody.position.y;
 
-    // Re-enable corpse body as dynamic for knockback effect
-    if (corpse.sprite.body) {
-      corpse.sprite.body.enable = true;
-      corpse.sprite.body.moves = true;
-      corpse.sprite.body.setImmovable(false);
-      corpse.sprite.body.setAllowGravity(true);
-      // Restore full body size for flying effect
-      corpse.sprite.body.setSize(corpse.config.width, corpse.config.height);
-      corpse.sprite.body.setOffset(0, 0);
-      // Apply knockback force
-      corpse.sprite.body.setVelocity(direction * force, -200);
+    // Visual feedback - particles
+    if (this.effectsManager) {
+      this.effectsManager.createImpact(x, y, { color: 0x666666, count: 5 });
     }
 
-    // Visual feedback - flash red
-    corpse.sprite.setTint(0xff4444);
-
-    // Destroy after brief delay (shows the knockback)
-    this.time.delayedCall(200, () => {
-      // Emit particles at corpse position if EffectsManager exists
-      if (this.effectsManager) {
-        this.effectsManager.createImpact(
-          corpse.sprite.x,
-          corpse.sprite.y,
-          { color: 0x666666, count: 5 }
-        );
-      }
-      this.corpseManager.remove(corpse);
-    });
+    // Remove from terrain manager
+    if (this.corpseTerrainManager) {
+      this.corpseTerrainManager.removeTerrainByBody(terrainBody);
+    }
   }
 
-  /**
-   * Process callback for player-corpse collision
-   * Enables smooth step-up onto corpse piles
-   * @param {Phaser.Physics.Arcade.Sprite} playerSprite
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
-   * @returns {boolean} Whether to apply collision physics
-   */
-  shouldPlayerCollideWithCorpse(playerSprite, corpseSprite) {
-    const corpse = corpseSprite.getData('owner');
-
-    // Only collide with settled corpses (they have static platform bodies)
-    if (!corpse || corpse.state !== 'settled') {
-      return false;
-    }
-
-    const playerBody = playerSprite.body;
-    const corpseBody = corpseSprite.body;
-
-    // Corpse body is a thin platform at the top, so corpseBody.top is the walking surface
-    const playerBottom = playerBody.bottom;
-    const corpseTop = corpseBody.top;
-    const heightDiff = playerBottom - corpseTop;
-
-    // Player is above or at the corpse top level - normal collision for standing/landing
-    if (playerBottom <= corpseTop + 4) {
-      return true;
-    }
-
-    // Player is below corpse top but within step-up range
-    // Assist by nudging player up onto the platform
-    const canStepUp = heightDiff > 0 && heightDiff <= this.playerStepUpHeight;
-    const isMoving = Math.abs(playerBody.velocity.x) > 5 || playerBody.velocity.y !== 0;
-
-    if (canStepUp && isMoving) {
-      // Smoothly step up: position player on top of corpse
-      const targetY = corpseTop - playerBody.halfHeight;
-
-      if (playerSprite.y > targetY + 2) {
-        // Gradual step-up for smoother feel
-        const stepSpeed = 4;
-        playerSprite.y -= stepSpeed;
-
-        // If close enough, snap to final position
-        if (playerSprite.y <= targetY + stepSpeed) {
-          playerSprite.y = targetY;
-        }
-
-        // Neutralize downward velocity during step-up
-        if (playerBody.velocity.y > 0) {
-          playerBody.velocity.y = 0;
-        }
-      }
-      return true;
-    }
-
-    // Player too far below - don't collide (prevents getting stuck on sides)
-    if (heightDiff > this.playerStepUpHeight) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Handle collision between player and corpse
-   * Called after collision resolution
-   * @param {Phaser.Physics.Arcade.Sprite} playerSprite
-   * @param {Phaser.Physics.Arcade.Sprite} corpseSprite
-   */
-  handlePlayerCorpseCollision(playerSprite, corpseSprite) {
-    const playerBody = playerSprite.body;
-    const corpseBody = corpseSprite.body;
-
-    // Check if player is standing on top of this corpse
-    const playerBottom = playerBody.bottom;
-    const corpseTop = corpseBody.top;
-    const isStandingOn = playerBottom >= corpseTop - 4 && playerBottom <= corpseTop + 6;
-
-    if (isStandingOn && playerBody.velocity.y >= 0) {
-      // Snap player to stand exactly on top for clean landing
-      playerSprite.y = corpseTop - playerBody.halfHeight;
-      playerBody.velocity.y = 0;
-
-      // Mark player as touching ground (for jump detection)
-      playerBody.blocked.down = true;
-    }
-  }
+  // Note: Player-corpse and enemy-corpse collisions are handled automatically by Matter.js
+  // via collision categories defined in MatterPhysics.js. No manual callbacks needed.
 
   updateDebugHUD() {
     const pDebug = this.player.getDebugInfo();
     const timeDebug = this.timeManager.getDebugInfo();
     const hudStats = this.hud.getStats();
-    const corpseStats = this.corpseManager.getStats();
+
+    // Get corpse stats from terrain manager
+    const corpseCount = this.corpseTerrainManager ? this.corpseTerrainManager.getCorpseCount() : 0;
+    const terrainBodies = this.corpseTerrainManager ? this.corpseTerrainManager.getTerrainBodyCount() : 0;
 
     const lines = [
       'PROJECT BLENDER - Test Arena',
@@ -916,8 +677,8 @@ export class TestArenaScene extends BaseScene {
       '',
       `Combo: ${hudStats.combo}`,
       `Kills: ${hudStats.kills}`,
-      `Enemies: ${this.enemies.length}`,
-      `Corpses: ${corpseStats.total} (F:${corpseStats.falling} S:${corpseStats.snapping} D:${corpseStats.settled})`,
+      `Enemies: ${this.enemies.filter(e => e.isAlive).length}`,
+      `Corpses: ${corpseCount} (terrain: ${terrainBodies})`,
     ];
 
     // Add boss info if present
@@ -932,7 +693,7 @@ export class TestArenaScene extends BaseScene {
     lines.push('');
     lines.push(`Hitstop: ${timeDebug.hitstop}ms`);
     lines.push('');
-    lines.push('R - Respawn | B - Boss | 7 - AI Debug | G - Grid | 0 - Mute');
+    lines.push('R - Respawn | B - Boss | 7 - Corpse Debug | 8 - Clear | 0 - Mute');
 
     this.debugText.setText(lines.join('\n'));
   }
@@ -1011,9 +772,21 @@ export class TestArenaScene extends BaseScene {
       this.audioManager.destroy();
       this.audioManager = null;
     }
-    if (this.corpseManager) {
-      this.corpseManager.destroy();
-      this.corpseManager = null;
+    if (this.ragdollManager) {
+      this.ragdollManager.destroy();
+      this.ragdollManager = null;
+    }
+    if (this.corpseTerrainManager) {
+      this.corpseTerrainManager.destroy();
+      this.corpseTerrainManager = null;
+    }
+    if (this.corpseRenderer) {
+      this.corpseRenderer.destroy();
+      this.corpseRenderer = null;
+    }
+    if (this.worldManager) {
+      this.worldManager.destroy();
+      this.worldManager = null;
     }
   }
 }

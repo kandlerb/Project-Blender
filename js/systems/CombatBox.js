@@ -1,4 +1,10 @@
 /**
+ * @deprecated This file uses Arcade Physics and is no longer used.
+ * The game has migrated to Matter.js. Use CombatManagerMatter.js instead.
+ * This file is kept for reference only and may be removed in the future.
+ */
+
+/**
  * Box types for combat collision
  */
 export const BOX_TYPE = Object.freeze({
