@@ -268,17 +268,19 @@ export class MatterRagdoll {
         // Parent is zero-length (like pelvis), connect at center
         parentAnchor = { x: 0, y: 0 };
       } else {
-        // Connect at parent's end point (accounting for anchor offset)
-        const anchorY = bone.anchor?.y ?? 1;
-        const anchorX = bone.anchor?.x ?? 0;
+        // Connect at parent's anchor point
+        // anchor.x: position along parent bone (0=start, 1=end), default 1
+        // anchor.y: perpendicular offset from parent axis (world units), default 0
+        const anchorAlongBone = bone.anchor?.x ?? 1;
+        const anchorPerp = bone.anchor?.y ?? 0;
 
-        // Local offset along parent bone
-        const alongBone = (anchorY - 0.5) * parentBone.length;
-        const perpBone = anchorX * parentBone.length;
+        // Local offset: x is along bone axis, y is perpendicular
+        // (anchorAlongBone - 0.5) maps [0,1] to [-0.5, 0.5] of bone length
+        const alongBone = (anchorAlongBone - 0.5) * parentBone.length;
 
         parentAnchor = {
-          x: alongBone * Math.cos(0) - perpBone * Math.sin(0),
-          y: alongBone * Math.sin(0) + perpBone * Math.cos(0),
+          x: alongBone,
+          y: anchorPerp,
         };
       }
 
